@@ -15,3 +15,6 @@ data/
 dist/
 build/
 secrets/
+google-adc*.json
+*-service-account*.json
+application_default_credentials.json

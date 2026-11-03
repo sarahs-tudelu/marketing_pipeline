@@ -25,7 +25,7 @@ def main():
         return
     if args.command == "init":
         command.upgrade(Config("alembic.ini"), "head")
-    engine = make_engine(settings.database_url)
+    engine = make_engine(settings.database_dsn)
     with sessions(engine)() as db:
         from .pipeline import bootstrap
 

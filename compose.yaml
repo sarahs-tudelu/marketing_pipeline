@@ -12,7 +12,7 @@ services:
       retries: 10
   migrate:
     build: .
-    env_file: .env
+    env_file: ${LOCAL_ENV_FILE:-.env.local}
     environment:
       DATABASE_URL: postgresql+psycopg://social:${POSTGRES_PASSWORD}@db/social
     command: ["alembic", "upgrade", "head"]
@@ -21,7 +21,7 @@ services:
     volumes: ["runtime:/app/data"]
   web:
     build: .
-    env_file: .env
+    env_file: ${LOCAL_ENV_FILE:-.env.local}
     environment:
       DATABASE_URL: postgresql+psycopg://social:${POSTGRES_PASSWORD}@db/social
     ports: ["127.0.0.1:8000:8000"]
@@ -30,7 +30,7 @@ services:
       migrate: {condition: service_completed_successfully}
   worker:
     build: .
-    env_file: .env
+    env_file: ${LOCAL_ENV_FILE:-.env.local}
     environment:
       DATABASE_URL: postgresql+psycopg://social:${POSTGRES_PASSWORD}@db/social
     command: ["tudelu", "worker"]

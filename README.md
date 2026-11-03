@@ -4,6 +4,8 @@ An internal, official-API publishing pipeline for LinkedIn company pages, Instag
 
 The implementation uses FastAPI, SQLAlchemy/Alembic, PostgreSQL (SQLite locally), APScheduler, httpx and local/S3 media storage. PyAV inspects media without rewriting it. There are no browsers, scrapers, private APIs or engagement automation in the application.
 
+DigitalOcean deployment is configured in [compose.droplet.yaml](compose.droplet.yaml) for your existing Managed PostgreSQL cluster, with [verified TLS, Google Secret Manager setup and operations](docs/digitalocean.md). The current ignored `.env` contains deployment placeholders and `gsm://` references; `.env.local` preserves the offline demo. The managed database user's existing password is loaded from Secret Manager. For local development in this checkout, set `TUDELU_ENV_FILE=.env.local`.
+
 ## Run locally
 
 Use Python 3.12 or newer; the Docker image uses Python 3.12. This minimum accommodates the current PyAV and NumPy wheels. The supplied dependency lock reflects the verified development environment. On Windows:
@@ -12,13 +14,14 @@ Use Python 3.12 or newer; the Docker image uses Python 3.12. This minimum accomm
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.lock
 .venv/Scripts/python -m pip install -e '.[dev]'
-Copy-Item .env.example .env
+Copy-Item .env.example .env.local
+$env:TUDELU_ENV_FILE = '.env.local'
 .venv/Scripts/tudelu init
 .venv/Scripts/tudelu demo
 .venv/Scripts/uvicorn social.app:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-On Linux/macOS use `.venv/bin/` instead of `.venv/Scripts/`. Open <http://localhost:8000>. In a second terminal, run `tudelu worker` from the virtual environment. The worker advances drafts, runs checks, reserves slots, publishes due posts, refreshes tokens and delivers queued alerts. Set `AUTO_ADVANCE=false` to step through generation/check/schedule in the UI for a screen recording.
+On Linux/macOS use `.venv/bin/` instead of `.venv/Scripts/` and export `TUDELU_ENV_FILE=.env.local`. Open <http://localhost:8000>. In a second terminal, set the same environment-file selector and run `tudelu worker` from the virtual environment. The worker advances drafts, runs checks, reserves slots, publishes due posts, refreshes tokens and delivers queued alerts. Set `AUTO_ADVANCE=false` to step through generation/check/schedule in the UI for a screen recording.
 
 `tudelu demo` uses a virtual clock to process the real scheduled slots immediately, so no waiting for tomorrow's slot is needed. It is idempotent for the named demo campaign. Four platforms finish as simulated `published`; TikTok finishes as `awaiting_manual`. Fake post IDs have no public links. The JSON result is saved at `data/demo-report.json`; inspect the per-post Request audit in the app for payloads. The seed card and four-second H.264 video are generated locally by `social/seed.py`, depict no product, and are permanently marked demo-only.
 
@@ -26,13 +29,13 @@ No credentials are needed for these commands. `AI_MODE=fixture` calls neither An
 
 ## Docker Compose
 
-Copy `.env.example` to `.env`. Generate a random alphanumeric `POSTGRES_PASSWORD` and set `AUTH_MODE=basic`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `SESSION_SECRET`. Docker requests arrive from the container network, so the loopback-only development login is intentionally unsuitable. Then:
+For local Docker, copy `.env.example` to `.env.local`. Generate a random alphanumeric `POSTGRES_PASSWORD` and set `AUTH_MODE=basic`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `SESSION_SECRET` in that file. Docker requests arrive from the container network, so the loopback-only development login is intentionally unsuitable. Keep the Droplet `.env` separate. Then:
 
 ```sh
-docker compose up --build -d
-docker compose exec web tudelu seed
-docker compose exec web tudelu demo
-docker compose logs -f worker
+docker compose --env-file .env.local up --build -d
+docker compose --env-file .env.local exec web tudelu seed
+docker compose --env-file .env.local exec web tudelu demo
+docker compose --env-file .env.local logs -f worker
 ```
 
 Compose runs migrations before the web/worker, binds the UI to host loopback, and shares a runtime media volume. PostgreSQL is not exposed on a host port. For production, run behind VPN/TLS or company SSO, use a secrets manager, and use S3/CDN media serving. Set `ENVIRONMENT=production`. Docker daemon execution was unavailable on the build workstation; local SQLite execution and mocked API tests were verified. See [verification](docs/verification.md).

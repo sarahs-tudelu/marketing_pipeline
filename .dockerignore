@@ -5,6 +5,9 @@
 !.env.example
 data
 secrets
+google-adc*.json
+*-service-account*.json
+application_default_credentials.json
 __pycache__
 **/__pycache__
 .pytest_cache

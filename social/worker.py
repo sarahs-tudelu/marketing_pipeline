@@ -81,7 +81,7 @@ def tick(factory, settings):
 def run():
     settings = get_settings()
     setup_logging()
-    engine = make_engine(settings.database_url)
+    engine = make_engine(settings.database_dsn)
     factory = sessions(engine)
     with factory() as db:
         bootstrap(db)

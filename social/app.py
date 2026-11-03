@@ -40,7 +40,7 @@ class DraftInput(BaseModel):
 
 def create_app(settings=None):
     settings = settings or get_settings()
-    engine = make_engine(settings.database_url)
+    engine = make_engine(settings.database_dsn)
     factory = sessions(engine)
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
     settings.media_dir.mkdir(parents=True, exist_ok=True)
@@ -429,4 +429,12 @@ def create_app(settings=None):
     return app
 
 
-app = create_app()
+_application = None
+
+
+async def app(scope, receive, send):
+    """Load deployment secrets at ASGI startup, never as an import side effect."""
+    global _application
+    if _application is None:
+        _application = create_app()
+    await _application(scope, receive, send)

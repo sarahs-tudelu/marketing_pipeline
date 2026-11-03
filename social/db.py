@@ -3,6 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
@@ -20,14 +21,16 @@ class Base(DeclarativeBase):
 
 
 def make_engine(url):
-    if url.startswith("sqlite"):
+    url = make_url(url)
+    sqlite = url.get_backend_name() == "sqlite"
+    if sqlite:
         Path("data").mkdir(exist_ok=True)
     engine = create_engine(
         url,
-        connect_args={"check_same_thread": False, "timeout": 30} if url.startswith("sqlite") else {},
+        connect_args={"check_same_thread": False, "timeout": 30} if sqlite else {},
         pool_pre_ping=True,
     )
-    if url.startswith("sqlite"):
+    if sqlite:
 
         @event.listens_for(engine, "connect")
         def sqlite_config(connection, _):

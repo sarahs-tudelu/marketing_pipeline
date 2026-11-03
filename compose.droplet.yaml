@@ -1,0 +1,84 @@
+name: tudelu-social
+
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+
+x-app: &app
+  build: .
+  image: tudelu-social:local
+  env_file: .env
+  environment:
+    ENVIRONMENT: production
+    SECRET_BACKEND: google
+    AUTH_MODE: basic
+    GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google_adc
+    SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    TUDELU_ENV_FILE: /dev/null
+  secrets: [google_adc]
+  volumes:
+    - runtime:/app/data
+    - type: bind
+      source: ${DATABASE_CA_HOST_DIR:?Set the managed database certificate directory}
+      target: /run/database-certs
+      read_only: true
+      bind:
+        create_host_path: false
+  read_only: true
+  tmpfs: ["/tmp"]
+  init: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+  web:
+    <<: *app
+    command: ["uvicorn", "social.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers"]
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  worker:
+    <<: *app
+    command: ["tudelu", "worker"]
+    stop_grace_period: 60s
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+  proxy:
+    image: caddy:2.11.7-alpine
+    environment:
+      APP_BASE_URL: ${APP_BASE_URL:?Set the HTTPS app origin}
+      MEDIA_BASE_URL: ${MEDIA_BASE_URL:?Set the HTTPS media origin}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:-127.0.0.1/32 ::1/128}
+      TLS_EMAIL: ${TLS_EMAIL:?Set a certificate contact email}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - runtime:/srv/runtime:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+    depends_on:
+      web: {condition: service_healthy}
+
+secrets:
+  google_adc:
+    file: ${GCP_ADC_HOST_PATH:?Set the outside-repository ADC credential file path}
+
+volumes:
+  runtime:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,37 @@
+{
+	email {$TLS_EMAIL}
+	admin off
+}
+
+{$APP_BASE_URL} {
+	# Direct connections from the company VPN/office egress. Do not trust client-supplied X-Forwarded-For.
+	@internal remote_ip {$ADMIN_ALLOWED_CIDRS}
+	handle @internal {
+		reverse_proxy web:8000 {
+			header_up -X-Authenticated-User
+			header_up -X-Tudelu-Proxy-Secret
+		}
+	}
+	handle {
+		respond "Internal access only" 403
+	}
+	header Strict-Transport-Security "max-age=31536000"
+	# Access logging stays disabled to avoid recording OAuth callback query strings.
+}
+
+{$MEDIA_BASE_URL} {
+	@asset {
+		method GET HEAD
+		path_regexp asset ^/[a-f0-9]{64}\.(jpg|png|gif|webp|mp4|mov|webm)$
+	}
+	handle @asset {
+		root * /srv/runtime/media
+		header Cache-Control "public, max-age=31536000, immutable"
+		header X-Content-Type-Options nosniff
+		file_server
+	}
+	handle {
+		respond "Not found" 404
+	}
+	header Strict-Transport-Security "max-age=31536000"
+}

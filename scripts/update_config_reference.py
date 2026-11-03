@@ -39,6 +39,10 @@ lines = [
     "",
     "Actual client IDs, API keys, tokens, passwords and origin domains are deliberately unset. Version/model settings are pinned defaults, not credentials. `LIVE_PLATFORMS` is an explicit additional switch; missing connections still remain dry. Restart web and worker after changes.",
     "",
+    "For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.example`. With `SECRET_BACKEND=google`, sensitive settings accept `gsm://projects/PROJECT/secrets/NAME/versions/VERSION` references. ADC authenticates reads at startup; failed reads stop startup. `DATABASE_PASSWORD` is injected into a SQLAlchemy URL object, separate from the password-free `DATABASE_URL`. See [Droplet deployment](digitalocean.md) for the extra Compose variables and bootstrap credential file.",
+    "",
+    "`TUDELU_ENV_FILE` is a process environment selector for the settings file (default `.env`); it is not a setting to place inside that file. Select `.env.local` for the offline demo. Compose additionally uses `LOCAL_ENV_FILE` to choose its development env file. The Droplet template uses `GCP_PROJECT_ID`, `GCP_ADC_HOST_PATH`, `TLS_EMAIL`, `ADMIN_ALLOWED_CIDRS` and `DATABASE_CA_HOST_DIR` for reference interpolation, credential/certificate mounts, HTTPS and source restrictions. Its database URL targets the existing DigitalOcean Managed PostgreSQL cluster with `sslmode=verify-full`.",
+    "",
     "| Environment variable | Default | Purpose / group note |",
     "|---|---|---|",
 ]

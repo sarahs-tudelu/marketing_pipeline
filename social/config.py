@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -10,9 +11,15 @@ PLATFORMS = ("linkedin", "instagram", "facebook", "x", "tiktok")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", env_ignore_empty=True, hide_input_in_errors=True
+    )
     environment: Literal["development", "production"] = "development"
     database_url: str = "sqlite:///./data/social.db"
+    database_password: SecretStr = SecretStr("")
+    secret_backend: Literal["none", "google"] = "none"
+    secret_timeout_seconds: float = Field(default=15, ge=1, le=60)
+    google_application_credentials: str = ""
     app_base_url: str = ""
     media_base_url: str = ""
     live_platforms: str = ""  # Comma separated; explicit live opt-in in addition to credentials.
@@ -93,6 +100,41 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 100_000_000
     analytics_enabled: bool = False
     auto_advance: bool = True
+
+    def __init__(self, **values):
+        if "_env_file" not in values and os.environ.get("TUDELU_ENV_FILE"):
+            values["_env_file"] = os.environ["TUDELU_ENV_FILE"]
+        super().__init__(**values)
+
+    @model_validator(mode="before")
+    @classmethod
+    def load_google_secrets(cls, values):
+        from .cloud_secrets import resolve_references
+
+        data = dict(values)
+        sensitive = {
+            name: data[name]
+            for name, field in cls.model_fields.items()
+            if field.annotation is SecretStr and name in data
+        }
+        resolved = resolve_references(
+            sensitive,
+            backend=data.get("secret_backend", "none"),
+            timeout=float(data.get("secret_timeout_seconds", 15)),
+            credentials_file=data.get("google_application_credentials") or None,
+        )
+        return data | resolved
+
+    @property
+    def database_dsn(self):
+        from sqlalchemy.engine import make_url
+
+        url = make_url(self.database_url)
+        if self.database_password.get_secret_value():
+            if url.get_backend_name() != "postgresql":
+                raise ValueError("DATABASE_PASSWORD requires a PostgreSQL DATABASE_URL")
+            url = url.set(password=self.database_password.get_secret_value())
+        return url
 
     @model_validator(mode="after")
     def secure_production(self):
