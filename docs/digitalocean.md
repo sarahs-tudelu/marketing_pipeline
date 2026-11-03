@@ -9,14 +9,38 @@ The configuration targets your existing **DigitalOcean Managed PostgreSQL** clus
 | Setting | Supplied value | Deployment behavior |
 |---|---|---|
 | `APP_BASE_URL` | `https://social.example.invalid` | Replace with the admin hostname; Caddy terminates TLS and proxies to `web:8000`. |
-| `MEDIA_BASE_URL` | `https://media.example.invalid` | Replace with the public media hostname; Caddy serves only existing checksum-named media files using GET/HEAD. |
+| `MEDIA_BASE_URL` | `https://media.example.invalid` | Public media hostname on the Droplet; Caddy forwards checksum-named GET/HEAD requests to the app's local/Spaces media reader. |
 | `DATABASE_URL` | Managed PostgreSQL URL with `REPLACE_DB_*` fields | Copy the existing cluster's host, port, username and database; use `sslmode=verify-full`, a trust root and `connect_timeout=10`. |
 | `DATABASE_PASSWORD` | `gsm://projects/${GCP_PROJECT_ID}/secrets/tudelu-database-password/versions/1` | The existing managed database user's password, loaded by the app. |
 | `DATABASE_CA_HOST_DIR` | `/etc/tudelu/database-certs` | Host directory mounted read-only at `/run/database-certs` in web, worker and migration containers. |
 
 Caddy is the only service exposing host ports (TCP 80 and 443). The app origin requires both a permitted source network and application Basic authentication. OAuth callbacks use the same app origin and are reached by the authorizing user's browser. The media origin is public, read-only, and has no admin/API routes or directory listing. Caddy access logging and Uvicorn access logging are disabled so OAuth callback codes are not recorded in access logs. Application event logs remain JSON.
 
-The Droplet deployment runs no PostgreSQL container and creates no database volume. Web, worker and the migration job connect directly to the managed cluster. A migration job must succeed before web and worker start; an unreachable database or invalid TLS/authentication stops that startup sequence. The web and single worker share the runtime media volume. The local development `compose.yaml` still provides its separate local PostgreSQL service.
+The Droplet deployment runs no PostgreSQL container and creates no database volume. Web, worker and the migration job connect directly to the managed cluster. A migration job must succeed before web and worker start; an unreachable database or invalid TLS/authentication stops that startup sequence. The web and single worker share the runtime volume for local media, watched-folder ingestion and demo reports. With Spaces enabled, media is stored in the bucket. The local development `compose.yaml` still provides its separate local PostgreSQL service.
+
+## DigitalOcean Spaces media storage
+
+The Droplet supports `STORAGE_BACKEND=s3` with a private Spaces Standard Storage bucket. Both `social` and `media` DNS records still point to the Droplet. The app signs requests to the regional Spaces API with its own credentials and streams ingested media through `MEDIA_BASE_URL`. The Spaces key never appears in public media URLs. This configuration does not use the Spaces CDN; media delivery passes through the Droplet and consumes its bandwidth.
+
+Keep the bucket and its file listing private, without a public-read bucket policy. Create a dedicated limited-access Spaces key for that bucket with Read/Write/Delete permission (the available write-capable key permission). Store its two parts as `tudelu-spaces-access-key-id` and `tudelu-spaces-secret-access-key` in Google Secret Manager and grant the runtime identity access. The app only needs object reads/writes; it does not create buckets or modify permissions. [Spaces access keys](https://docs.digitalocean.com/products/spaces/how-to/manage-access/)
+
+In the existing root `.env`, set these fields; use the actual bucket name and region instead of the example `nyc3`:
+
+```env
+STORAGE_BACKEND=s3
+S3_BUCKET=YOUR_BUCKET_NAME
+S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com
+S3_REGION=nyc3
+AWS_ACCESS_KEY_ID=gsm://projects/${GCP_PROJECT_ID}/secrets/tudelu-spaces-access-key-id/versions/1
+AWS_SECRET_ACCESS_KEY=gsm://projects/${GCP_PROJECT_ID}/secrets/tudelu-spaces-secret-access-key/versions/1
+MEDIA_BASE_URL=https://media.tudelu.com
+```
+
+Use your selected media subdomain if different. `S3_ENDPOINT_URL` is the HTTPS regional API origin, without a bucket name, CDN hostname, path or trailing slash. `MEDIA_BASE_URL` remains a distinct HTTPS origin on the Droplet with no path or trailing slash. Keep the existing `MEDIA_DIR` and `WATCH_DIR` settings. [Official Python SDK configuration](https://docs.digitalocean.com/products/spaces/reference/aws-sdks/)
+
+The public media route accepts GET/HEAD for supported checksum filenames recorded in the asset library, supports single byte ranges for video retrieval, and has no bucket-listing or write operation. Files are returned unchanged, including embedded C2PA/IPTC metadata. Anyone with an ingested asset's media URL can retrieve it, including while a post is held; this matches the pipeline's public media-hosting model. Do not ingest confidential files. Missing objects return 404; access or service failures return a generic, noncached 503.
+
+Deploy this updated code and Caddy configuration before switching an older installation to `s3`. Rebuild the image, run the preflight, and recreate services with the Compose commands below. The preflight validates configuration without accessing the bucket. Existing local assets are not automatically migrated: copy the checksum-named files unchanged to the bucket root, or re-upload their original files through the app after switching. Do not delete the local copies until migration is verified.
 
 ## Get the managed database connection details
 
@@ -72,6 +96,8 @@ Create these secret names (or change the references to your naming scheme), with
 | `tudelu-admin-password` | The internal administrator password. |
 | `tudelu-anthropic-api-key` | The Claude API key. |
 | `tudelu-openai-api-key` | The OpenAI API key. |
+| `tudelu-spaces-access-key-id` | The Spaces access key ID; required when using Spaces. |
+| `tudelu-spaces-secret-access-key` | The Spaces secret key; required when using Spaces. |
 
 If only deploying the fixture demo, the two AI key settings can be blank until their secrets exist. Every nonempty `gsm://` reference is fetched at startup, even if its corresponding feature is not yet active. The core database/authentication/encryption secrets are required for production.
 

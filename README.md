@@ -6,6 +6,8 @@ The implementation uses FastAPI, SQLAlchemy/Alembic, PostgreSQL (SQLite locally)
 
 DigitalOcean deployment is configured in [compose.droplet.yaml](compose.droplet.yaml) for your existing Managed PostgreSQL cluster, with [verified TLS, Google Secret Manager setup and operations](docs/digitalocean.md). The current ignored `.env` contains deployment placeholders and `gsm://` references; `.env.local` preserves the offline demo. The managed database user's existing password is loaded from Secret Manager. For local development in this checkout, set `TUDELU_ENV_FILE=.env.local`.
 
+For production media, [enable private DigitalOcean Spaces storage](docs/digitalocean.md#digitalocean-spaces-media-storage) with `STORAGE_BACKEND=s3`. Keys are loaded from Secret Manager; the app streams ingested assets through the existing media hostname with GET/HEAD and video byte ranges. The bucket can stay private, and both app/media DNS records continue to point to the Droplet. Existing local assets must be copied unchanged or re-uploaded when switching storage.
+
 ## Run locally
 
 Use Python 3.12 or newer; the Docker image uses Python 3.12. This minimum accommodates the current PyAV and NumPy wheels. The supplied dependency lock reflects the verified development environment. On Windows:

@@ -25,10 +25,14 @@
 		path_regexp asset ^/[a-f0-9]{64}\.(jpg|png|gif|webp|mp4|mov|webm)$
 	}
 	handle @asset {
-		root * /srv/runtime/media
-		header Cache-Control "public, max-age=31536000, immutable"
+		reverse_proxy web:8000 {
+			rewrite /media{path}
+			header_up -Authorization
+			header_up -Cookie
+			header_up -X-Authenticated-User
+			header_up -X-Tudelu-Proxy-Secret
+		}
 		header X-Content-Type-Options nosniff
-		file_server
 	}
 	handle {
 		respond "Not found" 404

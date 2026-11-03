@@ -53,6 +53,8 @@ def create_app(settings=None):
             load_facts(db, settings.facts_path)
             db.commit()
         yield
+        if settings.storage_backend == "s3":
+            app.state.media_store.client.close()
         engine.dispose()
 
     app = FastAPI(title="Tudelu Social Studio", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -62,7 +64,15 @@ def create_app(settings=None):
     async def auth(request: Request, call_next):
         path = request.url.path
         if path == "/health" or path.startswith(("/media/", "/static/")):
-            return await call_next(request)
+            response = await call_next(request)
+            if path.startswith("/media/"):
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                    if response.status_code in {200, 206, 304}
+                    else "no-store"
+                )
+                response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
         if path.startswith("/oauth/") and path.endswith("/callback"):
             return await call_next(request)  # Bound state + signed session checked at callback.
         user = "local-developer"
@@ -114,6 +124,12 @@ def create_app(settings=None):
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
     if settings.storage_backend == "local":
         app.mount("/media", StaticFiles(directory=settings.media_dir), name="media")
+    else:
+        from .media import router as media_router
+        from .storage import S3Store
+
+        app.state.media_store = S3Store(settings)
+        app.include_router(media_router)
 
     def db_session():
         with factory() as db:

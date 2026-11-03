@@ -189,6 +189,21 @@ def test_deployment_template_fails_preflight_until_placeholders_are_replaced():
         k: v.replace("REPLACE_WITH_GCP_PROJECT_ID", "test-project") if v else v for k, v in values.items()
     }
     assert module.validate(values) == []
+    values.update(
+        STORAGE_BACKEND="s3",
+        S3_BUCKET="tudelu-test-media",
+        S3_ENDPOINT_URL="https://nyc3.digitaloceanspaces.com",
+        S3_REGION="nyc3",
+        AWS_ACCESS_KEY_ID=REF,
+        AWS_SECRET_ACCESS_KEY=REF.replace("test-key", "spaces-secret"),
+    )
+    assert module.validate(values) == []
+    values["S3_ENDPOINT_URL"] = "https://tudelu-test-media.nyc3.digitaloceanspaces.com"
+    assert any("S3_ENDPOINT_URL" in error for error in module.validate(values))
+    values["S3_ENDPOINT_URL"] = "https://nyc3.digitaloceanspaces.com"
+    values["AWS_SECRET_ACCESS_KEY"] = ""
+    assert any("AWS_SECRET_ACCESS_KEY" in error for error in module.validate(values))
+    values["AWS_SECRET_ACCESS_KEY"] = REF.replace("test-key", "spaces-secret")
     values["OPENAI_API_KEY"] = "plaintext-not-allowed"
     assert any("OPENAI_API_KEY" in error for error in module.validate(values))
 
@@ -260,3 +275,6 @@ def test_managed_database_ca_preflight_checks_file_and_system_support(tmp_path, 
     assert module.validate_ca_files(values) == []
     monkeypatch.setattr("psycopg.pq.version", lambda: 150000)
     assert module.validate_ca_files(values)
+    values["DATABASE_URL"] = "host-without-a-database-url"
+    errors = module.validate_ca_files(values)
+    assert "certificate has not been read" in errors[0]

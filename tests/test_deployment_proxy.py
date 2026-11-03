@@ -29,9 +29,22 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
         def do_GET(self):
             assert not self.headers.get("X-Authenticated-User")
             assert not self.headers.get("X-Tudelu-Proxy-Secret")
+            if self.path.startswith("/media/"):
+                assert self.path == "/media/" + filename
+                assert not self.headers.get("Authorization")
+                assert not self.headers.get("Cookie")
+                self.send_response(200)
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(payload)
+                return
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"admin-upstream")
+
+        do_HEAD = do_GET
 
         def log_message(self, *args):
             pass
@@ -66,7 +79,10 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
                 if process.poll() is not None:
                     pytest.fail("Caddy exited before readiness")
                 try:
-                    response = client.get(f"http://127.0.0.1:{media_port}/{filename}")
+                    response = client.get(
+                        f"http://127.0.0.1:{media_port}/{filename}",
+                        headers={"Authorization": "Basic test", "Cookie": "session=private"},
+                    )
                     break
                 except httpx.ConnectError:
                     time.sleep(0.1)

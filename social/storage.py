@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import av
 import boto3
+from botocore.config import Config
 from PIL import Image
 
 from .models import Asset
@@ -55,6 +56,12 @@ class S3Store:
             endpoint_url=settings.s3_endpoint_url or None,
             aws_access_key_id=settings.aws_access_key_id.get_secret_value() or None,
             aws_secret_access_key=settings.aws_secret_access_key.get_secret_value() or None,
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=10,
+                read_timeout=30,
+                retries={"mode": "standard", "total_max_attempts": 3},
+            ),
         )
 
     def put(self, key, data, mime):
@@ -67,7 +74,20 @@ class S3Store:
         )
 
     def read(self, key):
-        return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        body = self.open(key)["Body"]
+        try:
+            return body.read()
+        finally:
+            body.close()
+
+    def head(self, key):
+        return self.client.head_object(Bucket=self.bucket, Key=key)
+
+    def open(self, key, byte_range=None):
+        arguments = {"Bucket": self.bucket, "Key": key}
+        if byte_range:
+            arguments["Range"] = byte_range
+        return self.client.get_object(**arguments)
 
     def url(self, key):
         return f"{self.base}/{quote(key)}"

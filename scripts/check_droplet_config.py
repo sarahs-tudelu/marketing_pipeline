@@ -20,10 +20,43 @@ def validate(values):
         "ENVIRONMENT": "production",
         "SECRET_BACKEND": "google",
         "AUTH_MODE": "basic",
-        "STORAGE_BACKEND": "local",
     }.items():
         if values.get(key) != expected:
             errors.append(f"{key} must be {expected} for this Droplet compose file")
+    backend = values.get("STORAGE_BACKEND")
+    if backend not in {"local", "s3"}:
+        errors.append("STORAGE_BACKEND must be local or s3")
+    if backend == "s3":
+        for key in ("S3_BUCKET", "S3_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+            if not values.get(key) or "REPLACE_" in values[key].upper():
+                errors.append(f"Set {key} for Spaces storage (keys must be Secret Manager references)")
+        bucket = values.get("S3_BUCKET") or ""
+        if any(char in bucket for char in "/:@ "):
+            errors.append("S3_BUCKET must contain only the bucket name, without a URL or path")
+        try:
+            endpoint = urlsplit(values.get("S3_ENDPOINT_URL") or "")
+            if (
+                endpoint.scheme != "https"
+                or not endpoint.hostname
+                or endpoint.hostname.endswith(".invalid")
+                or "REPLACE_" in endpoint.netloc.upper()
+                or endpoint.username
+                or endpoint.password
+                or endpoint.port
+                or endpoint.path
+                or endpoint.query
+                or endpoint.fragment
+            ):
+                raise ValueError
+            if (
+                endpoint.hostname.endswith(".digitaloceanspaces.com")
+                and endpoint.hostname != f"{values.get('S3_REGION')}.digitaloceanspaces.com"
+            ):
+                raise ValueError
+        except ValueError:
+            errors.append(
+                "Set S3_ENDPOINT_URL to the HTTPS regional API origin, e.g. https://nyc3.digitaloceanspaces.com; omit bucket/CDN/path"
+            )
     for key in ("APP_BASE_URL", "MEDIA_BASE_URL"):
         url = urlsplit(values.get(key) or "")
         if (
@@ -169,10 +202,15 @@ def validate_ca_files(values, in_container=False):
     import ssl
 
     try:
+        cert = make_url(values.get("DATABASE_URL") or "").query.get("sslrootcert", "")
+    except Exception:
+        return [
+            "CA check could not start: correct the DATABASE_URL format first; certificate has not been read"
+        ]
+    try:
         directory = Path("/run/database-certs" if in_container else values.get("DATABASE_CA_HOST_DIR", ""))
         if not directory.is_dir():
             return ["Create the managed database certificate directory before starting Compose"]
-        cert = make_url(values["DATABASE_URL"]).query.get("sslrootcert", "")
         if cert == "system":
             from psycopg import pq
 

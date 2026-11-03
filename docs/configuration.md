@@ -24,11 +24,11 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `STORAGE_BACKEND` | `"local"` | local or s3. Original bytes, including C2PA/IPTC, are kept unchanged. |
 | `MEDIA_DIR` | `data/media` | Related configuration in the group above. |
 | `WATCH_DIR` | `data/inbox` | Drop media then a JSON manifest here; see README for the manifest format. |
-| `S3_BUCKET` | `(unset)` | S3-compatible storage; prefer workload/instance role credentials in production. |
-| `S3_ENDPOINT_URL` | `(unset)` | Related configuration in the group above. |
-| `S3_REGION` | `"us-east-1"` | Related configuration in the group above. |
-| `AWS_ACCESS_KEY_ID` | `(unset secret)` | Related configuration in the group above. |
-| `AWS_SECRET_ACCESS_KEY` | `(unset secret)` | Related configuration in the group above. |
+| `S3_BUCKET` | `(unset)` | S3-compatible bucket name. Droplet deployment can serve a private Spaces bucket through MEDIA_BASE_URL. |
+| `S3_ENDPOINT_URL` | `(unset)` | Regional S3 API origin, e.g. https://nyc3.digitaloceanspaces.com (not a bucket/CDN URL). |
+| `S3_REGION` | `"us-east-1"` | Bucket region, e.g. nyc3 for Spaces. |
+| `AWS_ACCESS_KEY_ID` | `(unset secret)` | Spaces access key ID; accepts a gsm:// reference with SECRET_BACKEND=google. |
+| `AWS_SECRET_ACCESS_KEY` | `(unset secret)` | Spaces secret key; accepts a gsm:// reference with SECRET_BACKEND=google. |
 | `TOKEN_ENCRYPTION_KEY` | `(unset secret)` | Required for storing tokens: Fernet key, or comma-separated new,old keys during rotation. |
 | `SESSION_SECRET` | `(unset secret)` | Required for production/live: random 32+ byte session signing secret. |
 | `AUTH_MODE` | `"dev"` | dev = loopback only. basic = internal/VPN. proxy = trusted SSO proxy with shared secret. |
