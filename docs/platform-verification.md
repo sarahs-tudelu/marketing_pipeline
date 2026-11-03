@@ -1,0 +1,53 @@
+# Official API verification
+
+Checked 2026-11-02 before implementing the adapters. Versioned endpoints are pinned in configuration. Meta pages that returned 429 to the search tool were retrieved directly from their official documentation URLs with standard HTTP. This project uses only official publishing APIs; documentation retrieval is not a platform data-scraping workflow.
+
+## Instagram / Facebook Login path
+
+Primary sources: [content publishing](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/content-publishing/), [media container reference](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media/), [publishing limit](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/content_publishing_limit/), [System User tokens](https://developers.facebook.com/docs/facebook-login/guides/access-tokens/).
+
+The current reference uses Graph `v26.0`. Implemented sequence: public media URL → `/IG_ID/media` → container status → `/IG_ID/media_publish`; image carousels create children then a parent, and reels use `media_type=REELS`. The native AI flag is `is_ai_generated`, applied only to a carousel parent. Caption disclosure is also retained. Facebook Login requires a linked Page/professional account and a Page token; the internal System User connection derives that Page token. No interactive Meta OAuth was added.
+
+The same publishing guide states 100 posts per moving 24 hours in its rate section and 50 in the carousel section. The implementation uses the lower bound and a default cap of 5, and queries `content_publishing_limit` on delivery. It does not silently assert that one conflicting number is authoritative. The reference permits 2,200 caption characters, 30 hashtags and 20 mentions; our policy is 5 hashtags and no mentions. JPEG only for images. Supported media is deliberately narrower than the platform maxima: images at most 5 MB, MP4/H.264 video at most 100 MB and 60 seconds, 23–60 fps, valid ratio/dimensions. Original provenance is never removed to make a file fit.
+
+## Facebook Page
+
+Sources: [Page posts](https://developers.facebook.com/docs/pages-api/posts/), [video publishing](https://developers.facebook.com/documentation/video-api/guides/publishing), [access tokens](https://developers.facebook.com/docs/facebook-login/guides/access-tokens/), [rate limiting](https://developers.facebook.com/docs/graph-api/overview/rate-limiting/).
+
+Photos use `/PAGE_ID/photos`. Videos initialize an app upload, send the original bytes to the returned upload session, then publish the returned file handle to `graph-video.facebook.com/v26.0/PAGE_ID/videos`. The System User token performs the app upload and the derived Page token publishes. The application sends no invented universal AI-disclosure field to these endpoints; disclosure is in the caption and embedded metadata is preserved. Endpoint-specific labels must be rechecked if changing the publishing surface to Reels.
+
+The Page guide and video guide differ in their listed permissions; the guide names `publish_video` and Page tasks in addition to Page posting/read permissions, while the video guide lists `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`. Operators must use the requirements shown for their approved app and selected surface. There is no single documented universal posts/day limit for all Page apps. The internal cap of 3/day is an operational ceiling, not a claim about a fixed Meta hard limit; platform rejections are honored.
+
+## LinkedIn
+
+Sources: [Posts API](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2026-09), [Images API](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/images-api?view=li-lms-2026-09), [image binary upload requirements linked by Images API](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/vector-asset-api?view=li-lms-2026-09#upload-the-image), [Videos API](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/videos-api?view=li-lms-2026-09), [three-legged OAuth](https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow), [refresh tokens](https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens), [rate limits](https://learn.microsoft.com/en-us/linkedin/shared/api-guide/concepts/rate-limits).
+
+`/rest/posts` uses an organization URN, `LinkedIn-Version: 202609`, Rest.li 2.0, PUBLIC visibility, MAIN_FEED distribution and PUBLISHED lifecycle. Image/video URNs come from the respective initialize/upload/status flows. Video upload additionally finalizes ordered ETags. Image PUTs require Bearer auth to the official upload host; video PUTs omit it. Post ID comes from `x-restli-id`. Multi-image organic content is supported; sponsored carousel APIs are outside scope. Scopes are `w_organization_social`, `r_organization_social`, `rw_organization_admin`.
+
+Programmatic refresh requires approved MDP access; returned expiry controls refresh/reconnect. Refreshing does not extend the original refresh-token lifetime. Caption fallback disclosure is used. The internal cap is 3/day and app/account limits remain entitlement-dependent; configure downward for a more restrictive approved tier. The caption profile uses a conservative 3,000-character ceiling.
+
+## X
+
+Sources: [create post](https://docs.x.com/x-api/posts/create-post), [chunked media](https://docs.x.com/x-api/media/quickstart/media-upload-chunked), [PKCE OAuth](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code), [rate limits](https://docs.x.com/x-api/fundamentals/rate-limits), [billing](https://docs.x.com/x-api/fundamentals/post-cap), [counting characters](https://docs.x.com/fundamentals/counting-characters).
+
+API v2 only. Media uses dedicated initialize/append/finalize endpoints, with status GET using `command=STATUS`. The obsolete command-style v1 upload protocol is not used. Post creation is `/2/tweets`, with native `made_with_ai`. Attachments are up to four images or one video. The app uses 4 MiB upload chunks and a conservative media envelope. OAuth scopes include `media.write` and `offline.access`; S256 PKCE and confidential-client token exchange are implemented, including rotated refresh-token persistence.
+
+The rate table currently lists 100 create requests per user/15 minutes and 10,000 per app/24 hours; our cap is 3/day with three-hour spacing. The length check uses t.co URL weighting and a conservative Unicode upper bound, which may hold some valid emoji-heavy captions rather than risk overflow. `X_INCLUDE_LINKS` defaults false. The public guide confirms pay-per-use and directs current endpoint pricing to the Console; it did not substantiate a universal fixed link surcharge. No price is hard-coded.
+
+## TikTok
+
+Sources: [inbox upload](https://developers.tiktok.com/doc/content-posting-api-reference-upload-video), [media transfer](https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide), [status fetch](https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status), [web Login Kit](https://developers.tiktok.com/doc/login-kit-web), [token management](https://developers.tiktok.com/doc/oauth-user-access-token-management).
+
+Only `/v2/post/publish/inbox/video/init/` with `video.upload` is implemented. Its payload is `source_info`; it has no caption/AI-label field. Captions and the AI-label instruction are sent to the internal assignee for the TikTok app. File chunks follow documented size/remainder rules; URL delivery requires a verified prefix. Status is polled until inbox delivery is confirmed. Public publication is never inferred from upload success.
+
+The approximately 15/day Direct Post allowance in the brief does not govern this mode. Inbox upload documents at most five pending shares in 24 hours and six initialize requests/minute. The default is three/day, plus a conservative outstanding-pending guard. TikTok web OAuth uses confidential-client exchange and state; PKCE is explicitly documented for mobile/desktop rather than included blindly in web parameters. Access/refresh expirations and replacement refresh tokens are persisted from the response.
+
+## AI and Phase 2
+
+AI sources: [Claude Messages](https://platform.claude.com/docs/en/api/messages), [Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort), [OpenAI Images](https://developers.openai.com/api/reference/resources/images/methods/generate), [OpenAI vision](https://developers.openai.com/api/docs/guides/images-vision), [embedding model](https://developers.openai.com/api/docs/models/text-embedding-3-small). Current Claude `output_config.effort=xhigh` implements the requested extra effort. Generation and independent fact review are separate calls. OpenAI image output is stored as returned, preserving embedded metadata.
+
+Read-only metrics sources: [Instagram media insights](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-media/insights/), [Facebook insights](https://developers.facebook.com/docs/graph-api/reference/insights/), [LinkedIn share statistics](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/organizations/share-statistics?view=li-lms-2026-09), [X post metrics](https://docs.x.com/x-api/fundamentals/metrics), [TikTok video query](https://developers.tiktok.com/doc/tiktok-api-v2-video-query). Native metric names are retained. No likes, comments, follows, reposts or messages are created by these collectors.
+
+## Activation boundary
+
+Documentation verification and mocked contracts are not live conformance certification. Real scopes, account entitlements, app review, token issuance and domain/media reachability can only be verified once configured. No real platform credentials were requested, read or used during the build, and nothing was published. API versions and model IDs can be changed in configuration when their official contracts remain compatible; a future platform breaking change cannot honestly be guaranteed to need no code change.

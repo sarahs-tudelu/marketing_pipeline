@@ -1,0 +1,47 @@
+# Build verification
+
+Verified on 2026-11-02 in the supplied Windows workspace using Python 3.14.6. The project targets Python 3.12+ and the Dockerfile selects 3.12. No real platform or AI credentials were used; no public posts or external notifications were sent.
+
+## Executed checks
+
+- `pytest`: **108 passed**. One nonblocking Starlette warning recommends its newer optional TestClient HTTP transport; the requested httpx implementation remains in use.
+- `ruff check social tests migrations scripts` and `ruff format`: passed.
+- `alembic check`: no model/schema drift.
+- Isolated SQLite migration `upgrade head → downgrade base → upgrade head → check`: passed, including closing connections and cleaning the temporary database.
+- `pip check`: no dependency conflicts. `requirements.lock` records the resolved versions with a Windows-only marker for pywin32.
+- `docker compose config --no-env-resolution --no-interpolate --quiet`: passed.
+- Both `.agents/skills/*/SKILL.md` files passed the skill validator.
+- Configuration generator verified that `.env.example` covers all 82 application settings and documents all 27 platform profile fields, plus the Compose database password.
+- Local Uvicorn startup, dashboard, connections, queues, analytics and health returned HTTP 200. All five connections display Not connected. A separate APScheduler worker started and completed its first tick.
+
+## End-to-end demo
+
+`tudelu init` and `tudelu demo` exercised ingestion, immutable provenance, fact selection, distinct captions, automated gate checks, rolling-cap scheduling, campaign staggering and dry-run adapters. The E2E test forbids HTTP requests and confirms the recorded lifecycle for all five platforms.
+
+| Platform | Simulated result | Recorded request stages |
+|---|---|---:|
+| LinkedIn | published | 4 |
+| Instagram | published | 5 |
+| Facebook | published | 1 |
+| X | published | 4 |
+| TikTok | awaiting_manual | 3 |
+
+The runtime report is `data/demo-report.json`. Seed source and facts are committed project inputs; generated databases/media/reports are ignored runtime files. Repeating the demo does not create duplicate posts. A virtual clock advances the demo through real reserved slots without waiting overnight. In ordinary worker operation the actual clock controls delivery.
+
+## Test scope
+
+Gate tests cover grounding, fact-ID laundering, dates/prices, URLs and public media reachability, caption/hashtag/mention rules, banned claims, testimonials and permission, AI disclosure, rights, media compatibility, original-byte integrity, semantic/cross-platform duplicates, independent model review, vision rejection and live-readiness failures. Recent publication time is used for duplicate history even if a draft is old.
+
+Scheduler tests cover rolling windows and their boundaries, future reservations, time windows/DST, spacing, promotional mix, staggering and retries delayed by another recent delivery. Kill-switch and automatic-pause behavior are tested, including unknown failures.
+
+Adapter tests use mocked official API exchanges for all five platforms, image/video paths, native disclosure fields, 429, expired auth, policy rejection and transient errors. Durable acknowledgements recover without repeating network calls after a worker interruption. Uncertain irreversible writes are never blindly replayed. Model tests verify separate Claude review calls, extra effort, incomplete-output rejection, OpenAI request shapes and byte-preserving image storage. Watch-folder tests verify UTC normalization of rights expiry.
+
+OAuth/token tests exercise state/PKCE, binding, replay prevention, token encryption, refresh rotation and expiry alerts. Admin tests exercise authentication and CSRF. Phase 2 tests exercise read-only metrics requests, simulated-data marking, daily deduplication and suggestions that leave caps unchanged.
+
+## Remaining external validation
+
+Docker is installed, but its daemon did not respond. The Compose file was validated without running containers. PostgreSQL integration, Linux container startup, production S3/CDN serving, SMTP/Slack delivery and real platform/AI API calls have **not** been tested. These require the configured services or credentials and, for public publishing, the user's authorization.
+
+Platform app review, approved scopes, account entitlements, domain verification and actual media retrieval cannot be established by mocks. Complete the connection and activation steps in `README.md` before a permitted live smoke test. Video generation has no selected commercial provider; existing videos and the offline fixture are supported. AI video review samples frames and does not certify every frame.
+
+Official API evidence, conflicts with the brief and supported conservative limits are documented in [platform verification](platform-verification.md). Current documented flows are implemented; future incompatible platform changes may require adapter updates.

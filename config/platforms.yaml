@@ -1,0 +1,43 @@
+# Conservative supported subset; see docs/platform-verification.md.
+linkedin:
+  max_length: 3000
+  hashtag_limit: 3
+  tone: professional, practical, concise
+  lead_in: "From the Tudelu team:"
+  max_assets: 9
+instagram:
+  max_length: 2200
+  hashtag_limit: 5
+  allow_links: false
+  tone: visual, concise, approachable
+  lead_in: "A closer look from Tudelu."
+  hard_cap: 5
+  operational_ceiling: 10
+  documented_daily_limit: 50  # Lower of conflicting numbers on Meta's current guide.
+  image_formats: [image/jpeg]
+  max_assets: 10
+facebook:
+  max_length: 5000
+  hashtag_limit: 3
+  tone: friendly and informative
+  lead_in: "An update from Tudelu:"
+  max_assets: 1
+x:
+  max_length: 280
+  hashtag_limit: 2
+  tone: brief and direct
+  lead_in: "Tudelu update:"
+  max_assets: 4
+tiktok:
+  max_length: 2200
+  hashtag_limit: 4
+  allow_links: false
+  tone: conversational and concise
+  lead_in: "Take a look with Tudelu."
+  hard_cap: 3
+  operational_ceiling: 4
+  documented_daily_limit: 5
+  image_formats: []
+  min_width: 360
+  min_height: 360
+  max_assets: 1

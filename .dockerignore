@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+data
+secrets
+__pycache__
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.coverage
+*.egg-info
+dist
+build

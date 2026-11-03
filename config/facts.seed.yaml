@@ -1,0 +1,24 @@
+version: demo-1
+demo_only: true
+products: []
+brand_voice: "Clear, calm and concrete. Never infer product performance from an image."
+banned_phrases: [guaranteed, best in class, cures, risk-free, customer says, beats our competitors]
+required_disclaimers: ["Internal demo."]
+canonical_urls: []
+hashtags:
+  linkedin: [Tudelu]
+  instagram: [Tudelu]
+  facebook: [Tudelu]
+  x: [Tudelu]
+  tiktok: [Tudelu]
+facts:
+  - id: company.name
+    kind: claim
+    product: company
+    text: "Tudelu."
+    variants: []
+  - id: demo.context
+    kind: claim
+    product: demo
+    text: "This is an internal publishing pipeline demonstration."
+    variants: []
