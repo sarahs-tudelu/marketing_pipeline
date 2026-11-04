@@ -36,6 +36,8 @@ Scheduler tests cover rolling windows and their boundaries, future reservations,
 
 Adapter tests use mocked official API exchanges for all five platforms, image/video paths, native disclosure fields, 429, expired auth, policy rejection and transient errors. Durable acknowledgements recover without repeating network calls after a worker interruption. Uncertain irreversible writes are never blindly replayed. Model tests verify separate Claude review calls, extra effort, incomplete-output rejection, OpenAI request shapes and byte-preserving image storage. Watch-folder tests verify UTC normalization of rights expiry.
 
+Post-operation concurrency tests use separate SQLite sessions and threads to exercise simultaneous generation, proving one provider call and one successful transition. They cover stale generation/review requests, rollback of pending stale captions, repeated form/API submissions and worker conflict handling. PostgreSQL `FOR UPDATE NOWAIT` SQL and lock-contention error handling are verified with mocked database responses; these tests do not connect to the managed production database.
+
 OAuth/token tests exercise state/PKCE, binding, replay prevention, token encryption, refresh rotation and expiry alerts. Admin tests exercise authentication and CSRF. Phase 2 tests exercise read-only metrics requests, simulated-data marking, daily deduplication and suggestions that leave caps unchanged.
 
 ## Remaining external validation

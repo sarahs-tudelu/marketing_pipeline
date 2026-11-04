@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from .config import profiles
 from .db import now, uid
 from .facts import Facts, active, content_digest, render
-from .lifecycle import transition
+from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
 from .providers import Providers
 from .security import public_url
@@ -323,8 +323,10 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
 
 
 def run_gate(db, settings, post, **kwargs):
+    lock_post(db, post)
     if post.status != "generated":
-        raise ValueError("Only generated posts can enter the gate")
+        db.rollback()
+        raise PostConflict("This post has already changed status. Refresh its page before running checks.")
     results, assets = evaluate(db, settings, post, **kwargs)
     transition(db, post, "checked", "Automated checks completed")
     failures = [c.name for c in results if not c.passed]

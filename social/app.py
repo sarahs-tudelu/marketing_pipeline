@@ -20,7 +20,7 @@ from .config import PLATFORMS, get_settings, profiles
 from .db import make_engine, sessions
 from .facts import Facts, load_facts, render, save_facts
 from .gate import run_gate
-from .lifecycle import transition
+from .lifecycle import PostConflict, lock_post, transition
 from .models import Account, Alert, Asset, CheckResult, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, draft, generate
@@ -156,6 +156,10 @@ def create_app(settings=None):
     async def invalid(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=400)
 
+    @app.exception_handler(PostConflict)
+    async def post_conflict(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
     @app.get("/health")
     def health():
         return {"status": "ok"}
@@ -263,6 +267,8 @@ def create_app(settings=None):
         return {"id": post.id, "status": post.status}
 
     def action_impl(db, post, action, actor, parts=None):
+        if action in {"check", "approve", "reject", "edit", "tiktok_status"}:
+            lock_post(db, post)
         if action == "generate":
             generate(db, settings, post)
         elif action in {"check", "approve"}:
@@ -350,7 +356,11 @@ def create_app(settings=None):
             raise HTTPException(404)
         form = await request.form()
         parts = json.loads(form["parts"]) if "parts" in form else None
-        await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts)
+        try:
+            await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts)
+        except PostConflict as exc:
+            db.rollback()
+            return page(request, db, "post", post_id, error_message=str(exc), status_code=409)
         return RedirectResponse(f"/posts/{post.id}", status_code=303)
 
     @app.post("/forms/control", dependencies=mutation)

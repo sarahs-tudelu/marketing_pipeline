@@ -165,6 +165,7 @@ def test_ai_captions_pass_without_disclosure_text_and_keep_required_disclaimers(
     change_facts(db, post, required_disclaimers=["Availability varies."])
     assets[0].source, assets[0].generator, assets[0].prompt = source, "fixture", "fixture"
     post.platform, post.status = platform, "draft"
+    db.commit()  # Persist the fixture's draft state before the operation claims its row.
     generate(db, settings, post)
     assert post.ai_disclosure
     assert "AI-generated or AI-edited media." not in post.caption

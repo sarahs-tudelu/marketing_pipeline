@@ -6,7 +6,7 @@ from .config import PLATFORMS, profiles
 from .db import now
 from .facts import Facts, active, content_digest, render
 from .gate import evaluate
-from .lifecycle import transition
+from .lifecycle import PostConflict, lock_post, transition
 from .models import Account, Asset, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import alert, event
 from .provider_errors import ProviderError
@@ -45,8 +45,12 @@ def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="
 
 
 def generate(db, settings, post, providers=None):
+    lock_post(db, post)
     if post.status != "draft":
-        raise ValueError("Only drafts may be generated")
+        db.rollback()
+        raise PostConflict(
+            "This post has already moved beyond draft. Refresh its page to see the caption and status."
+        )
     providers = providers or Providers(settings)
     facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
     assets = [db.get(Asset, id) for id in post.asset_ids]
@@ -77,6 +81,8 @@ def generate(db, settings, post, providers=None):
             "generated",
             f"Caption provider: {'fixture' if settings.ai_mode == 'fixture' else settings.anthropic_model}",
         )
+    except PostConflict:
+        raise
     except Exception as exc:
         if isinstance(exc, ProviderError):
             event(

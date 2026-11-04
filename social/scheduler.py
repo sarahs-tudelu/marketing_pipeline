@@ -6,7 +6,7 @@ from sqlalchemy import select, update
 
 from .config import profiles
 from .db import now
-from .lifecycle import transition
+from .lifecycle import PostConflict, transition
 from .models import Account, Control, Post
 
 COUNTED = {"scheduled", "publishing", "published", "awaiting_manual"}
@@ -71,7 +71,8 @@ def schedule(db, settings, post, earliest=None):
     if control.killed or account.paused:
         raise ValueError("Publishing is paused")
     if post.status != "approved":
-        raise ValueError("Only approved posts can be scheduled")
+        db.rollback()
+        raise PostConflict("This post has already changed status. Refresh its page to see its schedule.")
     from .adapters import adapter
 
     selected = adapter(settings, db, post)

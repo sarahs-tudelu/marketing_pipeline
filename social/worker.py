@@ -8,6 +8,7 @@ from sqlalchemy import func, select, text
 from .config import get_settings
 from .connections import refresh_all
 from .db import make_engine, now, sessions
+from .lifecycle import PostConflict
 from .models import Post
 from .monitoring import alert, deliver_alerts, event, setup_logging
 from .pipeline import bootstrap, generate, publish_due
@@ -34,6 +35,8 @@ def advance_queue(db, settings):
                 run_gate(db, settings, post)
             if post.status == "approved":
                 schedule(db, settings, post)
+        except PostConflict:
+            db.rollback()  # The admin or another transaction is already handling this post.
         except ValueError:
             db.rollback()  # Capacity/config errors leave the approved post available.
             alert(
