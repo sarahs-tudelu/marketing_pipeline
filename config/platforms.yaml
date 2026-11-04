@@ -2,14 +2,14 @@
 linkedin:
   max_length: 3000
   hashtag_limit: 3
-  tone: professional, practical, concise
+  tone: warm, confident and conversational; reader-focused, persuasive without corporate jargon
   lead_in: "From the Tudelu team:"
   max_assets: 9
 instagram:
   max_length: 2200
   hashtag_limit: 5
   allow_links: false
-  tone: visual, concise, approachable
+  tone: expressive, visual and inviting; playful touches, varied rhythm and an occasional fitting emoji
   lead_in: "A closer look from Tudelu."
   hard_cap: 5
   operational_ceiling: 10
@@ -19,20 +19,20 @@ instagram:
 facebook:
   max_length: 5000
   hashtag_limit: 3
-  tone: friendly and informative
+  tone: friendly and personal; natural questions, relatable language and gentle invitations
   lead_in: "An update from Tudelu:"
   max_assets: 1
 x:
   max_length: 280
   hashtag_limit: 2
-  tone: brief and direct
+  tone: punchy, curious and concise; fresh openings and varied punctuation without hype
   lead_in: "Tudelu update:"
   max_assets: 4
 tiktok:
   max_length: 2200
   hashtag_limit: 4
   allow_links: false
-  tone: conversational and concise
+  tone: casual, lively and conversational; a strong opening, short lines and no forced slang
   lead_in: "Take a look with Tudelu."
   hard_cap: 3
   operational_ceiling: 4

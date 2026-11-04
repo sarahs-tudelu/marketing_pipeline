@@ -25,6 +25,13 @@ def test_openai_generation_and_vision_preserve_original_bytes(db, settings, asse
         if request.url.path.endswith("responses"):
             assert payload["store"] is False
             assert payload["model"] == settings.openai_vision_model
+            output_format = payload["text"]["format"]
+            assert output_format["type"] == "json_schema" and output_format["strict"] is True
+            schema = output_format["schema"]
+            assert schema["additionalProperties"] is False
+            assert set(schema["required"]) == set(schema["properties"])
+            for field in ("passed", "garbled_text", "misused_logos", "unexpected_people"):
+                assert schema["properties"][field]["type"] == "boolean"
             image = payload["input"][0]["content"][1]["image_url"]
             assert base64.b64decode(image.split(",", 1)[1]) == data
             result = {

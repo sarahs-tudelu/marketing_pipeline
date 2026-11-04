@@ -5,7 +5,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from .models import Post, Transition
 
 ALLOWED = {
-    "draft": {"generated", "held"},
+    "draft": {"generated", "held", "deleted"},
     "generated": {"checked", "held"},
     "checked": {"approved", "held"},
     "held": {"draft", "generated", "failed"},
@@ -15,6 +15,7 @@ ALLOWED = {
     "awaiting_manual": {"published", "failed"},
     "failed": set(),
     "published": set(),
+    "deleted": set(),
 }
 
 

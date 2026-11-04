@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from .config import profiles
 from .db import now, uid
-from .facts import Facts, active, content_digest, render
+from .facts import Facts, active, caption_fact_ids, composed, content_digest, part_fact_ids, render
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
 from .providers import Providers
@@ -152,12 +152,13 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
 
     def grounding():
         expected = render(post.parts, profile, facts, post.platform, settings)
-        ids = list(dict.fromkeys(p["fact_id"] for p in post.parts))
+        ids = caption_fact_ids(post.parts)
         allowed_products = {post.product, "company"}
         relevant = all(f.product in allowed_products for f in facts.facts if f.id in ids)
         return expected == post.caption and ids == post.fact_ids and relevant, {
             "fact_ids": ids,
-            "exact_approved_wording": expected == post.caption,
+            "render_matches": expected == post.caption,
+            "semantic_review_required": composed(post.parts),
         }
 
     check("grounding", grounding)
@@ -266,7 +267,10 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         maximum = max([s["similarity"] for s in similarities], default=0)
         cross = db.scalar(
             select(Post.id).where(
-                Post.id != post.id, Post.platform != post.platform, Post.caption == post.caption
+                Post.id != post.id,
+                Post.platform != post.platform,
+                Post.caption == post.caption,
+                Post.status != "deleted",
             )
         )
         return maximum < settings.duplicate_threshold and not cross, {
@@ -278,22 +282,57 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     check("duplicates", duplicates)
     context = {
         "caption": post.caption,
+        "caption_parts": post.parts,
         "fact_ids": post.fact_ids,
         "facts": facts.model_dump(mode="json"),
         "campaign": post.campaign,
         "platform": post.platform,
+        "product": post.product,
+        "content_kind": post.kind,
+        "execution_mode": "live" if live else "dry_run",
+        "public_publication": live,
         "at": at.isoformat(),
-        "assets": [{"source": a.source, "tags": a.tags, "rights": a.rights} for a in assets],
+        "renderer_context": {
+            "lead_in": "" if composed(post.parts) else profile.lead_in,
+            "required_disclaimers": facts.required_disclaimers,
+            "hashtags": facts.hashtags.get(post.platform, [])[: profile.hashtag_limit],
+            "automatic_caption_disclosure": False,
+            "disclosure_check": next(c.details for c in results if c.name == "disclosure"),
+        },
+        "assets": [
+            {
+                "asset_id": a.id,
+                "source": a.source,
+                "asset_type": a.tags.get("asset_type"),
+                "product_family": a.tags.get("product_family", a.tags.get("product")),
+                "tags": a.tags,
+                "rights": a.rights,
+                "rights_status": a.tags.get("rights_status"),
+                "rights_expire_at": a.rights_expire_at,
+                "source_or_creation_record": {
+                    "generator": a.generator,
+                    "prompt": a.prompt,
+                    "checksum": a.checksum,
+                },
+                "demo_only": a.demo_only,
+            }
+            for a in assets
+        ],
     }
 
     def model_review():
         review = providers.review(context)
-        return (
-            review.score >= settings.review_min_score and not review.unsupported_claims,
-            review.model_dump(),
+        coverage = not composed(post.parts) or (
+            [c.part_index for c in review.part_checks] == list(range(len(post.parts)))
+            and all(
+                c.supported and c.fact_ids == part_fact_ids(post.parts[c.part_index]) and c.reasons
+                for c in review.part_checks
+            )
         )
-
-    check("model_review", model_review)
+        return (
+            review.score >= settings.review_min_score and not review.unsupported_claims and coverage,
+            review.model_dump() | {"complete_citation_review": bool(coverage)},
+        )
 
     def vision_review():
         if not needed:
@@ -305,6 +344,9 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         ) and all(c in approved for c in result.visible_claims), result.model_dump()
 
     check("vision_review", vision_review)
+    visual_check = results[-1]
+    context["visual_review"] = {"passed": visual_check.passed, "details": visual_check.details}
+    check("model_review", model_review)
     check(
         "live_readiness",
         lambda: (

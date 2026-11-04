@@ -18,12 +18,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import connections
 from .config import PLATFORMS, get_settings, profiles
 from .db import make_engine, sessions
-from .facts import Facts, load_facts, render, save_facts
+from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Account, Alert, Asset, CheckResult, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import event, set_kill, setup_logging
-from .pipeline import bootstrap, draft, generate
+from .pipeline import bootstrap, delete_draft, draft, generate
 from .provider_errors import ProviderError
 from .providers import Providers
 from .scheduler import schedule
@@ -182,7 +182,9 @@ def create_app(settings=None):
                 }
             )
         post = db.get(Post, post_id) if post_id else None
-        posts = db.scalars(select(Post).order_by(Post.created_at.desc()).limit(200)).all()
+        posts = db.scalars(
+            select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(200)
+        ).all()
         if view == "queues":
             posts = [p for p in posts if p.status in {"held", "awaiting_manual", "failed"}]
         from .analytics import report
@@ -237,7 +239,8 @@ def create_app(settings=None):
 
     @app.get("/posts/{post_id}", response_class=HTMLResponse)
     def detail(post_id: str, request: Request, db: DB):
-        if not db.get(Post, post_id):
+        post = db.get(Post, post_id)
+        if not post or post.status == "deleted":
             raise HTTPException(404)
         return page(request, db, "post", post_id)
 
@@ -258,7 +261,9 @@ def create_app(settings=None):
                 "url": p.live_url,
                 "dry_run": p.dry_run,
             }
-            for p in db.scalars(select(Post).order_by(Post.created_at.desc()).limit(500))
+            for p in db.scalars(
+                select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(500)
+            )
         ]
 
     @app.post("/api/posts", dependencies=mutation)
@@ -271,6 +276,8 @@ def create_app(settings=None):
             lock_post(db, post)
         if action == "generate":
             generate(db, settings, post)
+        elif action == "delete":
+            delete_draft(db, post, actor)
         elif action in {"check", "approve"}:
             if post.status == "held":
                 transition(db, post, "generated", "Requested automated recheck", actor)
@@ -287,11 +294,11 @@ def create_app(settings=None):
                 transition(db, post, "draft", "Edited; approval invalidated", actor)
             facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
             post.parts = parts
-            post.fact_ids = list(dict.fromkeys(p["fact_id"] for p in parts))
+            post.fact_ids = caption_fact_ids(parts)
             post.ai_disclosure = any(db.get(Asset, id).source != "company" for id in post.asset_ids)
             post.caption = render(parts, profiles(settings)[post.platform], facts, post.platform, settings)
             post.approved_digest = ""
-            transition(db, post, "generated", "Edited approved fact selections", actor)
+            transition(db, post, "generated", "Edited caption and fact citations", actor)
             db.commit()
             run_gate(db, settings, post)
         elif action == "tiktok_status":
@@ -330,7 +337,7 @@ def create_app(settings=None):
     @app.post("/api/posts/{post_id}/{action}", dependencies=mutation)
     def post_action(post_id: str, action: str, request: Request, db: DB, parts: list[dict] | None = None):
         post = db.get(Post, post_id)
-        if not post:
+        if not post or post.status == "deleted":
             raise HTTPException(404)
         return action_impl(db, post, action, request.state.actor, parts)
 
@@ -352,7 +359,7 @@ def create_app(settings=None):
     @app.post("/forms/posts/{post_id}/{action}", dependencies=mutation)
     async def form_action(post_id: str, action: str, request: Request, db: DB):
         post = db.get(Post, post_id)
-        if not post:
+        if not post or post.status == "deleted":
             raise HTTPException(404)
         form = await request.form()
         parts = json.loads(form["parts"]) if "parts" in form else None
@@ -360,8 +367,10 @@ def create_app(settings=None):
             await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts)
         except PostConflict as exc:
             db.rollback()
+            if db.get(Post, post_id).status == "deleted":
+                return RedirectResponse("/", status_code=303)
             return page(request, db, "post", post_id, error_message=str(exc), status_code=409)
-        return RedirectResponse(f"/posts/{post.id}", status_code=303)
+        return RedirectResponse("/" if post.status == "deleted" else f"/posts/{post.id}", status_code=303)
 
     @app.post("/forms/control", dependencies=mutation)
     async def control(request: Request, db: DB):

@@ -1,10 +1,11 @@
+import hashlib
 from datetime import timedelta
 
 from sqlalchemy import select, update
 
 from .config import PLATFORMS, profiles
 from .db import now
-from .facts import Facts, active, content_digest, render
+from .facts import Facts, active, caption_fact_ids, content_digest, render
 from .gate import evaluate
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Account, Asset, Control, FactSheet, Post, RequestRecord, Transition
@@ -56,8 +57,19 @@ def generate(db, settings, post, providers=None):
     assets = [db.get(Asset, id) for id in post.asset_ids]
     post.ai_disclosure = any(a.source != "company" for a in assets)
     profile = profiles(settings)[post.platform]
+    variant = int(hashlib.sha256(post.id.encode()).hexdigest()[:8], 16)
+    recent = db.scalars(
+        select(Post)
+        .where(
+            Post.id != post.id, Post.platform == post.platform, Post.caption != "", Post.status != "deleted"
+        )
+        .order_by(Post.created_at.desc())
+        .limit(8)
+    ).all()
     context = {
         "platform": post.platform,
+        "content_kind": post.kind,
+        "product": post.product,
         "profile": profile.model_dump(),
         "campaign": post.campaign,
         "assets": [{"id": a.id, "source": a.source, "tags": a.tags} for a in assets],
@@ -69,12 +81,47 @@ def generate(db, settings, post, providers=None):
         "brand_voice": facts.brand_voice,
         "disclaimers": facts.required_disclaimers,
         "ai_disclosure": post.ai_disclosure,
+        "style_brief": {
+            "variant": variant,
+            "tone": [
+                "warm and conversational",
+                "curious and lightly playful",
+                "confident and direct",
+                "thoughtful and inviting",
+                "bright and enthusiastic without hype",
+            ][(variant // 5) % 5],
+            "angle": [
+                "spotlight one approved detail instead of listing everything",
+                "invite the reader to explore an approved benefit",
+                "use a fresh question grounded in the approved facts",
+                "make one supported idea memorable with simple language",
+            ][(variant // 25) % 4],
+            "opening": [
+                "a genuine question",
+                "a short, inviting statement",
+                "an unexpected but factual angle",
+                "a conversational invitation",
+                "start directly with an approved benefit",
+            ][variant % 5],
+            "rhythm": [
+                "short and punchy",
+                "a short opening followed by a flowing sentence",
+                "two or three natural sentences with breathing room",
+            ][variant % 3],
+            "punctuation": [
+                "use a question when natural",
+                "a little enthusiasm; at most one exclamation mark",
+                "calm confidence with periods and occasional dashes",
+                "vary pauses and line breaks",
+            ][variant % 4],
+        },
+        "recent_captions": [p.caption for p in recent],
     }
     try:
         parts = providers.caption(context)
         caption = render(parts, profile, facts, post.platform, settings)
         post.parts, post.caption = parts, caption
-        post.fact_ids = list(dict.fromkeys(p["fact_id"] for p in parts))
+        post.fact_ids = caption_fact_ids(parts)
         transition(
             db,
             post,
@@ -97,6 +144,15 @@ def generate(db, settings, post, providers=None):
         transition(db, post, "held", f"Caption generation rejected: {reason}")
     db.commit()
     return post
+
+
+def delete_draft(db, post, actor):
+    lock_post(db, post)
+    if post.status != "draft":
+        db.rollback()
+        raise PostConflict("Only draft posts can be deleted. Refresh to see this post's current status.")
+    transition(db, post, "deleted", "Draft deleted", actor)
+    db.commit()
 
 
 def publish_due(db, settings, at=None, client=None):

@@ -9,8 +9,9 @@ from typing import Protocol
 import av
 import httpx
 from botocore.exceptions import BotoCoreError, ClientError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
+from .facts import composed, part_fact_ids
 from .provider_errors import ProviderError, request_json
 from .storage import ingest, storage
 
@@ -27,10 +28,28 @@ class VideoGenerator(Protocol):
     def generate(self, prompt: str) -> tuple[bytes, str, str]: ...
 
 
+FIXTURE_HOOKS = {
+    "linkedin": ["A different way to look at it.", "Let's take a closer look."],
+    "instagram": ["A closer look 👀", "Pause. Take it in."],
+    "facebook": ["Something to explore together.", "Here's a little inspiration!"],
+    "x": ["Worth a closer look?", "Look closer. Stay curious."],
+    "tiktok": ["Wait—take a look.", "Your next scroll can wait 👀"],
+}
+FIXTURE_CTAS = ["Explore Tudelu.", "What catches your eye?", "Take another look."]
+
+
+class PartCheck(BaseModel):
+    part_index: int = Field(ge=0)
+    fact_ids: list[str]
+    supported: StrictBool
+    reasons: list[str]
+
+
 class Review(BaseModel):
     score: float = Field(ge=0, le=1)
     reasons: list[str]
     unsupported_claims: list[str] = []
+    part_checks: list[PartCheck] = []
 
 
 class VisionReview(BaseModel):
@@ -86,10 +105,26 @@ class Claude:
 
     def generate(self, context):
         result = self.call(
-            "You select approved caption sentences for a company-owned social account. Return only JSON "
-            '{"parts":[{"fact_id":"...","text":"..."}]}. Use exact text or variants from facts; no paraphrases. '
-            "Choose platform-native phrasing, keep space for lead-in/disclaimers/hashtags. "
-            "Do not infer claims from assets. Do not invent or infer prices, testimonials, or results.",
+            "Write persuasive, human social copy for Tudelu. Sound warm, inviting and specific—not like a "
+            "technical specification, corporate announcement or business presentation. Lead with an interesting "
+            "thought or a genuine question; earn attention without hype. Use the style_brief to vary tone, angle, opening, "
+            "rhythm and punctuation. Vary sentence lengths, line breaks, questions and occasional exclamation "
+            "marks; use an emoji only when it fits the platform. Do not force the same formula or CTA every time. "
+            "Avoid jargon, canned introductions and repetition of recent_captions. Use conversational contractions. "
+            "For promotional posts, make the approved benefit compelling and invite a relevant next step. For "
+            "non_promotional posts, offer interest or inspiration without a hard sell. If no benefit is approved, "
+            "use curiosity rather than inventing one. Facts-sheet brand rules and platform limits take priority. "
+            'Return only JSON {"parts":[{"kind":"copy","text":"Nonfactual hook or invitation","fact_ids":[]},'
+            '{"kind":"claim","text":"Natural phrasing grounded entirely in the cited facts","fact_ids":["id"]}]}. '
+            "Each part is a paragraph; one to six parts is usually enough. Include at least one claim. Cite every "
+            "fact needed to support each claim, including implications in questions and calls to action. Copy parts "
+            "must contain no product claims, predictions, real-world anecdotes, prices, testimonials or promises. "
+            "Faithful paraphrases of claim facts are allowed. Prices, offers and testimonials must be their own "
+            "claim part using exact approved wording or an approved variant. Do not invent facts, scarcity, "
+            "discounts, customer experiences or measurable benefits. Do not infer claims from assets, campaign "
+            "names, tags, prior captions or style instructions. Use only the supplied relevant facts. "
+            "Do not add links, hashtags, disclaimers, AI-disclosure text, the configured lead_in, or internal "
+            "technical details; the renderer handles required links, hashtags and disclaimers. Leave room for them.",
             context,
         )
         return result["parts"]
@@ -97,9 +132,26 @@ class Claude:
     def review(self, context):
         # Independent request, no caption-generation conversation or reasoning is shared.
         result = self.call(
-            "Independently review this proposed promotional post against ONLY the supplied facts and brand rules. "
+            "Independently review this proposed post against ONLY the supplied facts and brand rules. "
             "Check all factual implications, currency, dates, unsupported promises, and misleading combinations. "
-            'Return only JSON {"score":0.0,"reasons":["..."],"unsupported_claims":["..."]}. '
+            "Use execution_mode to assess the intended use: dry_run simulates delivery and does not publish. "
+            "Internal-testing-only rights can support a dry run but never live publication. Do not waive factual "
+            "accuracy, product scope, provenance, or misleading-depiction checks in dry runs. "
+            "The supplied renderer_context identifies approved platform framing, links, and hashtags; this "
+            "framing need not be a product fact, but must not imply unsupported product claims. "
+            "Use the asset records and the separate visual_review result for image evidence. Do not invent "
+            "missing metadata that is supplied under another field, demand images in this text-only review, "
+            "or treat this review as replacing visual_review. A failed visual review remains blocking. "
+            "Assess disclosure against the supplied platform method; automatic caption disclosure is disabled. "
+            "For composed caption_parts, evaluate EVERY part independently, including those marked copy. "
+            "The claim/copy classification is untrusted. All explicit AND implied factual assertions must be "
+            "supported by that part's cited fact IDs, relevant to this product and valid at the stated time. "
+            "A real fact ID does not establish support for a different claim. A copy part with no citations may "
+            "contain only nonfactual framing or invitations; mark it unsupported if it implies a factual claim. "
+            "Paraphrasing is permitted only when it preserves meaning without strengthening or inventing claims. "
+            "Return one part_checks entry per part, in order, with its zero-based index and exact cited fact IDs. "
+            'Return only JSON {"score":0.0,"reasons":["..."],"unsupported_claims":["..."],'
+            '"part_checks":[{"part_index":0,"fact_ids":[],"supported":true,"reasons":["..."]}]}. '
             "Score 0 to 1; any unsupported claim must appear in unsupported_claims and score below 0.9.",
             context,
         )
@@ -198,13 +250,25 @@ class OpenAI:
             }
             for mime, data in images
         )
+        vision_schema = VisionReview.model_json_schema()
+        vision_schema["additionalProperties"] = False
+        vision_schema["required"] = list(vision_schema["properties"])
+        for field in vision_schema["properties"].values():
+            field.pop("default", None)
         result = self.call(
             "responses",
             {
                 "model": self.s.openai_vision_model,
                 "store": False,
                 "input": [{"role": "user", "content": content}],
-                "text": {"format": {"type": "json_object"}},
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "vision_review",
+                        "strict": True,
+                        "schema": vision_schema,
+                    }
+                },
                 "max_output_tokens": 5000,
             },
         )
@@ -252,12 +316,45 @@ class Providers:
     def caption(self, context):
         if self.s.ai_mode == "fixture":
             facts = context["facts"]
-            return [{"fact_id": f["id"], "text": f["text"]} for f in facts[:2]]
+            variant = context.get("style_brief", {}).get("variant", 0)
+            hooks = FIXTURE_HOOKS[context["platform"]]
+            return [
+                {"kind": "copy", "text": hooks[variant % len(hooks)], "fact_ids": []},
+                *[{"kind": "claim", "text": f["text"], "fact_ids": [f["id"]]} for f in facts[:2]],
+                {"kind": "copy", "text": FIXTURE_CTAS[variant % len(FIXTURE_CTAS)], "fact_ids": []},
+            ]
         return Claude(self.s).generate(context)
 
     def review(self, context):
         if self.s.ai_mode == "fixture":
-            return Review(score=1, reasons=["SIMULATED review: fixture only, not an LLM judgment"])
+            checks = []
+            parts = context.get("caption_parts", [])
+            facts = {f["id"]: f for f in context.get("facts", {}).get("facts", [])}
+            safe_copy = {text for choices in FIXTURE_HOOKS.values() for text in choices} | set(FIXTURE_CTAS)
+            if composed(parts):
+                for index, part in enumerate(parts):
+                    ids = part_fact_ids(part)
+                    fact = facts.get(ids[0]) if len(ids) == 1 else None
+                    supported = (
+                        bool(fact) and part["text"] in [fact["text"], *fact.get("variants", [])]
+                        if ids
+                        else part["text"] in safe_copy
+                    )
+                    checks.append(
+                        PartCheck(
+                            part_index=index,
+                            fact_ids=ids,
+                            supported=supported,
+                            reasons=[
+                                "SIMULATED: exact fixture wording only; paraphrases require live review"
+                            ],
+                        )
+                    )
+            return Review(
+                score=1 if all(c.supported for c in checks) else 0,
+                reasons=["SIMULATED review: fixture only, not an LLM judgment"],
+                part_checks=checks,
+            )
         return Claude(self.s).review(context)
 
     def vision(self, assets, context):

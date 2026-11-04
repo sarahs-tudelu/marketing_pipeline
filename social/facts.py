@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -82,20 +83,72 @@ def active(fact, at):
     )
 
 
-def render(parts, profile, facts, platform, settings):
+def composed(parts):
+    return any(isinstance(part, dict) and "kind" in part for part in parts)
+
+
+def part_fact_ids(part):
+    if not isinstance(part, dict):
+        raise ValueError("Caption parts must be objects")
+    ids = part.get("fact_ids", []) if "kind" in part else [part.get("fact_id")]
+    if not isinstance(ids, list) or any(not isinstance(id, str) or not id for id in ids):
+        raise ValueError("Caption citations must be a list of fact IDs")
+    return list(dict.fromkeys(ids))
+
+
+def caption_fact_ids(parts):
+    if not isinstance(parts, list):
+        raise ValueError("Caption parts must be a list")
+    return list(dict.fromkeys(id for part in parts for id in part_fact_ids(part)))
+
+
+def number_tokens(value):
+    return set(re.findall(r"(?<!\w)\d+(?:[.,]\d+)*(?:%)?", value))
+
+
+def validate_parts(parts, facts):
+    if not isinstance(parts, list) or not parts or len(parts) > 12:
+        raise ValueError("A caption needs between one and twelve source-linked parts")
     by_id = {f.id: f for f in facts.facts}
-    texts = []
+    creative = composed(parts)
     for part in parts:
-        fact = by_id.get(part.get("fact_id"))
-        text = part.get("text", "")
-        if not fact or text not in [fact.text, *fact.variants]:
-            raise ValueError("Every caption sentence must exactly match an approved fact/variant")
-        texts.append(text)
-    if not texts:
+        if not isinstance(part, dict):
+            raise ValueError("Caption parts must be objects")
+        text = part.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 5000:
+            raise ValueError("Caption parts need nonempty text within the supported length")
+        ids = part_fact_ids(part)
+        if any(id not in by_id for id in ids):
+            raise ValueError("Caption cites an unknown fact")
+        if not creative:
+            fact = by_id[ids[0]]
+            if text not in [fact.text, *fact.variants]:
+                raise ValueError("Legacy caption parts must exactly match an approved fact/variant")
+            continue
+        if part.get("kind") not in {"claim", "copy"} or "fact_id" in part or "fact_ids" not in part:
+            raise ValueError("Composed caption parts need kind, text and fact_ids")
+        if (part["kind"] == "claim") != bool(ids):
+            raise ValueError("Claims require fact IDs; nonfactual copy must use an empty citation list")
+        cited = [by_id[id] for id in ids]
+        # Financial terms, offers and real customer quotations keep their approved wording.
+        if any(f.kind in {"price", "offer", "testimonial"} for f in cited):
+            if len(cited) != 1 or text not in [cited[0].text, *cited[0].variants]:
+                raise ValueError("Prices, offers and testimonials must keep exact approved wording")
+        evidence = " ".join(wording for f in cited for wording in [f.text, *f.variants])
+        if not number_tokens(text) <= number_tokens(evidence):
+            raise ValueError("Caption contains a quantity absent from its cited facts")
+    if not caption_fact_ids(parts):
         raise ValueError("Caption needs approved fact content")
-    lines = [profile.lead_in, " ".join(texts)]
+
+
+def render(parts, profile, facts, platform, settings):
+    validate_parts(parts, facts)
+    by_id = {f.id: f for f in facts.facts}
+    texts = [part["text"] for part in parts]
+    # Existing saved captions keep their original rendering. New copy has its own opening and rhythm.
+    lines = texts if composed(parts) else [profile.lead_in, " ".join(texts)]
     if profile.allow_links and (platform != "x" or settings.x_include_links):
-        links = [by_id[p["fact_id"]].url for p in parts if by_id[p["fact_id"]].url]
+        links = [by_id[id].url for id in caption_fact_ids(parts) if by_id[id].url]
         lines.extend(dict.fromkeys(links))
     lines.extend(facts.required_disclaimers)
     tags = facts.hashtags.get(platform, [])[: profile.hashtag_limit]

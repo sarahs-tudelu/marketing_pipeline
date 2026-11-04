@@ -60,6 +60,8 @@ def test_two_generators_call_provider_once_and_do_not_hold_winner(db, settings, 
     db.refresh(post)
     assert post.status == "generated"
     assert len(calls) == 1
+    assert calls[0]["content_kind"] == post.kind
+    assert calls[0]["product"] == post.product
     history = db.scalars(
         select(Transition).where(Transition.post_id == post.id).order_by(Transition.id)
     ).all()

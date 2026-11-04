@@ -33,6 +33,66 @@ def test_complete_gate_audits_all_checks(db, settings, post):
     assert len(db.scalars(select(CheckResult)).all()) == 17
 
 
+@pytest.mark.parametrize("live", [False, True])
+def test_review_context_reports_execution_mode_and_actual_asset_provenance(db, settings, post, assets, live):
+    asset = assets[0]
+    asset.source, asset.generator, asset.prompt = "ai_generated", "fixture-model", "An illustrative concept"
+    asset.tags = {"product": "demo", "asset_type": "ai_concept", "rights_status": "internal_testing_only"}
+    asset.rights = "Internal testing only; public posting not approved."
+    post.ai_disclosure = True
+    post.dry_run = True  # The requested execution, not a stale post flag, controls review scope.
+    observed = []
+
+    class Capture(Providers):
+        def review(self, context):
+            observed.append(context)
+            return super().review(context)
+
+    checks(db, settings, post, providers=Capture(settings), live=live)
+    context = observed[0]
+    assert context["execution_mode"] == ("live" if live else "dry_run")
+    assert context["public_publication"] is live
+    assert context["product"] == post.product
+    assert context["content_kind"] == post.kind
+    record = context["assets"][0]
+    assert record["asset_id"] == asset.id and record["asset_type"] == "ai_concept"
+    assert record["source_or_creation_record"] == {
+        "generator": asset.generator,
+        "prompt": asset.prompt,
+        "checksum": asset.checksum,
+    }
+    assert record["rights"] == asset.rights and record["rights_status"] == "internal_testing_only"
+    assert context["renderer_context"]["lead_in"] == ""
+    assert context["caption_parts"] == post.parts
+    assert context["renderer_context"]["automatic_caption_disclosure"] is False
+    assert context["visual_review"]["passed"] is True
+
+
+def test_failed_visual_review_is_available_to_independent_review_and_still_blocks(db, settings, post, assets):
+    assets[0].source = "ai_generated"
+    post.ai_disclosure = True
+    observed = []
+
+    class BadVision(Providers):
+        def vision(self, assets, context):
+            return VisionReview(
+                passed=False,
+                reasons=["Unsupported feature"],
+                garbled_text=False,
+                misused_logos=False,
+                unexpected_people=False,
+            )
+
+        def review(self, context):
+            observed.append(context["visual_review"])
+            return Review(score=1, reasons=["Text matches"])
+
+    results = run_gate(db, settings, post, providers=BadVision(settings))
+    assert observed[0]["passed"] is False
+    assert post.status == "held"
+    assert not next(c for c in results if c.name == "vision_review").passed
+
+
 @pytest.mark.parametrize(
     "mutation,failed",
     [

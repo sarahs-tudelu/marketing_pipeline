@@ -1,0 +1,160 @@
+"""Optional real-browser checks: set BROWSER_BINARY and install playwright to run."""
+
+import asyncio
+import os
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
+from fastapi.testclient import TestClient
+
+from social.app import create_app
+from social.facts import load_facts
+from social.pipeline import draft
+from social.provider_errors import ProviderError
+
+pytestmark = pytest.mark.skipif(not os.getenv("BROWSER_BINARY"), reason="BROWSER_BINARY is not configured")
+
+
+@pytest.mark.parametrize("kind", ["caption", "image"])
+def test_generation_progress_and_completion_in_browser(db, settings, assets, monkeypatch, tmp_path, kind):
+    playwright = pytest.importorskip("playwright.async_api")
+    facts = load_facts(db, settings.facts_path)
+    post = draft(db, "linkedin", "Browser preview", [a.id for a in assets], facts.id, product="demo")
+    route_path = f"/posts/{post.id}" if kind == "caption" else "/admin/assets"
+    action = f"/forms/posts/{post.id}/generate" if kind == "caption" else "/forms/generate-asset"
+    label = "Generate caption" if kind == "caption" else "Generate image"
+    status = "Writing caption" if kind == "caption" else "Generating media"
+    selected = settings if kind == "caption" else settings.model_copy(update={"ai_mode": "live"})
+
+    def image_failure(*args, **kwargs):
+        raise ProviderError(
+            "Preview provider unavailable; try again.", provider="OpenAI", category="transient"
+        )
+
+    monkeypatch.setattr("social.providers.Providers.generate_asset", image_failure)
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            page = await browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.set_default_timeout(5000)
+            page.set_default_navigation_timeout(5000)
+            requests, errors = [], []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+
+            async def serve(route):
+                request = route.request
+                assert urlsplit(request.url).netloc == "studio.test"
+                if request.method == "POST":
+                    requests.append(request)
+                response = client.request(
+                    request.method,
+                    request.url,
+                    content=request.post_data_buffer,
+                    headers=request.headers,
+                    follow_redirects=True,
+                )
+                headers = {
+                    key: value
+                    for key, value in response.headers.items()
+                    if key not in {"content-encoding", "content-length", "transfer-encoding"}
+                }
+                await route.fulfill(status=response.status_code, headers=headers, body=response.content)
+
+            await page.route("**/*", serve)
+            await page.goto("http://studio.test" + route_path)
+            form = page.locator(f'form[action="{action}"]')
+            if kind == "image":
+                await form.locator('[name="prompt"]').fill("A preview image")
+                await form.locator('[name="rights"]').fill("Internal preview")
+            handle = await form.element_handle()
+            # Pause native navigation after document-level enhancement so the pending UI is inspectable.
+            await page.evaluate("""() => {
+                window.capturedSubmissions = [];
+                window.pauseSubmission = event => {
+                    if (event.defaultPrevented) return;
+                    window.capturedSubmissions.push(Object.fromEntries(new FormData(event.target)));
+                    event.preventDefault();
+                };
+                window.addEventListener('submit', window.pauseSubmission);
+            }""")
+            await form.get_by_role("button", name=label).click()
+            assert await handle.get_attribute("aria-busy") == "true"
+            assert status in await handle.eval_on_selector('[role="status"]', "node => node.innerText")
+            assert await handle.eval_on_selector("button", "node => node.disabled")
+            assert not await handle.evaluate(
+                "form => form.dispatchEvent(new SubmitEvent('submit', {bubbles:true, cancelable:true}))"
+            )
+            assert await page.evaluate("capturedSubmissions.length") == 1
+            spinner = await handle.query_selector(".loading-spinner")
+            assert await spinner.evaluate("node => getComputedStyle(node).animationName") == "loading-spin"
+            await page.screenshot(path=str(tmp_path / f"{kind}-loading.png"), full_page=True)
+            capture_dir = os.getenv("UI_CAPTURE_DIR")
+            if capture_dir:
+                Path(capture_dir).mkdir(parents=True, exist_ok=True)
+                await page.screenshot(path=str(Path(capture_dir) / f"{kind}-loading.png"), full_page=True)
+            await page.emulate_media(reduced_motion="reduce")
+            assert await spinner.evaluate("node => getComputedStyle(node).animationName") == "none"
+            async with page.expect_navigation():
+                await handle.evaluate("form => HTMLFormElement.prototype.submit.call(form)")
+            assert len(requests) == 1
+            assert parse_qs(requests[0].post_data)["csrf"]
+            assert not errors
+            assert await page.locator(".loading-state").count() == 0
+            if kind == "caption":
+                assert await page.get_by_role("button", name="Run automated checks").is_enabled()
+            else:
+                assert await page.get_by_role("button", name=label).is_enabled()
+                assert "Preview provider unavailable" in await page.get_by_role("alert").inner_text()
+                assert await form.locator('[name="prompt"]').input_value() == "A preview image"
+            await browser.close()
+
+    with TestClient(create_app(selected), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
+def test_delete_confirmation_and_cached_page_restore_in_browser(db, settings, assets):
+    playwright = pytest.importorskip("playwright.async_api")
+    facts = load_facts(db, settings.facts_path)
+    post = draft(db, "linkedin", "Browser delete", [a.id for a in assets], facts.id, product="demo")
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            page = await browser.new_page()
+            page.set_default_timeout(5000)
+            page.set_default_navigation_timeout(5000)
+
+            async def serve(route):
+                response = client.get(route.request.url)
+                await route.fulfill(
+                    status=response.status_code,
+                    content_type=response.headers["content-type"],
+                    body=response.content,
+                )
+
+            await page.route("http://studio.test/**", serve)
+            await page.goto(f"http://studio.test/posts/{post.id}")
+            page.once("dialog", lambda dialog: dialog.dismiss())
+            button = page.get_by_role("button", name="Delete draft")
+            await button.click()
+            assert await button.is_enabled()
+            assert await page.locator(".loading-state").count() == 0
+            # Stop native navigation after the enhancer runs, then emulate a cached-page return.
+            await page.evaluate("window.addEventListener('submit', e => e.preventDefault())")
+            generate = page.get_by_role("button", name="Generate caption")
+            await generate.click()
+            assert await generate.is_disabled()
+            await page.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted:true}))")
+            assert await generate.is_enabled()
+            assert await page.locator('[aria-busy="true"]').count() == 0
+            assert await page.locator(".loading-state").count() == 0
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
