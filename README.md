@@ -64,7 +64,11 @@ Maintain the facts sheet under Approved facts or import from `FACTS_PATH`. Each 
 
 The schema supports products, approved fact IDs, exact copy variants, `claim|price|offer|testimonial` kinds, product tags, validity dates, price amount/currency, canonical URLs, platform hashtags, banned phrases, brand voice and required disclaimers. Prices and offers require start and end dates. Dates are rechecked at delivery; an expired offer is held even if it previously passed.
 
-Claude chooses approved sentences/variants for the selected product and platform. The renderer adds the platform lead-in, approved links/hashtags, disclaimers and AI disclosure. Free-form factual paraphrases are rejected even if they cite a valid ID. Add approved variants to the facts sheet to expand copy variety. All platforms receive distinct text. A separate Claude request reviews grounding, combinations of claims and brand fit. For AI media, OpenAI vision checks text, logos, people and visible claims. Video vision uses one frame per second plus the last frame; it is a sampled review and cannot certify every frame. AI-generated depictions must not be represented as real customer content.
+Claude chooses approved sentences/variants for the selected product and platform. The renderer adds the platform lead-in, approved links/hashtags and required disclaimers. AI disclosure text is not appended to captions. Free-form factual paraphrases are rejected even if they cite a valid ID. Add approved variants to the facts sheet to expand copy variety. All platforms receive distinct text. A separate Claude request reviews grounding, combinations of claims and brand fit. For AI media, OpenAI vision checks text, logos, people and visible claims. Video vision uses one frame per second plus the last frame; it is a sampled review and cannot certify every frame. AI-generated depictions must not be represented as real customer content. 
+
+AI provenance flags, Instagram/X native flags, original embedded metadata and TikTok manual-label instructions remain active. Facebook and LinkedIn depend on platform detection of preserved metadata, which is not guaranteed. Live Facebook AI-video publishing is held because this adapter cannot set the required native label. 
+
+The old `DISCLOSURE_TEXT` setting is ignored. Existing stored captions are unchanged until regenerated or saved through the fact-parts editor and rechecked; captions containing the removed automatic disclosure sentence fail exact-grounding checks before publication.
 
 ## AI configuration
 

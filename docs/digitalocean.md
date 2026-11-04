@@ -42,6 +42,20 @@ The public media route accepts GET/HEAD for supported checksum filenames recorde
 
 Deploy this updated code and Caddy configuration before switching an older installation to `s3`. Rebuild the image, run the preflight, and recreate services with the Compose commands below. The preflight validates configuration without accessing the bucket. Existing local assets are not automatically migrated: copy the checksum-named files unchanged to the bucket root, or re-upload their original files through the app after switching. Do not delete the local copies until migration is verified.
 
+If generating or uploading media fails with `NoSuchBucket`, compare the exact bucket name and region in DigitalOcean with `S3_BUCKET`, `S3_REGION` and the regional `S3_ENDPOINT_URL` in the Droplet's `/opt/tudelu/.env`. A successful configuration preflight does not prove that the bucket exists. The bucket name must not include a URL or folder. Check the running container's nonsecret settings:
+
+```bash
+sudo docker compose -f compose.droplet.yaml --env-file .env exec web python -c "import os; print({k: os.getenv(k) for k in ['STORAGE_BACKEND','S3_BUCKET','S3_REGION','S3_ENDPOINT_URL']})"
+```
+
+After correcting `.env`, recreate the application services so they receive the updated values; `docker compose restart` alone does not reload environment variables:
+
+```bash
+sudo docker compose -f compose.droplet.yaml --env-file .env up -d --no-deps --force-recreate web worker
+```
+
+Verify storage with a company-owned image upload before generating another image. A generation request may already have been charged if saving its result failed. The generation form displays safe provider/storage errors, preserves entered values, and does not automatically repeat paid generation requests.
+
 ## Get the managed database connection details
 
 In DigitalOcean, open **Databases → your PostgreSQL cluster → Overview → Connection Details**. Select the intended database and user, choose the network, enable `verify-full`, and use **Connection parameters** to obtain the nonsecret host, port, username and database name. Use VPC network details only when the Droplet and cluster share that VPC; otherwise use the public endpoint with a trusted-source rule. [Official connection guide](https://docs.digitalocean.com/products/databases/postgresql/how-to/connect/)

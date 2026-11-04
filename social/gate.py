@@ -102,6 +102,36 @@ def media_errors(assets, profile, platform):
     return errors
 
 
+def check_disclosure(post, assets, live=False):
+    needed = any(a.source != "company" for a in assets)
+    reasons = []
+    if post.ai_disclosure != needed:
+        reasons.append("Incorrect AI disclosure flag for asset provenance")
+    # The Page video endpoint currently has no implemented native disclosure field.
+    # Preserve dry runs, but do not substitute a caption for Meta's required video label.
+    if (
+        live
+        and needed
+        and post.platform == "facebook"
+        and any(a.media["mime"].startswith("video/") for a in assets)
+    ):
+        reasons.append(
+            "Live Facebook AI video requires a supported native AI label; this adapter cannot set it"
+        )
+    method = {"instagram": "is_ai_generated", "x": "made_with_ai", "tiktok": "manual_label"}.get(
+        post.platform, "preserved_metadata"
+    )
+    return not reasons, {
+        "required": needed,
+        "method": method,
+        "caption_disclosure": False,
+        "reasons": reasons,
+        "limitations": "Platform detection of embedded metadata is not guaranteed."
+        if needed and method == "preserved_metadata"
+        else "",
+    }
+
+
 def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=False):
     at = at or now()
     providers = providers or Providers(settings)
@@ -121,7 +151,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         results.append(result)
 
     def grounding():
-        expected = render(post.parts, profile, facts, post.platform, post.ai_disclosure, settings)
+        expected = render(post.parts, profile, facts, post.platform, settings)
         ids = list(dict.fromkeys(p["fact_id"] for p in post.parts))
         allowed_products = {post.product, "company"}
         relevant = all(f.product in allowed_products for f in facts.facts if f.id in ids)
@@ -195,18 +225,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         ),
     )
     needed = any(a.source != "company" for a in assets)
-    check(
-        "disclosure",
-        lambda: (
-            post.ai_disclosure == needed and (not needed or settings.disclosure_text in post.caption),
-            {
-                "required": needed,
-                "method": {"instagram": "is_ai_generated", "x": "made_with_ai", "tiktok": "manual_label"}.get(
-                    post.platform, "caption"
-                ),
-            },
-        ),
-    )
+    check("disclosure", lambda: check_disclosure(post, assets, live))
     check(
         "rights",
         lambda: (all(a.rights and (not a.rights_expire_at or at < a.rights_expire_at) for a in assets), {}),

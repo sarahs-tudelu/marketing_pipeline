@@ -9,6 +9,7 @@ from .gate import evaluate
 from .lifecycle import transition
 from .models import Account, Asset, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import alert, event
+from .provider_errors import ProviderError
 from .providers import Providers
 
 
@@ -67,7 +68,7 @@ def generate(db, settings, post, providers=None):
     }
     try:
         parts = providers.caption(context)
-        caption = render(parts, profile, facts, post.platform, post.ai_disclosure, settings)
+        caption = render(parts, profile, facts, post.platform, settings)
         post.parts, post.caption = parts, caption
         post.fact_ids = list(dict.fromkeys(p["fact_id"] for p in parts))
         transition(
@@ -77,7 +78,17 @@ def generate(db, settings, post, providers=None):
             f"Caption provider: {'fixture' if settings.ai_mode == 'fixture' else settings.anthropic_model}",
         )
     except Exception as exc:
-        transition(db, post, "held", f"Caption generation rejected: {type(exc).__name__}")
+        if isinstance(exc, ProviderError):
+            event(
+                "caption_generation_failed",
+                post_id=post.id,
+                provider=exc.provider,
+                category=exc.category,
+                upstream_status=exc.upstream_status,
+                request_id=exc.request_id,
+            )
+        reason = str(exc) if isinstance(exc, ProviderError) else type(exc).__name__
+        transition(db, post, "held", f"Caption generation rejected: {reason}")
     db.commit()
     return post
 

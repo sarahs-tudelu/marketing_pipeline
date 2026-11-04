@@ -47,6 +47,8 @@ def prepared(db, settings, assets, platform, video=None, ai=False):
 @pytest.mark.parametrize("platform", ["linkedin", "instagram", "facebook", "x", "tiktok"])
 def test_dry_adapter_records_requests_without_network(db, settings, assets, video_bytes, platform):
     post = prepared(db, settings, assets, platform, video_bytes if platform == "tiktok" else None, ai=True)
+    assert post.ai_disclosure
+    assert "AI-generated or AI-edited media." not in post.caption
 
     def network_forbidden(request):
         pytest.fail("Dry-run attempted network access")
@@ -66,6 +68,40 @@ def test_dry_adapter_records_requests_without_network(db, settings, assets, vide
         init = next(r for r in records if r.step == "inbox-init")
         assert "/inbox/video/init/" in init.request["url"]
         assert set(init.request["json"]) == {"source_info"}
+
+
+def test_facebook_ai_video_requires_native_label_before_live_requests(db, settings, assets, video_bytes):
+    from social.gate import evaluate
+
+    post = prepared(db, settings, assets, "facebook", video_bytes, ai=True)
+    results, _ = evaluate(db, settings, post, live=True)
+    disclosure = next(c for c in results if c.name == "disclosure")
+    assert not disclosure.passed
+    assert "native AI label" in disclosure.details["reasons"][0]
+    adapter = ADAPTERS["facebook"](
+        settings,
+        db,
+        post,
+        httpx.Client(transport=httpx.MockTransport(lambda _: pytest.fail("Must not contact Facebook"))),
+    )
+    adapter.dry = False
+    with pytest.raises(PublishError, match="native AI label"):
+        adapter.publish(post, post.idempotency_key)
+    assert not db.scalars(select(RequestRecord).where(RequestRecord.post_id == post.id)).all()
+
+
+def test_tiktok_manual_alert_keeps_label_instruction_without_caption_disclosure(
+    db, settings, assets, video_bytes
+):
+    from social.models import Alert
+
+    post = prepared(db, settings, assets, "tiktok", video_bytes, ai=True)
+    publish_due(db, settings, at=post.scheduled_at)
+    assert post.status == "awaiting_manual"
+    alert = db.scalar(select(Alert).where(Alert.dedupe_key == "manual:" + post.id))
+    assert "Turn AI-generated label ON" in alert.message
+    assert "Caption to paste:\n" + post.caption in alert.message
+    assert "AI-generated or AI-edited media." not in alert.message
 
 
 @pytest.mark.parametrize("platform", ["linkedin", "instagram", "facebook", "x", "tiktok"])

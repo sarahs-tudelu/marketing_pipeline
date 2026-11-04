@@ -8,8 +8,10 @@ from typing import Protocol
 
 import av
 import httpx
+from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import BaseModel, Field
 
+from .provider_errors import ProviderError, request_json
 from .storage import ingest, storage
 
 
@@ -54,14 +56,21 @@ class Claude:
 
     def call(self, system, context):
         if not self.s.anthropic_api_key.get_secret_value():
-            raise ValueError("ANTHROPIC_API_KEY is missing")
-        response = self.client.post(
+            raise ProviderError(
+                "ANTHROPIC_API_KEY is missing. Configure its Secret Manager reference and restart the app.",
+                provider="Claude",
+                category="configuration",
+                status=400,
+            )
+        result = request_json(
+            self.client,
+            "Claude",
             "https://api.anthropic.com/v1/messages",
             headers={
                 "x-api-key": self.s.anthropic_api_key.get_secret_value(),
                 "anthropic-version": self.s.anthropic_api_version,
             },
-            json={
+            payload={
                 "model": self.s.anthropic_model,
                 "max_tokens": self.s.anthropic_max_tokens,
                 "thinking": {"type": "adaptive"},
@@ -70,8 +79,6 @@ class Claude:
                 "messages": [{"role": "user", "content": json.dumps(context, default=str)}],
             },
         )
-        response.raise_for_status()
-        result = response.json()
         if result.get("stop_reason") != "end_turn":
             raise ValueError("Claude response incomplete or refused")
         text = "".join(c["text"] for c in result["content"] if c["type"] == "text")
@@ -81,7 +88,7 @@ class Claude:
         result = self.call(
             "You select approved caption sentences for a company-owned social account. Return only JSON "
             '{"parts":[{"fact_id":"...","text":"..."}]}. Use exact text or variants from facts; no paraphrases. '
-            "Choose platform-native phrasing, keep space for lead-in/disclaimers/hashtags and disclosure. "
+            "Choose platform-native phrasing, keep space for lead-in/disclaimers/hashtags. "
             "Do not infer claims from assets. Do not invent or infer prices, testimonials, or results.",
             context,
         )
@@ -106,14 +113,19 @@ class OpenAI:
 
     def call(self, endpoint, payload):
         if not self.s.openai_api_key.get_secret_value():
-            raise ValueError("OPENAI_API_KEY is missing")
-        response = self.client.post(
+            raise ProviderError(
+                "OPENAI_API_KEY is missing. Configure its Secret Manager reference and restart the app.",
+                provider="OpenAI",
+                category="configuration",
+                status=400,
+            )
+        return request_json(
+            self.client,
+            "OpenAI",
             "https://api.openai.com/v1/" + endpoint,
             headers={"Authorization": "Bearer " + self.s.openai_api_key.get_secret_value()},
-            json=payload,
+            payload=payload,
         )
-        response.raise_for_status()
-        return response.json()
 
     def generate(self, prompt):
         result = self.call(
@@ -127,7 +139,17 @@ class OpenAI:
                 "n": 1,
             },
         )
-        return base64.b64decode(result["data"][0]["b64_json"]), "generated.jpg", self.s.openai_image_model
+        try:
+            data = base64.b64decode(result["data"][0]["b64_json"], validate=True)
+            if not data:
+                raise ValueError
+        except (KeyError, IndexError, TypeError, ValueError):
+            raise ProviderError(
+                "OpenAI did not return a usable image. No asset was saved.",
+                provider="OpenAI",
+                category="response",
+            ) from None
+        return data, "generated.jpg", self.s.openai_image_model
 
     def vision(self, assets, context):
         images = []
@@ -262,6 +284,8 @@ class Providers:
         return [v / norm for v in vector], "fixture-hash-v1"
 
     def generate_asset(self, db, prompt, kind, rights, tags):
+        if not prompt.strip() or not rights.strip() or not isinstance(tags, dict):
+            raise ValueError("A prompt, usage rights and a JSON object for tags are required")
         if self.s.ai_mode != "live":
             raise ValueError("Asset generation requires AI_MODE=live and configured provider credentials")
         if kind == "image":
@@ -271,14 +295,38 @@ class Providers:
         else:
             raise ValueError("Video generation provider has not been selected")
         data, name, model = provider.generate(prompt)
-        return ingest(
-            db,
-            self.s,
-            data,
-            name,
-            source="ai_generated",
-            generator=model,
-            prompt=prompt,
-            rights=rights,
-            tags=tags,
-        )
+        try:
+            return ingest(
+                db,
+                self.s,
+                data,
+                name,
+                source="ai_generated",
+                generator=model,
+                prompt=prompt,
+                rights=rights,
+                tags=tags,
+            )
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "NoSuchBucket":
+                hint = (
+                    "The configured media bucket was not found. Check S3_BUCKET against the exact Spaces "
+                    "bucket name and S3_ENDPOINT_URL against its regional endpoint."
+                )
+            elif code in {"AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch"}:
+                hint = "Storage denied access. Check the Spaces credentials and bucket write permissions."
+            else:
+                hint = "Storage could not save the media. Check the bucket, regional endpoint and write permissions."
+            raise ProviderError(
+                hint + " The generated media was not saved; generation may have been charged.",
+                provider="Media storage",
+                category="storage",
+            ) from None
+        except (BotoCoreError, OSError):
+            raise ProviderError(
+                "The media was generated but could not be saved. Check the storage connection, bucket "
+                "and write permissions before generating again. The generation may have been charged.",
+                provider="Media storage",
+                category="storage",
+            ) from None

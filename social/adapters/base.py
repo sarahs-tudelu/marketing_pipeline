@@ -9,7 +9,7 @@ import httpx
 from sqlalchemy import select
 
 from ..config import profiles
-from ..gate import media_errors, weighted_length
+from ..gate import check_disclosure, media_errors, weighted_length
 from ..models import Account, Asset, Control, RequestRecord
 from ..security import Vault, redact, safe_url
 from ..storage import storage
@@ -125,8 +125,9 @@ class BaseAdapter:
         errors = media_errors(self.assets(), profile, self.platform)
         if not post.caption or weighted_length(post.caption, self.platform) > profile.max_length:
             errors.append("Invalid caption")
-        if any(a.source != "company" for a in self.assets()) != post.ai_disclosure:
-            errors.append("Incorrect AI disclosure")
+        disclosure_ok, disclosure = check_disclosure(post, self.assets(), live=not self.dry)
+        if not disclosure_ok:
+            errors.extend(disclosure["reasons"])
         if errors:
             raise PublishError("validation", "; ".join(errors))
 

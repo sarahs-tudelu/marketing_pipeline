@@ -73,7 +73,7 @@ def test_prices_offers_expire_at_publication_time(db, settings, post):
     post.fact_ids = ["price"]
     from social.config import profiles
 
-    post.caption = render(post.parts, profiles(settings)["linkedin"], facts, "linkedin", False, settings)
+    post.caption = render(post.parts, profiles(settings)["linkedin"], facts, "linkedin", settings)
     assert checks(db, settings, post)["prices_offers_validity"].passed
     assert not checks(db, settings, post, at=now() + timedelta(minutes=2))["prices_offers_validity"].passed
     post.parts = [{"fact_id": "price", "text": "Price: USD 10."}]
@@ -153,6 +153,40 @@ def test_ai_disclosure_and_vision_failures(db, settings, post, assets):
             )
 
     assert not checks(db, settings, post, providers=BadVision(settings))["vision_review"].passed
+
+
+@pytest.mark.parametrize("platform", ["linkedin", "instagram", "facebook", "x", "tiktok"])
+@pytest.mark.parametrize("source", ["ai_generated", "ai_edited"])
+def test_ai_captions_pass_without_disclosure_text_and_keep_required_disclaimers(
+    db, settings, post, assets, platform, source
+):
+    from social.pipeline import generate
+
+    change_facts(db, post, required_disclaimers=["Availability varies."])
+    assets[0].source, assets[0].generator, assets[0].prompt = source, "fixture", "fixture"
+    post.platform, post.status = platform, "draft"
+    generate(db, settings, post)
+    assert post.ai_disclosure
+    assert "AI-generated or AI-edited media." not in post.caption
+    assert "Availability varies." in post.caption
+    results = checks(db, settings, post)
+    assert results["grounding"].passed
+    assert results["disclosure"].passed
+    assert results["disclosure"].details["method"] != "caption"
+    assert not results["disclosure"].details["caption_disclosure"]
+
+    # Removing the caption sentence must not weaken the asset provenance check.
+    post.ai_disclosure = False
+    assert not checks(db, settings, post)["disclosure"].passed
+
+
+def test_saved_legacy_caption_needs_regeneration_and_recheck(db, settings, post, assets):
+    assets[0].source, assets[0].generator, assets[0].prompt = "ai_generated", "fixture", "fixture"
+    post.ai_disclosure = True
+    post.caption += "\n\nAI-generated or AI-edited media."
+    run_gate(db, settings, post)
+    assert post.status == "held"
+    assert not db.scalars(select(CheckResult).where(CheckResult.name == "grounding")).one().passed
 
 
 def test_testimonial_requires_real_customer_tag_and_permission(db, settings, post, assets):

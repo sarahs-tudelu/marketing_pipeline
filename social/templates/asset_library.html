@@ -1,0 +1,28 @@
+<section>
+  <h2>Library</h2>
+  <table>
+    <thead><tr><th>Preview</th><th>File</th><th>Provenance</th><th>Format</th><th>Rights</th></tr></thead>
+    <tbody>
+    {% for a in assets %}
+      {% set asset_url = media_base_url ~ '/' ~ (a.storage_key|urlencode) %}
+      <tr>
+        <td>
+          {% if a.media.mime.startswith('image/') %}
+          <a href="{{ asset_url }}" target="_blank" rel="noopener noreferrer" aria-label="View {{ a.original_name }}">
+            <img class="asset-preview" src="{{ asset_url }}" alt="{{ a.original_name }}" loading="lazy">
+          </a>
+          {% elif a.media.mime.startswith('video/') %}
+          <video class="asset-preview" src="{{ asset_url }}" controls preload="none" aria-label="Preview {{ a.original_name }}"></video>
+          {% endif %}
+        </td>
+        <td>{{ a.original_name }}<small>{{ a.id }}</small><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a></td>
+        <td>{{ a.source }}<small>{{ a.generator or 'Company supplied' }}{{ ' · demo only' if a.demo_only else '' }}</small></td>
+        <td>{{ a.media.width }} × {{ a.media.height }}<small>{{ a.media.mime }} · {{ a.media.bytes }} bytes</small></td>
+        <td>{{ a.rights }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">Upload or generate media to see it here.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>

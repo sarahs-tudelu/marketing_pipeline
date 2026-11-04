@@ -82,7 +82,7 @@ def active(fact, at):
     )
 
 
-def render(parts, profile, facts, platform, ai, settings):
+def render(parts, profile, facts, platform, settings):
     by_id = {f.id: f for f in facts.facts}
     texts = []
     for part in parts:
@@ -98,8 +98,6 @@ def render(parts, profile, facts, platform, ai, settings):
         links = [by_id[p["fact_id"]].url for p in parts if by_id[p["fact_id"]].url]
         lines.extend(dict.fromkeys(links))
     lines.extend(facts.required_disclaimers)
-    if ai:
-        lines.append(settings.disclosure_text)
     tags = facts.hashtags.get(platform, [])[: profile.hashtag_limit]
     if tags:
         lines.append(" ".join("#" + t.lstrip("#") for t in tags))

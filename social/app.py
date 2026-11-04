@@ -22,8 +22,9 @@ from .facts import Facts, load_facts, render, save_facts
 from .gate import run_gate
 from .lifecycle import transition
 from .models import Account, Alert, Asset, CheckResult, Control, FactSheet, Post, RequestRecord, Transition
-from .monitoring import set_kill, setup_logging
+from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, draft, generate
+from .provider_errors import ProviderError
 from .providers import Providers
 from .scheduler import schedule
 from .storage import ingest
@@ -110,7 +111,8 @@ def create_app(settings=None):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; style-src 'self'; img-src 'self' data: https:; form-action 'self'; frame-ancestors 'none'"
+            "default-src 'self'; style-src 'self'; img-src 'self' data: https:; "
+            "media-src 'self' https:; form-action 'self'; frame-ancestors 'none'"
         )
         return response
 
@@ -158,7 +160,7 @@ def create_app(settings=None):
     def health():
         return {"status": "ok"}
 
-    def page(request, db, view, post_id=None):
+    def page(request, db, view, post_id=None, *, error_message="", asset_form=None, status_code=200):
         request.session.setdefault("csrf", secrets.token_urlsafe(32))
         request.session.setdefault("browser_nonce", secrets.token_urlsafe(32))
         from .adapters import ADAPTERS
@@ -184,8 +186,12 @@ def create_app(settings=None):
         return templates.TemplateResponse(
             request=request,
             name="studio.html",
+            status_code=status_code,
             context={
                 "view": view,
+                "error_message": error_message,
+                "asset_form": asset_form or {},
+                "media_base_url": (settings.media_base_url or "/media").rstrip("/"),
                 "csrf": request.session["csrf"],
                 "posts": posts,
                 "post": post,
@@ -277,9 +283,7 @@ def create_app(settings=None):
             post.parts = parts
             post.fact_ids = list(dict.fromkeys(p["fact_id"] for p in parts))
             post.ai_disclosure = any(db.get(Asset, id).source != "company" for id in post.asset_ids)
-            post.caption = render(
-                parts, profiles(settings)[post.platform], facts, post.platform, post.ai_disclosure, settings
-            )
+            post.caption = render(parts, profiles(settings)[post.platform], facts, post.platform, settings)
             post.approved_digest = ""
             transition(db, post, "generated", "Edited approved fact selections", actor)
             db.commit()
@@ -398,14 +402,38 @@ def create_app(settings=None):
     @app.post("/forms/generate-asset", dependencies=mutation)
     async def generate_asset(request: Request, db: DB):
         form = await request.form()
-        await run_in_threadpool(
-            Providers(settings).generate_asset,
-            db,
-            form["prompt"],
-            form["kind"],
-            form["rights"],
-            json.loads(form.get("tags") or "{}"),
-        )
+        values = {key: str(form.get(key, "")) for key in ("prompt", "kind", "rights", "tags")}
+        try:
+            try:
+                tags = json.loads(values["tags"] or "{}")
+            except ValueError:
+                raise ValueError('Tags must be a JSON object, for example {"campaign": "summer"}.') from None
+            await run_in_threadpool(
+                Providers(settings).generate_asset,
+                db,
+                values["prompt"],
+                values["kind"],
+                values["rights"],
+                tags,
+            )
+        except ValueError as exc:
+            db.rollback()
+            if isinstance(exc, ProviderError):
+                event(
+                    "asset_generation_failed",
+                    provider=exc.provider,
+                    category=exc.category,
+                    upstream_status=exc.upstream_status,
+                    request_id=exc.request_id,
+                )
+            return page(
+                request,
+                db,
+                "assets",
+                error_message=str(exc),
+                asset_form=values,
+                status_code=exc.status if isinstance(exc, ProviderError) else 400,
+            )
         db.commit()
         return RedirectResponse("/admin/assets", status_code=303)
 

@@ -76,7 +76,6 @@ class Settings(BaseSettings):
     openai_image_model: str = "gpt-image-2.5-sunburst-2026-09-08"
     openai_embedding_model: str = "text-embedding-3-small"
     embedding_provider: Literal["hash", "openai"] = "hash"
-    disclosure_text: str = "AI-generated or AI-edited media."
     review_min_score: float = Field(default=0.9, ge=0, le=1)
     duplicate_threshold: float = Field(default=0.94, gt=0, le=1)
     duplicate_days: int = Field(default=30, ge=1)

@@ -72,7 +72,6 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `OPENAI_IMAGE_MODEL` | `"gpt-image-2.5-sunburst-2026-09-08"` | Related configuration in the group above. |
 | `OPENAI_EMBEDDING_MODEL` | `"text-embedding-3-small"` | Related configuration in the group above. |
 | `EMBEDDING_PROVIDER` | `"hash"` | hash = offline similarity fixture; openai required for live publishing. |
-| `DISCLOSURE_TEXT` | `"AI-generated or AI-edited media."` | Caption disclosure is also included when a native AI field is available. |
 | `REVIEW_MIN_SCORE` | `0.9` | Independent reviewer acceptance and duplicate similarity thresholds (0..1). |
 | `DUPLICATE_THRESHOLD` | `0.94` | Related configuration in the group above. |
 | `DUPLICATE_DAYS` | `30` | Related configuration in the group above. |
