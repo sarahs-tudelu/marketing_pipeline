@@ -2,11 +2,13 @@
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
+from itsdangerous import TimestampSigner
 
 from social.app import create_app
 from social.facts import load_facts
@@ -71,17 +73,17 @@ def test_generation_progress_and_completion_in_browser(db, settings, assets, mon
                 await form.locator('[name="prompt"]').fill("A preview image")
                 await form.locator('[name="rights"]').fill("Internal preview")
             handle = await form.element_handle()
-            # Pause native navigation after document-level enhancement so the pending UI is inspectable.
+            # Pause native submission after session refresh so the pending UI is inspectable.
             await page.evaluate("""() => {
                 window.capturedSubmissions = [];
-                window.pauseSubmission = event => {
-                    if (event.defaultPrevented) return;
-                    window.capturedSubmissions.push(Object.fromEntries(new FormData(event.target)));
-                    event.preventDefault();
+                window.nativeSubmit = HTMLFormElement.prototype.submit;
+                HTMLFormElement.prototype.submit = function () {
+                    window.capturedSubmissions.push(Object.fromEntries(new FormData(this)));
+                    this.dataset.captured = 'true';
                 };
-                window.addEventListener('submit', window.pauseSubmission);
             }""")
             await form.get_by_role("button", name=label).click()
+            await playwright.expect(form).to_have_attribute("data-captured", "true")
             assert await handle.get_attribute("aria-busy") == "true"
             assert status in await handle.eval_on_selector('[role="status"]', "node => node.innerText")
             assert await handle.eval_on_selector("button", "node => node.disabled")
@@ -99,7 +101,7 @@ def test_generation_progress_and_completion_in_browser(db, settings, assets, mon
             await page.emulate_media(reduced_motion="reduce")
             assert await spinner.evaluate("node => getComputedStyle(node).animationName") == "none"
             async with page.expect_navigation():
-                await handle.evaluate("form => HTMLFormElement.prototype.submit.call(form)")
+                await handle.evaluate("form => window.nativeSubmit.call(form)")
             assert len(requests) == 1
             assert parse_qs(requests[0].post_data)["csrf"]
             assert not errors
@@ -146,7 +148,7 @@ def test_delete_confirmation_and_cached_page_restore_in_browser(db, settings, as
             assert await button.is_enabled()
             assert await page.locator(".loading-state").count() == 0
             # Stop native navigation after the enhancer runs, then emulate a cached-page return.
-            await page.evaluate("window.addEventListener('submit', e => e.preventDefault())")
+            await page.evaluate("HTMLFormElement.prototype.submit = function () {}")
             generate = page.get_by_role("button", name="Generate caption")
             await generate.click()
             assert await generate.is_disabled()
@@ -154,6 +156,150 @@ def test_delete_confirmation_and_cached_page_restore_in_browser(db, settings, as
             assert await generate.is_enabled()
             assert await page.locator('[aria-busy="true"]').count() == 0
             assert await page.locator(".loading-state").count() == 0
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
+async def serve_studio_request(route, client):
+    request = route.request
+    assert urlsplit(request.url).netloc == "studio.test"
+    # Use only the browser's cookies; the test client's jar must not hide cookie loss.
+    client.cookies.clear()
+    response = client.request(
+        request.method,
+        request.url,
+        content=request.post_data_buffer,
+        headers=await request.all_headers(),
+        follow_redirects=True,
+    )
+    headers = {
+        key: value
+        for key, value in response.headers.items()
+        if key not in {"content-encoding", "content-length", "transfer-encoding"}
+    }
+    await route.fulfill(status=response.status_code, headers=headers, body=response.content)
+    return response
+
+
+@pytest.mark.parametrize("session_state", ["missing", "expired", "replaced"])
+def test_stale_upload_refreshes_session_before_one_submission(db, settings, assets, monkeypatch, session_state):
+    playwright = pytest.importorskip("playwright.async_api")
+    media_bytes = (settings.media_dir / assets[0].storage_key).read_bytes()
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            page = await browser.new_page()
+            requests, refreshes = [], []
+
+            async def serve(route):
+                response = await serve_studio_request(route, client)
+                if urlsplit(route.request.url).path == "/api/session":
+                    refreshes.append(response.json()["csrf"])
+                if route.request.method == "POST":
+                    requests.append((route.request, response.status_code))
+
+            await page.route("**/*", serve)
+            await page.goto("http://studio.test/admin/assets")
+            form = page.locator('form[action="/forms/assets"]')
+            old_token = await form.locator('[name="csrf"]').input_value()
+            await form.locator('[name="rights"]').fill("Company-owned original")
+            await form.locator('[name="file"]').set_input_files(
+                {"name": "session-recovery.jpg", "mimeType": "image/jpeg", "buffer": media_bytes}
+            )
+            cookie = next(c for c in await page.context.cookies() if c["name"] == "session")
+            if session_state == "missing":
+                await page.context.clear_cookies()
+                cookie_header = ""
+            else:
+                if session_state == "expired":
+                    signer = TimestampSigner(settings.session_secret.get_secret_value())
+                    payload = signer.unsign(cookie["value"])
+                    with monkeypatch.context() as patch:
+                        patch.setattr(TimestampSigner, "get_timestamp", lambda self: int(time.time()) - 3601)
+                        cookie["value"] = signer.sign(payload).decode()
+                else:
+                    client.cookies.clear()
+                    client.get("/api/session")
+                    cookie["value"] = client.cookies.get("session")
+                await page.context.add_cookies([cookie])
+                cookie_header = f"session={cookie['value']}"
+            # The unrefreshed token must still be rejected by the server.
+            client.cookies.clear()
+            rejected = client.post(
+                "/forms/control",
+                headers={"cookie": cookie_header},
+                data={"csrf": old_token, "enabled": "true"},
+            )
+            assert rejected.status_code == 403
+            async with page.expect_navigation():
+                await form.get_by_role("button", name="Ingest asset").click()
+            assert len(refreshes) == len(requests) == 1
+            assert refreshes[0] != old_token
+            request, status = requests[0]
+            assert status == 200
+            assert media_bytes in request.post_data_buffer
+            assert refreshes[0].encode() in request.post_data_buffer
+            assert b"Company-owned original" in request.post_data_buffer
+            assert await page.get_by_role("heading", name="Asset library", exact=True).count() == 1
+            assert await page.locator(".session-error").count() == 0
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
+@pytest.mark.parametrize("failure", ["network", "unauthorized", "invalid_token"])
+def test_session_refresh_failure_keeps_entries_and_allows_retry(db, settings, assets, failure):
+    playwright = pytest.importorskip("playwright.async_api")
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            page = await browser.new_page()
+            requests = []
+            fail_refresh = True
+
+            async def serve(route):
+                assert urlsplit(route.request.url).netloc == "studio.test"
+                if fail_refresh and urlsplit(route.request.url).path == "/api/session":
+                    if failure == "network":
+                        await route.abort()
+                    else:
+                        await route.fulfill(
+                            status=401 if failure == "unauthorized" else 200,
+                            content_type="application/json",
+                            body='{"csrf": null}',
+                        )
+                    return
+                if route.request.method == "POST":
+                    requests.append(route.request)
+                await serve_studio_request(route, client)
+
+            await page.route("**/*", serve)
+            await page.goto("http://studio.test/admin/compose")
+            form = page.locator('form[action="/forms/posts"]')
+            await form.locator('[name="campaign"]').fill("Preserved campaign")
+            await form.locator('[name="asset_ids"]').check()
+            button = form.get_by_role("button", name="Create draft")
+            await button.click()
+            await playwright.expect(form.get_by_role("alert")).to_contain_text("Nothing was submitted")
+            assert not requests
+            assert await button.is_enabled()
+            assert await form.locator('[name="campaign"]').input_value() == "Preserved campaign"
+            assert await form.locator('[name="asset_ids"]').is_checked()
+            assert await form.get_attribute("aria-busy") is None
+            fail_refresh = False
+            async with page.expect_navigation():
+                await button.click()
+            assert len(requests) == 1
+            assert await page.get_by_role("heading", name="Preserved campaign", exact=True).count() == 1
             await browser.close()
 
     with TestClient(create_app(settings), base_url="http://studio.test") as client:
