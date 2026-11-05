@@ -304,6 +304,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
                 "asset_id": a.id,
                 "source": a.source,
                 "asset_type": a.tags.get("asset_type"),
+                "media": a.media,
                 "product_family": a.tags.get("product_family", a.tags.get("product")),
                 "tags": a.tags,
                 "rights": a.rights,

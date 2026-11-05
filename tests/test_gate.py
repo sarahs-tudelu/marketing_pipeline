@@ -62,6 +62,7 @@ def test_review_context_reports_execution_mode_and_actual_asset_provenance(db, s
         "checksum": asset.checksum,
     }
     assert record["rights"] == asset.rights and record["rights_status"] == "internal_testing_only"
+    assert record["media"] == asset.media
     assert context["renderer_context"]["lead_in"] == ""
     assert context["caption_parts"] == post.parts
     assert context["renderer_context"]["automatic_caption_disclosure"] is False
