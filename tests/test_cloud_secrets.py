@@ -160,6 +160,36 @@ def test_dotenv_precedence_and_local_override(tmp_path, monkeypatch):
     assert Settings(_env_file=None).secret_backend == "none"
 
 
+@pytest.mark.parametrize("platform", ["x", "linkedin", "tiktok"])
+def test_oauth_client_ids_resolve_from_secret_manager_before_authorization(db, settings, monkeypatch, platform):
+    from urllib.parse import parse_qs, urlsplit
+
+    from social.connections import begin
+
+    client = Session("resolved-oauth-client-id")
+    monkeypatch.setattr("social.cloud_secrets.google_session", lambda *args: client)
+    configured = Settings(
+        _env_file=None,
+        **(settings.model_dump() | {
+            "secret_backend": "google",
+            "app_base_url": "https://studio.test",
+            platform + "_client_id": REF,
+            platform + "_client_secret": "mock-client-secret",
+        }),
+    )
+    url = begin(db, configured, platform, "browser-nonce")
+    query = parse_qs(urlsplit(url).query)
+    assert query["client_key" if platform == "tiktok" else "client_id"] == ["resolved-oauth-client-id"]
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("platform", ["x", "linkedin", "tiktok"])
+def test_oauth_client_id_reference_failure_stops_startup(monkeypatch, platform):
+    monkeypatch.setattr("social.cloud_secrets.google_session", lambda *args: Session("never-print", 403))
+    with pytest.raises(SecretLoadError, match=platform.upper() + "_CLIENT_ID"):
+        Settings(_env_file=None, secret_backend="google", **{platform + "_client_id": REF})
+
+
 def test_validation_errors_do_not_echo_plaintext_secrets():
     with pytest.raises(ValidationError) as exc:
         Settings(_env_file=None, environment="production", openai_api_key="never-print")
@@ -189,6 +219,13 @@ def test_deployment_template_fails_preflight_until_placeholders_are_replaced():
         k: v.replace("REPLACE_WITH_GCP_PROJECT_ID", "test-project") if v else v for k, v in values.items()
     }
     assert module.validate(values) == []
+    values["X_CLIENT_ID"] = "literal-client-id"
+    assert module.validate(values) == []
+    values["X_CLIENT_ID"] = REF
+    assert module.validate(values) == []
+    values["X_CLIENT_ID"] = "gsm://invalid"
+    assert any("X_CLIENT_ID" in error for error in module.validate(values))
+    values["X_CLIENT_ID"] = REF
     values.update(
         STORAGE_BACKEND="s3",
         S3_BUCKET="tudelu-test-media",

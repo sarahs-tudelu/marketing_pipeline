@@ -30,6 +30,7 @@
     pending.delete(form);
   }
   const labels = {
+    connect: ["Opening authorization…", "Preparing your account connection."],
     generate: ["Writing caption…", "Finding the right words. This can take a minute."],
     "generate-asset": ["Generating media…", "Creating your media. This may take a few minutes."],
     check: ["Checking post…", "Reviewing the caption, facts, and media."],

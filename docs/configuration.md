@@ -4,7 +4,7 @@ Generated from `social/config.py` and `.env.example`. All variables are optional
 
 Actual client IDs, API keys, tokens, passwords and origin domains are deliberately unset. Version/model settings are pinned defaults, not credentials. `LIVE_PLATFORMS` is an explicit additional switch; missing connections still remain dry. Restart web and worker after changes.
 
-For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.example`. With `SECRET_BACKEND=google`, sensitive settings accept `gsm://projects/PROJECT/secrets/NAME/versions/VERSION` references. ADC authenticates reads at startup; failed reads stop startup. `DATABASE_PASSWORD` is injected into a SQLAlchemy URL object, separate from the password-free `DATABASE_URL`. See [Droplet deployment](digitalocean.md) for the extra Compose variables and bootstrap credential file.
+For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.example`. With `SECRET_BACKEND=google`, sensitive settings and OAuth client IDs accept `gsm://projects/PROJECT/secrets/NAME/versions/VERSION` references. ADC authenticates reads at startup; failed reads stop startup. `DATABASE_PASSWORD` is injected into a SQLAlchemy URL object, separate from the password-free `DATABASE_URL`. See [Droplet deployment](digitalocean.md) for the extra Compose variables and bootstrap credential file.
 
 `TUDELU_ENV_FILE` is a process environment selector for the settings file (default `.env`); it is not a setting to place inside that file. Select `.env.local` for the offline demo. Compose additionally uses `LOCAL_ENV_FILE` to choose its development env file. The Droplet template uses `GCP_PROJECT_ID`, `GCP_ADC_HOST_PATH`, `TLS_EMAIL`, `ADMIN_ALLOWED_CIDRS` and `DATABASE_CA_HOST_DIR` for reference interpolation, credential/certificate mounts, HTTPS and source restrictions. Its database URL targets the existing DigitalOcean Managed PostgreSQL cluster with `sslmode=verify-full`.
 
@@ -43,13 +43,13 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `META_SYSTEM_USER_TOKEN` | `(unset secret)` | Optional import through `tudelu import-meta`; otherwise enter in Connections UI. |
 | `META_PAGE_ID` | `(unset)` | Related configuration in the group above. |
 | `INSTAGRAM_USER_ID` | `(unset)` | Related configuration in the group above. |
-| `LINKEDIN_CLIENT_ID` | `(unset)` | Three-legged LinkedIn OAuth. Organization numeric ID, not a member ID. |
+| `LINKEDIN_CLIENT_ID` | `(unset)` | Three-legged LinkedIn OAuth. Organization numeric ID, not a member ID. OAuth client IDs also accept gsm:// references with SECRET_BACKEND=google. |
 | `LINKEDIN_CLIENT_SECRET` | `(unset secret)` | Related configuration in the group above. |
 | `LINKEDIN_ORGANIZATION_ID` | `(unset)` | Related configuration in the group above. |
-| `X_CLIENT_ID` | `(unset)` | X confidential web app; OAuth 2.0 PKCE. offline.access is requested. |
+| `X_CLIENT_ID` | `(unset)` | X confidential web app; OAuth 2.0 PKCE. offline.access is requested. Client ID accepts a literal value or a gsm:// reference with SECRET_BACKEND=google. |
 | `X_CLIENT_SECRET` | `(unset secret)` | Related configuration in the group above. |
 | `X_INCLUDE_LINKS` | `false` | Keep links off unless desired; current billing must be checked in the X Console. |
-| `TIKTOK_CLIENT_ID` | `(unset)` | TikTok calls the client ID a client_key. Only inbox upload is implemented. |
+| `TIKTOK_CLIENT_ID` | `(unset)` | TikTok calls the client ID a client_key. Only inbox upload is implemented. Client ID accepts a literal value or a gsm:// reference with SECRET_BACKEND=google. |
 | `TIKTOK_CLIENT_SECRET` | `(unset secret)` | Related configuration in the group above. |
 | `TIKTOK_VERIFIED_URL_PREFIX` | `(unset)` | Optional verified HTTPS domain/prefix; required when transfer=url. |
 | `TIKTOK_TRANSFER` | `"file"` | file or url. File upload works without verified public media prefix. |

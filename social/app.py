@@ -460,7 +460,16 @@ def create_app(settings=None):
     def connect(platform: str, request: Request, db: DB):
         request.session.setdefault("browser_nonce", secrets.token_urlsafe(32))
         url = connections.begin(db, settings, platform, request.session["browser_nonce"])
-        return RedirectResponse(url, status_code=303)
+        # Chrome applies form-action 'self' to cross-origin POST redirects too.
+        # Finish the protected POST here, then navigate from a same-origin page.
+        return templates.TemplateResponse(
+            request=request,
+            name="oauth_handoff.html",
+            context={
+                "authorize_url": url,
+                "platform_name": {"x": "X", "linkedin": "LinkedIn", "tiktok": "TikTok"}[platform],
+            },
+        )
 
     @app.get("/oauth/{platform}/callback")
     def oauth_callback(

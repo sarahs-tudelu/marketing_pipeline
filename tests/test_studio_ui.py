@@ -11,11 +11,79 @@ from fastapi.testclient import TestClient
 from itsdangerous import TimestampSigner
 
 from social.app import create_app
+from social.connections import OAUTH
 from social.facts import load_facts
 from social.pipeline import draft
 from social.provider_errors import ProviderError
 
 pytestmark = pytest.mark.skipif(not os.getenv("BROWSER_BINARY"), reason="BROWSER_BINARY is not configured")
+
+
+@pytest.mark.parametrize("platform", ["x", "linkedin", "tiktok"])
+@pytest.mark.parametrize("javascript_enabled", [True, False])
+def test_connect_opens_provider_authorization_with_same_origin_form_policy(
+    db, settings, platform, javascript_enabled
+):
+    playwright = pytest.importorskip("playwright.async_api")
+    selected = settings.model_copy(update={
+        "app_base_url": "https://studio.test",
+        platform + "_client_id": "mock-client-id",
+        platform + "_client_secret": settings.token_encryption_key,
+    })
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            context = await browser.new_context(offline=True, java_script_enabled=javascript_enabled)
+            page = await context.new_page()
+            errors, provider_requests, submissions = [], [], []
+            page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+
+            async def serve(route):
+                request = route.request
+                url = urlsplit(request.url)
+                if url.netloc != "studio.test":
+                    assert request.url.split("?", 1)[0] == OAUTH[platform]["authorize"]
+                    assert request.method == "GET"
+                    provider_requests.append(request)
+                    await route.fulfill(content_type="text/html", body="<h1>Provider authorization</h1>")
+                    return
+                if request.method == "POST":
+                    submissions.append(request)
+                client.cookies.clear()
+                response = client.request(
+                    request.method, request.url, content=request.post_data_buffer,
+                    headers=await request.all_headers(), follow_redirects=False,
+                )
+                headers = {
+                    key: value for key, value in response.headers.items()
+                    if key not in {"content-encoding", "content-length", "transfer-encoding"}
+                }
+                await route.fulfill(status=response.status_code, headers=headers, body=response.content)
+
+            await page.route("**/*", serve)
+            response = await page.goto("https://studio.test/admin/connections")
+            assert "form-action 'self';" in response.headers["content-security-policy"]
+            await page.locator(f'form[action="/oauth/{platform}/connect"] button').click()
+            if not javascript_enabled:
+                await page.locator("#oauth-continue").click()
+            try:
+                await playwright.expect(page.get_by_role("heading", name="Provider authorization")).to_be_visible(
+                    timeout=5000
+                )
+            except AssertionError as exc:
+                raise AssertionError(f"Provider handoff failed. Browser errors: {errors}") from exc
+            assert len(submissions) == len(provider_requests) == 1
+            query = parse_qs(urlsplit(provider_requests[0].url).query)
+            assert query["client_key" if platform == "tiktok" else "client_id"] == ["mock-client-id"]
+            assert query["redirect_uri"] == [f"https://studio.test/oauth/{platform}/callback"]
+            assert not errors
+            await browser.close()
+
+    with TestClient(create_app(selected), base_url="https://studio.test") as client:
+        asyncio.run(exercise(client))
 
 
 @pytest.mark.parametrize("kind", ["caption", "image"])

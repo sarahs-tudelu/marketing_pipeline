@@ -115,7 +115,7 @@ Create these secret names (or change the references to your naming scheme), with
 
 If only deploying the fixture demo, the two AI key settings can be blank until their secrets exist. Every nonempty `gsm://` reference is fetched at startup, even if its corresponding feature is not yet active. The core database/authentication/encryption secrets are required for production.
 
-The template also shows optional references for LinkedIn/X/TikTok client secrets, the Meta System User token, Slack and SMTP. Leave those fields blank until configured. Client IDs and account IDs remain ordinary nonsecret settings. Access and refresh tokens obtained through Connections remain encrypted in PostgreSQL; they are not rewritten into `.env` or uploaded to Secret Manager.
+The template also shows optional references for LinkedIn/X/TikTok client secrets, the Meta System User token, Slack and SMTP. Leave those fields blank until configured. OAuth client IDs can be literal values or `gsm://` references; both IDs and secrets are resolved before authorization starts. Account IDs remain ordinary nonsecret settings. Access and refresh tokens obtained through Connections remain encrypted in PostgreSQL; they are not rewritten into `.env` or uploaded to Secret Manager.
 
 Use numeric versions for controlled deployments, especially the DB password and Fernet key. The loader also supports `latest`/version aliases, but the Droplet preflight requires numeric versions for those two critical settings. Loaded values are held in process memory and are never written back to `.env`, a generated configuration file or logs. Reads are deduplicated within a settings load; there is no persistent secret cache. Restart processes to pick up changed references.
 

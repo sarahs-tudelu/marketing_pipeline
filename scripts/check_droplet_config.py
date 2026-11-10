@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from sqlalchemy.engine import make_url
 
 from social.cloud_secrets import SecretLoadError, resource_name
-from social.config import Settings
+from social.config import OAUTH_CLIENT_ID_FIELDS, Settings
 
 
 def validate(values):
@@ -138,7 +138,11 @@ def validate(values):
                 errors.append(f"Live AI requires {key}")
     for name, field in Settings.model_fields.items():
         key = name.upper()
-        if field.annotation is SecretStr and values.get(key):
+        value = values.get(key) or ""
+        if value and (
+            field.annotation is SecretStr
+            or (name in OAUTH_CLIENT_ID_FIELDS and value.startswith("gsm://"))
+        ):
             try:
                 resource_name(values[key])
                 if (

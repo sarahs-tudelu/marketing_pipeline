@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PLATFORMS = ("linkedin", "instagram", "facebook", "x", "tiktok")
+OAUTH_CLIENT_ID_FIELDS = frozenset({"linkedin_client_id", "x_client_id", "tiktok_client_id"})
 
 
 class Settings(BaseSettings):
@@ -111,13 +112,13 @@ class Settings(BaseSettings):
         from .cloud_secrets import resolve_references
 
         data = dict(values)
-        sensitive = {
+        secret_capable = {
             name: data[name]
             for name, field in cls.model_fields.items()
-            if field.annotation is SecretStr and name in data
+            if name in data and (field.annotation is SecretStr or name in OAUTH_CLIENT_ID_FIELDS)
         }
         resolved = resolve_references(
-            sensitive,
+            secret_capable,
             backend=data.get("secret_backend", "none"),
             timeout=float(data.get("secret_timeout_seconds", 15)),
             credentials_file=data.get("google_application_credentials") or None,
