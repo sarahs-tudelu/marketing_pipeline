@@ -75,7 +75,7 @@ lines.extend(
         "",
         "Claude uses official Messages with adaptive thinking and `output_config.effort=xhigh`. Runway uses official asynchronous image/video/audio tasks. OpenAI provides Responses vision and embeddings; legacy image generation remains optional. `AI_MODE=fixture` is offline; live publication additionally requires live AI checks and semantic embeddings. Media Studio workflows and job recovery are in `docs/runway.md`; connection steps are in `README.md`.",
         "",
-        "Meta tokens may be imported from ignored environment variables or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn and TikTok tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.",
+        "Meta credentials are automatically validated/imported from the three configured environment values at web/worker startup, or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn and TikTok tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.",
         "",
     ]
 )

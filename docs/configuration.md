@@ -40,7 +40,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `LINKEDIN_API_VERSION` | `"202609"` | Related configuration in the group above. |
 | `X_API_VERSION` | `"2"` | Related configuration in the group above. |
 | `TIKTOK_API_VERSION` | `"v2"` | Related configuration in the group above. |
-| `META_SYSTEM_USER_TOKEN` | `(unset secret)` | Optional import through `tudelu import-meta`; otherwise enter in Connections UI. |
+| `META_SYSTEM_USER_TOKEN` | `(unset secret)` | Automatically validated/imported at web and worker startup when all three values are set. |
 | `META_PAGE_ID` | `(unset)` | Related configuration in the group above. |
 | `INSTAGRAM_USER_ID` | `(unset)` | Related configuration in the group above. |
 | `LINKEDIN_CLIENT_ID` | `(unset)` | Three-legged LinkedIn OAuth. Organization numeric ID, not a member ID. OAuth client IDs also accept gsm:// references with SECRET_BACKEND=google. |
@@ -151,4 +151,4 @@ Default hard caps: LinkedIn 3, Instagram 5, Facebook 3, X 3, TikTok 3. All targe
 
 Claude uses official Messages with adaptive thinking and `output_config.effort=xhigh`. Runway uses official asynchronous image/video/audio tasks. OpenAI provides Responses vision and embeddings; legacy image generation remains optional. `AI_MODE=fixture` is offline; live publication additionally requires live AI checks and semantic embeddings. Media Studio workflows and job recovery are in `docs/runway.md`; connection steps are in `README.md`.
 
-Meta tokens may be imported from ignored environment variables or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn and TikTok tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.
+Meta credentials are automatically validated/imported from the three configured environment values at web/worker startup, or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn and TikTok tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.

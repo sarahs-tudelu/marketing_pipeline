@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import io
 import json
@@ -61,6 +62,13 @@ class S3Store:
                 connect_timeout=10,
                 read_timeout=30,
                 retries={"mode": "standard", "total_max_attempts": 3},
+                # S3-compatible endpoints may not accept AWS checksum trailers/chunked bodies.
+                request_checksum_calculation="when_required"
+                if settings.s3_endpoint_url
+                else "when_supported",
+                response_checksum_validation="when_required"
+                if settings.s3_endpoint_url
+                else "when_supported",
             ),
         )
 
@@ -69,6 +77,8 @@ class S3Store:
             Bucket=self.bucket,
             Key=key,
             Body=data,
+            ContentLength=len(data),
+            ContentMD5=base64.b64encode(hashlib.md5(data, usedforsecurity=False).digest()).decode("ascii"),
             ContentType=mime,
             Metadata={"sha256": hashlib.sha256(data).hexdigest()},
         )
@@ -99,6 +109,19 @@ def storage(settings):
 
 def inspect_media(data, filename, settings):
     try:
+        return _inspect_media(data, filename, settings)
+    except av.error.FFmpegError:
+        raise ValueError(
+            "The audio/video file could not be decoded. Export a new MP4 (H.264/AAC) or audio file and retry."
+        ) from None
+    except Image.DecompressionBombError:
+        raise ValueError(
+            "The image dimensions are too large to process. Upload a smaller image rendition."
+        ) from None
+
+
+def _inspect_media(data, filename, settings):
+    try:
         with Image.open(io.BytesIO(data)) as im:
             im.verify()
         with Image.open(io.BytesIO(data)) as im:
@@ -115,8 +138,13 @@ def inspect_media(data, filename, settings):
     except (OSError, SyntaxError):
         pass
     suffix = Path(filename).suffix.lower()
-    audio_mimes = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
-                   ".ogg": "audio/ogg", ".flac": "audio/flac"}
+    audio_mimes = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+    }
     if suffix in audio_mimes:
         with av.open(io.BytesIO(data)) as container:
             if not container.streams.audio or container.streams.video:
@@ -126,9 +154,16 @@ def inspect_media(data, filename, settings):
             rate = stream.codec_context.sample_rate
             if not samples or not rate:
                 raise ValueError("Empty or invalid audio")
-            return {"mime": audio_mimes[suffix], "width": 0, "height": 0, "bytes": len(data),
-                    "duration": samples / rate, "codec": stream.codec_context.name,
-                    "sample_rate": rate, "metadata_keys": sorted(container.metadata.keys())}
+            return {
+                "mime": audio_mimes[suffix],
+                "width": 0,
+                "height": 0,
+                "bytes": len(data),
+                "duration": samples / rate,
+                "codec": stream.codec_context.name,
+                "sample_rate": rate,
+                "metadata_keys": sorted(container.metadata.keys()),
+            }
     if suffix not in {".mp4", ".mov", ".webm"}:
         raise ValueError("Unsupported or invalid media")
     with av.open(io.BytesIO(data)) as container:
@@ -176,6 +211,12 @@ def ingest(
 ):
     if source not in {"company", "ai_generated", "ai_edited"}:
         raise ValueError("Invalid asset source")
+    if not isinstance(filename, str) or not filename.strip() or len(Path(filename).name) > 255:
+        raise ValueError("Choose a media file with a filename of 255 characters or fewer")
+    if tags is not None and not isinstance(tags, dict):
+        raise ValueError("Tags must be a JSON object")
+    if generator and len(generator) > 200:
+        raise ValueError("AI model / generator must be 200 characters or fewer")
     if not rights.strip() or not data or len(data) > settings.max_upload_bytes:
         raise ValueError("Usage rights and a nonempty file within MAX_UPLOAD_BYTES are required")
     if source != "company" and (not generator or not prompt):

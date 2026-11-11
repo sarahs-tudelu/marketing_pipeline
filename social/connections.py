@@ -183,7 +183,9 @@ def callback(db, settings, platform, state, code, browser_nonce, client=None):
 def save_meta(db, settings, token, page_id, instagram_id, client=None):
     if not token or not page_id or not instagram_id:
         raise ValueError("System User token, Page ID and Instagram user ID are required")
-    client = client or httpx.Client(timeout=settings.http_timeout_seconds)
+    if client is None:
+        with httpx.Client(timeout=settings.http_timeout_seconds, follow_redirects=False) as owned:
+            return save_meta(db, settings, token, page_id, instagram_id, owned)
     base = f"https://graph.facebook.com/{settings.meta_api_version}"
     response = client.get(
         f"{base}/{page_id}",
@@ -210,6 +212,81 @@ def save_meta(db, settings, token, page_id, instagram_id, client=None):
         account.credentials = vault.encrypt({"access_token": page["access_token"], "system_token": token})
         account.external_id, account.validated_at, account.auth_error = external_id, now(), ""
     db.commit()
+
+
+def import_meta_from_env(db, settings, client=None, *, force=False):
+    """Validate configured Meta credentials on startup without reconnecting on every restart."""
+    token = settings.meta_system_user_token.get_secret_value().strip()
+    page_id, instagram_id = settings.meta_page_id.strip(), settings.instagram_user_id.strip()
+    if not any((token, page_id, instagram_id)):
+        return False
+
+    # Serialize web/worker startup. A second process observes the first process's saved connection.
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(
+            update(Account).where(Account.platform == "facebook").values(auth_error=Account.auth_error)
+        )
+    else:
+        db.scalar(select(Account).where(Account.platform == "facebook").with_for_update())
+    accounts = [db.get(Account, p) for p in ("facebook", "instagram")]
+    for account in accounts:
+        db.refresh(account)
+    if not force and any(a.auth_error == "Disconnected" for a in accounts):
+        db.rollback()
+        return False  # An explicit UI disconnect must survive restarts.
+
+    complete = all((token, page_id, instagram_id))
+    try:
+        if not complete:
+            raise ValueError(
+                "Set META_SYSTEM_USER_TOKEN, META_PAGE_ID and INSTAGRAM_USER_ID together in .env"
+            )
+        if not settings.token_encryption_key.get_secret_value():
+            raise ValueError("Set TOKEN_ENCRYPTION_KEY before importing Meta credentials")
+        vault = Vault(settings)
+        if not force:
+            matches = []
+            for account, external_id in zip(accounts, (page_id, instagram_id)):
+                credentials = vault.decrypt(account.credentials) if account.credentials else {}
+                matches.append(
+                    bool(
+                        account.validated_at
+                        and not account.auth_error
+                        and account.external_id == external_id
+                        and credentials.get("access_token")
+                        and secrets.compare_digest(credentials.get("system_token", ""), token)
+                    )
+                )
+            if all(matches):
+                db.rollback()
+                return True
+        save_meta(db, settings, token, page_id, instagram_id, client)
+        return True
+    except Exception as exc:
+        db.rollback()
+        if isinstance(exc, httpx.HTTPError):
+            message = "Could not reach Meta to validate .env credentials. Restart or use Connect from environment to retry."
+        elif isinstance(exc, ValueError):
+            # JSON parsing errors can contain response content; only expose our fixed validation messages.
+            allowed = {
+                "Set META_SYSTEM_USER_TOKEN, META_PAGE_ID and INSTAGRAM_USER_ID together in .env",
+                "Set TOKEN_ENCRYPTION_KEY before importing Meta credentials",
+                "Meta System User validation failed",
+                "Page token or linked Instagram account does not match",
+                "Meta Page/Instagram validation failed",
+            }
+            message = str(exc) if str(exc) in allowed else "Meta returned an invalid validation response"
+        else:
+            message = "Meta environment import failed. Check credentials and TOKEN_ENCRYPTION_KEY."
+        for account in accounts:
+            db.refresh(account)
+            # Partial env config must not invalidate a working UI-managed connection.
+            if complete or not account.credentials:
+                account.validated_at = None
+                account.auth_error = message
+        alert(db, "meta_connection", message, f"meta-env:{digest(message)}:{now().date()}")
+        db.commit()
+        return False
 
 
 def refresh_account(db, settings, platform, client=None, force=False):

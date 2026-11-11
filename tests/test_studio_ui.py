@@ -395,6 +395,53 @@ def test_stale_upload_refreshes_session_before_one_submission(
         asyncio.run(exercise(client))
 
 
+def test_storage_upload_failure_is_visible_and_form_can_retry(db, settings, assets, monkeypatch, tmp_path):
+    from botocore.exceptions import ClientError
+
+    from social.storage import LocalStore
+
+    playwright = pytest.importorskip("playwright.async_api")
+    original = LocalStore.put
+    data = (settings.media_dir / assets[0].storage_key).read_bytes()
+
+    def failed_put(*args, **kwargs):
+        raise ClientError({"Error": {"Code": "AccessDenied", "Message": "private-token"}}, "PutObject")
+
+    monkeypatch.setattr(LocalStore, "put", failed_put)
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=os.environ["BROWSER_BINARY"], headless=True)
+            page = await browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.set_default_timeout(5000)
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+            await page.goto("http://studio.test/admin/assets")
+            form = page.locator('form[action="/forms/assets"]')
+            await form.locator('[name="rights"]').fill("Company-owned original")
+            await form.locator('[name="file"]').set_input_files({
+                "name": "original.jpg", "mimeType": "image/jpeg", "buffer": data,
+            })
+            async with page.expect_navigation():
+                await form.get_by_role("button", name="Ingest asset").click()
+            await playwright.expect(page.get_by_role("alert")).to_contain_text("bucket write permissions")
+            await playwright.expect(form.locator('[name="rights"]')).to_have_value("Company-owned original")
+            await playwright.expect(page.get_by_role("status")).to_contain_text("select the file again")
+            assert "private-token" not in await page.content()
+            await page.screenshot(path=str(tmp_path / "upload-error.png"), full_page=True)
+            monkeypatch.setattr(LocalStore, "put", original)
+            await form.locator('[name="file"]').set_input_files({
+                "name": "original.jpg", "mimeType": "image/jpeg", "buffer": data,
+            })
+            async with page.expect_navigation():
+                await form.get_by_role("button", name="Ingest asset").click()
+            assert await page.get_by_role("alert").count() == 0
+            assert await page.get_by_role("heading", name="Asset library", exact=True).count() == 1
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
 @pytest.mark.parametrize("failure", ["network", "unauthorized", "invalid_token"])
 def test_session_refresh_failure_keeps_entries_and_allows_retry(db, settings, assets, failure):
     playwright = pytest.importorskip("playwright.async_api")

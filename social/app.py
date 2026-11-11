@@ -12,7 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import connections
@@ -41,6 +43,7 @@ from .provider_errors import ProviderError
 from .providers import Providers
 from .scheduler import schedule
 from .storage import ingest
+from .upload_errors import describe_upload_error, upload_error_details
 
 
 class DraftInput(BaseModel):
@@ -66,6 +69,7 @@ def create_app(settings=None):
             bootstrap(db)
             load_facts(db, settings.facts_path)
             db.commit()
+            await run_in_threadpool(connections.import_meta_from_env, db, settings)
         yield
         if settings.storage_backend == "s3":
             app.state.media_store.client.close()
@@ -158,7 +162,12 @@ def create_app(settings=None):
             "application/x-www-form-urlencoded",
             "multipart/form-data",
         }:
-            supplied = str((await request.form()).get("csrf", ""))
+            try:
+                supplied = str((await request.form()).get("csrf", ""))
+            except OSError as exc:
+                status, message = describe_upload_error(exc)
+                event("asset_upload_failed", stage="receive", **upload_error_details(exc))
+                raise HTTPException(status, message) from None
         expected = request.session.get("csrf", "")
         if not expected or not secrets.compare_digest(supplied, expected):
             raise HTTPException(403, "CSRF token missing or invalid")
@@ -177,7 +186,18 @@ def create_app(settings=None):
     def health():
         return {"status": "ok"}
 
-    def page(request, db, view, post_id=None, *, error_message="", asset_form=None, status_code=200):
+    def page(
+        request,
+        db,
+        view,
+        post_id=None,
+        *,
+        error_message="",
+        asset_form=None,
+        upload_form=None,
+        bucket_form=None,
+        status_code=200,
+    ):
         request.session.setdefault("csrf", secrets.token_urlsafe(32))
         request.session.setdefault("browser_nonce", secrets.token_urlsafe(32))
         from .adapters import ADAPTERS
@@ -210,6 +230,8 @@ def create_app(settings=None):
                 "view": view,
                 "error_message": error_message,
                 "asset_form": asset_form or {},
+                "upload_form": upload_form or {},
+                "bucket_form": bucket_form or {},
                 "media_base_url": (settings.media_base_url or "/media").rstrip("/"),
                 "csrf": request.session["csrf"],
                 "posts": posts,
@@ -531,71 +553,122 @@ def create_app(settings=None):
     @app.post("/forms/assets", dependencies=mutation)
     async def upload(request: Request, db: DB):
         form = await request.form()
-        upload = form["file"]
-        data = await upload.read(settings.max_upload_bytes + 1)
+        file = form.get("file")
+        values = media_form_values(form)
+        try:
+            if not isinstance(file, UploadFile) or not file.filename:
+                raise ValueError("Choose a media file to upload")
+            values["filename"] = file.filename
+            arguments = media_form_arguments(values)
+            if file.size is not None and file.size > settings.max_upload_bytes:
+                raise ValueError(
+                    f"The file exceeds the {settings.max_upload_bytes / 1_000_000:g} MB upload limit"
+                )
+            data = await file.read(settings.max_upload_bytes + 1)
+            await run_in_threadpool(ingest, db, settings, data, file.filename, **arguments)
+            db.commit()
+        except Exception as exc:
+            return upload_failed(request, db, exc, upload_form=values)
+        finally:
+            if isinstance(file, UploadFile):
+                await file.close()
+        return RedirectResponse("/admin/assets", status_code=303)
+
+    def media_form_values(form):
+        return {
+            key: str(form.get(key, ""))
+            for key in (
+                "source",
+                "rights",
+                "rights_expire_at",
+                "generator",
+                "prompt",
+                "tags",
+                "customer_permission",
+                "permission_reference",
+                "key",
+            )
+        }
+
+    def media_form_arguments(values):
         from datetime import datetime
 
-        expiry = datetime.fromisoformat(form["rights_expire_at"]) if form.get("rights_expire_at") else None
-        await run_in_threadpool(
-            ingest,
-            db,
-            settings,
-            data,
-            upload.filename,
-            source=form["source"],
-            generator=form.get("generator") or None,
-            prompt=form.get("prompt") or None,
-            tags=json.loads(form.get("tags") or "{}"),
-            rights=form["rights"],
-            rights_expire_at=expiry,
-            customer_permission=form.get("customer_permission") == "on",
-            permission_reference=form.get("permission_reference", ""),
-        )
-        db.commit()
-        return RedirectResponse("/admin/assets", status_code=303)
+        try:
+            tags = json.loads(values["tags"] or "{}")
+        except ValueError:
+            raise ValueError('Tags must be a JSON object, for example {"product": "company"}.') from None
+        if not isinstance(tags, dict):
+            raise ValueError("Tags must be a JSON object")
+        try:
+            expiry = (
+                datetime.fromisoformat(values["rights_expire_at"]) if values["rights_expire_at"] else None
+            )
+        except ValueError:
+            raise ValueError("Enter a valid rights expiry date and time, or leave it blank") from None
+        return {
+            "source": values["source"] or "company",
+            "rights": values["rights"],
+            "rights_expire_at": expiry,
+            "generator": values["generator"] or None,
+            "prompt": values["prompt"] or None,
+            "tags": tags,
+            "customer_permission": values["customer_permission"] == "on",
+            "permission_reference": values["permission_reference"],
+        }
+
+    def upload_failed(request, db, exc, *, upload_form=None, bucket_form=None):
+        db.rollback()
+        status, message = describe_upload_error(exc)
+        event("asset_upload_failed", stage="import" if bucket_form else "save", **upload_error_details(exc))
+        try:
+            return page(
+                request,
+                db,
+                "assets",
+                error_message=message,
+                upload_form=upload_form,
+                bucket_form=bucket_form,
+                status_code=status,
+            )
+        except SQLAlchemyError:
+            db.rollback()
+            return templates.TemplateResponse(
+                request=request,
+                name="upload_unavailable.html",
+                context={"error_message": message},
+                status_code=503,
+            )
 
     @app.post("/forms/import-bucket-asset", dependencies=mutation)
     async def import_bucket_asset(request: Request, db: DB):
-        from datetime import datetime
-
         from .storage import storage
 
-        if settings.storage_backend != "s3":
-            raise ValueError("Bucket import requires STORAGE_BACKEND=s3")
         form = await request.form()
-        key = str(form.get("key", "")).strip()
-        if not key or len(key) > 1024:
-            raise ValueError("Enter the existing bucket object key")
-        tags = json.loads(form.get("tags") or "{}")
-        if not isinstance(tags, dict) or not str(form.get("rights", "")).strip():
-            raise ValueError("Usage rights and a JSON object for tags are required")
-        store = storage(settings)
+        values = media_form_values(form)
+        try:
+            if settings.storage_backend != "s3":
+                raise ValueError("Bucket import requires STORAGE_BACKEND=s3")
+            key = values["key"].strip()
+            if not key or len(key) > 1024:
+                raise ValueError("Enter the existing bucket object key")
+            arguments = media_form_arguments(values)
+            if not arguments["rights"].strip():
+                raise ValueError("Usage rights are required")
+            arguments["tags"] = arguments["tags"] | {"imported_bucket_key": key}
 
-        def import_existing():
-            try:
-                if not 0 < store.head(key)["ContentLength"] <= settings.max_upload_bytes:
-                    raise ValueError("Bucket object is empty or exceeds MAX_UPLOAD_BYTES")
-                ingest(
-                    db,
-                    settings,
-                    store.read(key),
-                    key,
-                    source=str(form.get("source", "company")),
-                    generator=str(form.get("generator", "")) or None,
-                    prompt=str(form.get("prompt", "")) or None,
-                    rights=str(form.get("rights", "")),
-                    tags=tags | {"imported_bucket_key": key},
-                    rights_expire_at=datetime.fromisoformat(form["rights_expire_at"])
-                    if form.get("rights_expire_at")
-                    else None,
-                    customer_permission=form.get("customer_permission") == "on",
-                    permission_reference=str(form.get("permission_reference", "")),
-                )
-                db.commit()
-            finally:
-                store.client.close()
+            def import_existing():
+                store = storage(settings)
+                try:
+                    if not 0 < store.head(key)["ContentLength"] <= settings.max_upload_bytes:
+                        raise ValueError("Bucket object is empty or exceeds MAX_UPLOAD_BYTES")
+                    ingest(db, settings, store.read(key), key, **arguments)
+                    db.commit()
+                finally:
+                    store.client.close()
 
-        await run_in_threadpool(import_existing)
+            await run_in_threadpool(import_existing)
+        except Exception as exc:
+            return upload_failed(request, db, exc, bucket_form=values)
         return RedirectResponse("/admin/assets", status_code=303)
 
     @app.post("/forms/generate-asset", dependencies=mutation)
@@ -666,6 +739,11 @@ def create_app(settings=None):
         await run_in_threadpool(
             connections.save_meta, db, settings, form["token"], form["page_id"], form["instagram_id"]
         )
+        return RedirectResponse("/admin/connections", status_code=303)
+
+    @app.post("/forms/import-meta", dependencies=mutation)
+    async def import_meta(request: Request, db: DB):
+        await run_in_threadpool(connections.import_meta_from_env, db, settings, force=True)
         return RedirectResponse("/admin/connections", status_code=303)
 
     @app.post("/forms/disconnect/{platform}", dependencies=mutation)

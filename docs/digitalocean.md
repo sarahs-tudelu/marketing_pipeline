@@ -54,6 +54,10 @@ After correcting `.env`, recreate the application services so they receive the u
 sudo docker compose -f compose.droplet.yaml --env-file .env up -d --no-deps --force-recreate web worker
 ```
 
+The upload form accepts files up to `MAX_UPLOAD_BYTES` (100,000,000 bytes by default), so a 37,000 KB MP4 is within the default limit. Storage/configuration failures return a specific message and preserve metadata entries; select the file again to retry. The `asset_upload_failed` server event records the exception type, recognized storage error code and disk error number where available, without credentials or provider response bodies.
+
+For custom S3-compatible endpoints, uploads use a fixed `Content-Length`, an explicit `Content-MD5` transfer checksum and the existing SHA-256 provenance metadata. The client opts out of optional AWS checksum trailers (`request_checksum_calculation=when_required`), which otherwise wrap uploads in `aws-chunked` encoding. AWS documents these [checksum controls](https://docs.aws.amazon.com/boto3/latest/guide/configuration.html); DigitalOcean documents [partial S3 compatibility](https://docs.digitalocean.com/products/spaces/reference/s3-compatibility/). This is a compatibility measure, not evidence of the specific production failure. Rebuild/recreate the web and worker containers to use the updated uploader.
+
 Verify storage with a company-owned image upload before generating another image. A generation request may already have been charged if saving its result failed. The generation form displays safe provider/storage errors, preserves entered values, and does not automatically repeat paid generation requests.
 
 ## Get the managed database connection details

@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import io
 
@@ -154,6 +155,10 @@ def test_spaces_upload_retains_metadata_bytes_and_does_not_request_public_acl(sp
                     "Bucket": "test-media",
                     "Key": key,
                     "Body": raw,
+                    "ContentLength": len(raw),
+                    "ContentMD5": base64.b64encode(hashlib.md5(raw, usedforsecurity=False).digest()).decode(
+                        "ascii"
+                    ),
                     "ContentType": "image/jpeg",
                     "Metadata": {"sha256": hashlib.sha256(raw).hexdigest()},
                 },
@@ -175,3 +180,31 @@ def test_local_media_still_serves_original_bytes_and_ranges(settings, assets):
         assert client.head("/media/" + key).headers["content-length"] == str(len(raw))
         partial = client.get("/media/" + key, headers={"Range": "bytes=0-3"})
         assert partial.status_code == 206 and partial.content == raw[:4]
+
+
+def test_spaces_put_uses_fixed_length_original_bytes_and_checksum(spaces):
+    config, _, _, key, raw = spaces
+    store = S3Store(config)
+    captured = []
+
+    class StopBeforeNetwork(Exception):
+        pass
+
+    def capture(request, **kwargs):
+        captured.append(request)
+        assert request.headers["Content-Length"] == str(len(raw)).encode()
+        assert request.headers["Content-MD5"] == base64.b64encode(
+            hashlib.md5(raw, usedforsecurity=False).digest()
+        )
+        assert "aws-chunked" not in str(request.headers.get("Content-Encoding", ""))
+        assert "Transfer-Encoding" not in request.headers and "X-Amz-Trailer" not in request.headers
+        assert request.body.read() == raw
+        raise StopBeforeNetwork()
+
+    store.client.meta.events.register("before-send.s3.PutObject", capture)
+    try:
+        with pytest.raises(StopBeforeNetwork):
+            store.put(key, raw, "image/jpeg")
+        assert len(captured) == 1
+    finally:
+        store.client.close()

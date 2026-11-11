@@ -6,7 +6,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import func, select, text
 
 from .config import get_settings
-from .connections import refresh_all
+from .connections import import_meta_from_env, refresh_all
 from .db import make_engine, now, sessions
 from .lifecycle import PostConflict
 from .models import Post
@@ -90,9 +90,10 @@ def run():
     setup_logging()
     engine = make_engine(settings.database_dsn)
     factory = sessions(engine)
-    with factory() as db:
-        bootstrap(db)
     with worker_lock(engine):
+        with factory() as db:
+            bootstrap(db)
+            import_meta_from_env(db, settings)
         scheduler = BlockingScheduler(timezone="UTC")
         scheduler.add_job(
             tick,
