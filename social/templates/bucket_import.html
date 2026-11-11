@@ -1,0 +1,16 @@
+{% if settings.storage_backend == 's3' %}
+<section><h2>Import original media already in the bucket</h2>
+<p>Register a bucket object in the library to make it available as a Runway reference. The original object stays intact.</p>
+<form method="post" action="/forms/import-bucket-asset">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Object key<input name="key" required placeholder="uploads/showroom-walkthrough.mp4"></label>
+  <label>Source<select name="source"><option>company</option><option>ai_generated</option><option>ai_edited</option></select></label>
+  <div class="two"><label>AI model / generator<input name="generator"></label><label>Generation/edit prompt<input name="prompt"></label></div>
+  <label>Usage rights<input name="rights" required></label>
+  <label>Rights expiry (UTC, optional)<input type="datetime-local" name="rights_expire_at"></label>
+  <label>Product/campaign tags (JSON)<input name="tags" value="{}"></label>
+  <label class="checkbox"><input type="checkbox" name="customer_permission">Customer content permission is documented</label>
+  <label>Permission evidence reference<input name="permission_reference"></label>
+  <button>Import bucket asset</button>
+</form></section>
+{% endif %}

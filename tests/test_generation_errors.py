@@ -91,7 +91,7 @@ def test_image_form_shows_error_preserves_input_and_can_recover(db, settings, mo
     import social.providers as providers
 
     caplog.set_level("INFO", logger="social")
-    settings = settings.model_copy(update={"ai_mode": "live", "openai_api_key": SecretStr("fake-key")})
+    settings = settings.model_copy(update={"ai_mode": "live", "image_provider": "openai", "openai_api_key": SecretStr("fake-key")})
     if failure == "missing_key":
         settings.openai_api_key = SecretStr("")
     data = image_response()
@@ -144,7 +144,7 @@ def test_image_form_shows_error_preserves_input_and_can_recover(db, settings, mo
 def test_image_form_success_preserves_bytes_and_provenance(db, settings, monkeypatch):
     import social.providers as providers
 
-    settings = settings.model_copy(update={"ai_mode": "live", "openai_api_key": SecretStr("mock")})
+    settings = settings.model_copy(update={"ai_mode": "live", "image_provider": "openai", "openai_api_key": SecretStr("mock")})
     data = image_response()
     with httpx.Client(
         transport=httpx.MockTransport(
@@ -174,7 +174,7 @@ def test_image_form_success_preserves_bytes_and_provenance(db, settings, monkeyp
 
 @pytest.mark.parametrize("tags,rights", [("not json", "Permitted"), ("[]", "Permitted"), ("{}", " ")])
 def test_invalid_form_rejected_before_paid_generation(db, settings, monkeypatch, tags, rights):
-    settings = settings.model_copy(update={"ai_mode": "live"})
+    settings = settings.model_copy(update={"ai_mode": "live", "image_provider": "openai"})
 
     def must_not_generate(*args):
         raise AssertionError("Invalid forms must not call a paid provider")

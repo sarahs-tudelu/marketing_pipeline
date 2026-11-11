@@ -58,8 +58,16 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `CAPTION_PROVIDER` | `"anthropic"` | Provider choices requested by Tudelu. These interfaces can be replaced independently. |
 | `REVIEW_PROVIDER` | `"anthropic"` | Related configuration in the group above. |
 | `VISION_PROVIDER` | `"openai"` | Related configuration in the group above. |
-| `IMAGE_PROVIDER` | `"openai"` | Related configuration in the group above. |
-| `VIDEO_PROVIDER` | `"disabled"` | Video provider not selected. http supports the documented neutral gateway contract. |
+| `IMAGE_PROVIDER` | `"runway"` | Related configuration in the group above. |
+| `VIDEO_PROVIDER` | `"runway"` | Runway is the default video provider. http retains the legacy neutral gateway contract. |
+| `RUNWAY_API_KEY` | `(unset secret)` | Runway media generation; paste a Runway API key here (or a gsm:// reference). |
+| `RUNWAY_API_VERSION` | `"2024-11-06"` | Official Runway API version and supported model identifiers. |
+| `RUNWAY_IMAGE_MODEL` | `"gen4_image"` | Related configuration in the group above. |
+| `RUNWAY_VIDEO_MODEL` | `"gen4.5"` | Related configuration in the group above. |
+| `RUNWAY_EDIT_MODEL` | `"aleph2"` | Related configuration in the group above. |
+| `RUNWAY_AUDIO_MODEL` | `"seed_audio"` | Related configuration in the group above. |
+| `RUNWAY_TASK_TIMEOUT_SECONDS` | `3600` | Maximum saved-task wait and number of background jobs advanced per worker tick. |
+| `MEDIA_JOBS_PER_TICK` | `4` | Related configuration in the group above. |
 | `VIDEO_PROVIDER_URL` | `(unset)` | Related configuration in the group above. |
 | `VIDEO_PROVIDER_KEY` | `(unset secret)` | Related configuration in the group above. |
 | `ANTHROPIC_API_KEY` | `(unset secret)` | Claude captions + independent fact/brand review. xhigh maps the requested extra effort. |
@@ -130,6 +138,10 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `min_duration` | `3` |
 | `max_duration` | `60` |
 | `max_assets` | `1` |
+| `image_width` | `1080` |
+| `image_height` | `1080` |
+| `video_width` | `1280` |
+| `video_height` | `720` |
 
 Windows are same-day local clock pairs such as `[[09:00, 12:00], [14:00, 17:00]]`; quote time values in YAML. Overnight windows must be split into same-day ranges. Use IANA time zones. Targets are calendar-day preferences; hard caps use rolling 24-hour windows. Promotional mix uses a seven-day trailing history rounded up for small samples.
 
@@ -137,6 +149,6 @@ Default hard caps: LinkedIn 3, Instagram 5, Facebook 3, X 3, TikTok 3. All targe
 
 ## Provider gateway and credentials
 
-Claude uses official Messages with adaptive thinking and `output_config.effort=xhigh`. OpenAI uses official image generation, Responses vision and embeddings. `AI_MODE=fixture` is offline; live publication additionally requires live AI checks and semantic embeddings. Optional video gateway protocol and all connection steps are in `README.md`.
+Claude uses official Messages with adaptive thinking and `output_config.effort=xhigh`. Runway uses official asynchronous image/video/audio tasks. OpenAI provides Responses vision and embeddings; legacy image generation remains optional. `AI_MODE=fixture` is offline; live publication additionally requires live AI checks and semantic embeddings. Media Studio workflows and job recovery are in `docs/runway.md`; connection steps are in `README.md`.
 
 Meta tokens may be imported from ignored environment variables or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn and TikTok tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.

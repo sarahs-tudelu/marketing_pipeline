@@ -6,6 +6,9 @@ linkedin:
   lead_in: "From the Tudelu team:"
   max_assets: 9
 instagram:
+  image_height: 1350
+  video_width: 720
+  video_height: 1280
   max_length: 2200
   hashtag_limit: 5
   allow_links: false
@@ -29,6 +32,8 @@ x:
   lead_in: "Tudelu update:"
   max_assets: 4
 tiktok:
+  video_width: 720
+  video_height: 1280
   max_length: 2200
   hashtag_limit: 4
   allow_links: false

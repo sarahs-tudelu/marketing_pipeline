@@ -1,0 +1,70 @@
+<p class="intro">Turn an idea into a platform-ready image or video with Runway. Use your original media as references, add a soundtrack, or save a reusable campaign.</p>
+<section>
+  <h2>Your creative brief</h2>
+  <form method="post" action="/forms/media-studio">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="two">
+      <label>Workflow<select name="mode"><option value="once">One-off idea</option><option value="recurring" {{ 'selected' if asset_form.get('mode') == 'recurring' else '' }}>Recurring campaign</option></select></label>
+      <label>Campaign name<input name="campaign" required maxlength="200" value="{{ asset_form.get('campaign', '') }}" placeholder="A fresh perspective on flexible spaces"></label>
+    </div>
+    <label>Your prompt<textarea name="prompt" rows="4" maxlength="450" required placeholder="Describe the scene, mood, movement or edit you have in mind.">{{ asset_form.get('prompt', '') }}</textarea></label>
+    <div class="two">
+      <label>Make<select name="operation">
+        {% for value, label in [('image','Image'),('video','Video from text or an image'),('video_edit','Edit an uploaded video'),('audio','Audio from a prompt or audio bite'),('mixed','Varied images and videos (recurring)')] %}
+        <option value="{{ value }}" {{ 'selected' if asset_form.get('operation') == value else '' }}>{{ label }}</option>{% endfor %}
+      </select></label>
+      <label>Content style<select name="kind">
+        {% for value, label in [('promotional','Promotional'),('non_promotional','Non-promotional / editorial'),('mixed','Balanced mix (recurring)')] %}
+        <option value="{{ value }}" {{ 'selected' if asset_form.get('kind') == value else '' }}>{{ label }}</option>{% endfor %}
+      </select></label>
+    </div>
+    <fieldset><legend>Platforms — each gets its own framing and caption</legend>
+      {% for p in platforms %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ p }}" {{ 'checked' if p in asset_form.get('platforms', ['instagram']) else '' }}>{{ p|title }}</label>{% endfor %}
+    </fieldset>
+    <div class="two">
+      <label>Product tag<input name="product" required value="{{ asset_form.get('product', 'company') }}"></label>
+      <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}" {{ 'selected' if asset_form.get('facts_id') == f.id else '' }}>{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
+    </div>
+    <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if asset_form.get('website', 'on') == 'on' else '' }}>Use tudelu.com for brand inspiration</label>
+    <p class="muted">Website context guides the mood. Approved facts remain the source for product claims.</p>
+    <fieldset><legend>Reference media from your library / bucket</legend>
+      <p class="muted">Images: up to 3. Video generation: 1 image. Video editing: 1 video, up to 30 seconds. Audio: up to 3 bites. A mixed campaign rotates through the selected image/video pool.</p>
+      {% for a in assets %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in asset_form.get('reference_ids', []) else '' }}>{{ a.original_name }} · {{ a.media.mime }}{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<a href="/admin/assets">Upload references in the asset library</a>{% endfor %}
+    </fieldset>
+    <details><summary>Video soundtrack (optional)</summary>
+      <label>Audio direction<textarea name="audio_prompt" rows="3" maxlength="1800" placeholder="Quiet, warm ambient music with subtle texture; no vocals. Or describe how to rework an uploaded audio bite.">{{ asset_form.get('audio_prompt', '') }}</textarea></label>
+      <p class="muted">Runway generates the soundtrack and the app fits it to the video, replacing the original audio. Leave blank to retain the generated video's own audio. Short soundtracks are padded with silence.</p>
+      {% for a in assets if a.media.mime.startswith('audio/') %}<label class="checkbox"><input type="checkbox" name="audio_reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in asset_form.get('audio_reference_ids', []) else '' }}>{{ a.original_name }}</label>{% endfor %}
+    </details>
+    <div class="two">
+      <label>Video duration (seconds)<input type="number" name="duration" min="3" max="10" value="{{ asset_form.get('duration', '5') }}"></label>
+      <label>Recurring interval (hours)<input type="number" name="interval_hours" min="24" max="720" value="{{ asset_form.get('interval_hours', '24') }}"></label>
+    </div>
+    <label>Usage rights<input name="rights" required value="{{ asset_form.get('rights', '') }}" placeholder="Owner and permitted uses, including reference editing and audio rights"></label>
+    <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
+    <p class="muted">One-off ideas enter the same checks and scheduling flow as other posts. Recurring campaigns are saved paused; enable them below when ready. They wait for live, connected accounts. Each batch rotates concepts, source references and formats.</p>
+    <button class="primary">Queue idea / save campaign</button>
+  </form>
+</section>
+<section><h2>Recurring campaigns</h2>
+  {% for c in media_campaigns %}<article class="card"><h3>{{ c.name }}</h3>
+    <p>{{ c.brief.prompt }}</p><p>{{ c.brief.platforms|join(', ') }} · {{ c.brief.operation }} · {{ c.brief.kind|replace('_',' ') }} · every {{ c.brief.interval_hours }} hours</p>
+    <p>{{ 'Enabled' if c.enabled else 'Paused' }} · {{ c.sequence }} batches · next eligible {{ c.next_run_at }} UTC</p>
+    {% if c.error %}<p class="error">{{ c.error }}</p>{% endif %}
+    <form method="post" action="/forms/media-campaigns/{{ c.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if c.enabled else 'true' }}"><button>{{ 'Pause campaign' if c.enabled else 'Enable campaign' }}</button></form>
+  </article>{% else %}<p>No recurring campaigns yet.</p>{% endfor %}
+</section>
+<section><div class="section-head"><h2>Generation queue</h2><a class="button" href="/admin/media-studio">Refresh status</a></div>
+  <p class="muted">The worker processes this queue in the background. Run <code>tudelu worker</code> locally, or keep the deployed worker service running.</p>
+  {% for j in media_jobs %}<article class="card"><h3>{{ j.brief.campaign }} · {{ j.platform|title }}</h3>
+    <p><span class="status">{{ j.state }}</span> · {{ j.brief.operation }} · {{ j.brief.concept }} · {{ j.stage }}</p>
+    {% if j.error %}<p class="error">{{ j.error }}</p>{% endif %}
+    {% if j.task_id %}<small>Runway task: {{ j.task_id }}</small>{% endif %}
+    {% if j.state == 'uncertain' and not j.task_id %}<form method="post" action="/forms/media-jobs/{{ j.id }}/reconcile"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Original Runway task ID<input name="task_id" required pattern="[A-Za-z0-9_-]{1,100}"></label><button>Recover original task</button></form>{% endif %}
+    {% if j.post_id %}<a class="button primary" href="/posts/{{ j.post_id }}">Open post</a>{% endif %}
+    {% if j.output_asset_id %}<a class="button" href="/admin/assets">View in asset library</a>{% endif %}
+    {% if j.state in ['failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resume"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume saved task / output</button></form>{% endif %}
+    {% if j.state in ['queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
+    <details><summary>Prompt and provenance</summary><pre>{{ json.dumps(j.brief, indent=2) }}</pre></details>
+  </article>{% else %}<p>No media jobs yet.</p>{% endfor %}
+</section>

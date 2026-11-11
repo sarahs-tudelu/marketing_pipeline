@@ -13,6 +13,8 @@
           </a>
           {% elif a.media.mime.startswith('video/') %}
           <video class="asset-preview" src="{{ asset_url }}" controls preload="none" aria-label="Preview {{ a.original_name }}"></video>
+          {% elif a.media.mime.startswith('audio/') %}
+          <audio src="{{ asset_url }}" controls preload="none" aria-label="Preview {{ a.original_name }}"></audio>
           {% endif %}
         </td>
         <td>{{ a.original_name }}<small>{{ a.id }}</small><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a></td>

@@ -23,11 +23,13 @@ def bootstrap(db):
     db.commit()
 
 
-def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="promotional"):
+def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="promotional", *, commit=True):
     if platform not in PLATFORMS or kind not in {"promotional", "non_promotional"}:
         raise ValueError("Invalid platform/content kind")
     if not asset_ids or any(not db.get(Asset, id) for id in asset_ids) or not db.get(FactSheet, facts_id):
         raise ValueError("Select existing assets and facts version")
+    if any(db.get(Asset, id).media["mime"].startswith("audio/") for id in asset_ids):
+        raise ValueError("Audio must be combined with a video in Media Studio before creating a post")
     post = Post(
         platform=platform,
         campaign=campaign,
@@ -41,7 +43,8 @@ def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="
     db.add(
         Transition(post_id=post.id, from_status="", to_status="draft", reason="Draft created", actor="admin")
     )
-    db.commit()
+    if commit:
+        db.commit()
     return post
 
 
@@ -73,6 +76,7 @@ def generate(db, settings, post, providers=None):
         "profile": profile.model_dump(),
         "campaign": post.campaign,
         "assets": [{"id": a.id, "source": a.source, "tags": a.tags} for a in assets],
+        "creative_brief": [a.tags.get("creative_brief", {}) for a in assets],
         "facts": [
             f.model_dump(mode="json")
             for f in facts.facts

@@ -2,7 +2,7 @@
 
 An internal, official-API publishing pipeline for LinkedIn company pages, Instagram professional accounts, Facebook Pages, X and TikTok inbox uploads. It runs completely offline in dry-run mode with synthetic seed media and a demo-only facts sheet. Live publication requires explicit configuration and validated account connections.
 
-The implementation uses FastAPI, SQLAlchemy/Alembic, PostgreSQL (SQLite locally), APScheduler, httpx and local/S3 media storage. PyAV inspects media without rewriting it. There are no browsers, scrapers, private APIs or engagement automation in the application.
+The implementation uses FastAPI, SQLAlchemy/Alembic, PostgreSQL (SQLite locally), APScheduler, httpx and local/S3 media storage. PyAV inspects media without rewriting it. There are no browsers, private APIs or engagement automation in the application. Media Studio reads the Tudelu homepage for a bounded brand-context snapshot when requested.
 
 DigitalOcean deployment is configured in [compose.droplet.yaml](compose.droplet.yaml) for your existing Managed PostgreSQL cluster, with [verified TLS, Google Secret Manager setup and operations](docs/digitalocean.md). The current ignored `.env` contains deployment placeholders and `gsm://` references; `.env.local` preserves the offline demo. The managed database user's existing password is loaded from Secret Manager. For local development in this checkout, set `TUDELU_ENV_FILE=.env.local`.
 
@@ -27,7 +27,7 @@ On Linux/macOS use `.venv/bin/` instead of `.venv/Scripts/` and export `TUDELU_E
 
 `tudelu demo` uses a virtual clock to process the real scheduled slots immediately, so no waiting for tomorrow's slot is needed. It is idempotent for the named demo campaign. Four platforms finish as simulated `published`; TikTok finishes as `awaiting_manual`. Fake post IDs have no public links. The JSON result is saved at `data/demo-report.json`; inspect the per-post Request audit in the app for payloads. The seed card and four-second H.264 video are generated locally by `social/seed.py`, depict no product, and are permanently marked demo-only.
 
-No credentials are needed for these commands. `AI_MODE=fixture` calls neither Anthropic nor OpenAI; model and vision checks explicitly report simulated judgments. Local development login accepts loopback clients only. Never expose that mode through a public reverse proxy.
+No credentials are needed for these commands. `AI_MODE=fixture` calls neither Runway, Anthropic nor OpenAI; model and vision checks explicitly report simulated judgments. Local development login accepts loopback clients only. Never expose that mode through a public reverse proxy.
 
 ## Docker Compose
 
@@ -58,7 +58,7 @@ For watched ingestion, write the media to `WATCH_DIR` first, then atomically pla
 }
 ```
 
-Other supported manifest fields are `generator`, `prompt`, `rights_expire_at` (ISO UTC), `permission_reference`, and `demo_only`. Completed manifests are renamed `.done.json`; invalid ones become `.error.json` with an admin alert. Local-folder watching and S3 storage are implemented; a bucket event can download media/manifests into this watched folder. The service does not scan an arbitrary remote bucket for new files.
+Other supported manifest fields are `generator`, `prompt`, `rights_expire_at` (ISO UTC), `permission_reference`, and `demo_only`. Completed manifests are renamed `.done.json`; invalid ones become `.error.json` with an admin alert. Local-folder watching and S3 storage are implemented; a bucket event can download media/manifests into this watched folder. Files uploaded directly into the configured bucket can also be registered through Asset library ? Import bucket asset, with their rights and provenance. The service does not scan arbitrary remote objects automatically.
 
 Maintain the facts sheet under Approved facts or import from `FACTS_PATH`. Each version is immutable and stored with a content hash. Existing posts retain their source version. Use a new `version` when updating. Replace the seed sheet with real, approved facts and `demo_only: false` before live use. Never change the seed's marker to pretend its content is production approved.
 
@@ -80,14 +80,17 @@ The requested providers are implemented with httpx against official APIs:
 |---|---|---|
 | Caption selection | Claude Opus 5.5, adaptive thinking, `xhigh` effort | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_EFFORT` |
 | Independent fact/brand review | Separate Claude request, same configured model/effort | `REVIEW_MIN_SCORE` |
-| Image generation | OpenAI GPT Image 2.5 Sunburst, dated model ID | `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` |
+| Image generation / references | Runway Gen-4 Image | `RUNWAY_API_KEY`, `IMAGE_PROVIDER=runway` |
 | Vision review | OpenAI GPT-6 Astra through Responses | `OPENAI_VISION_MODEL` |
 | Semantic duplicate embeddings | OpenAI embeddings | `EMBEDDING_PROVIDER=openai`, `OPENAI_EMBEDDING_MODEL` |
-| Video generation | Unselected/disabled | `VIDEO_PROVIDER=disabled` |
+| Video generation / editing | Runway Gen-4.5 / Aleph 2 | `RUNWAY_API_KEY`, `VIDEO_PROVIDER=runway` |
+| Audio generation / reference editing | Seed Audio through Runway | `RUNWAY_API_KEY`, `RUNWAY_AUDIO_MODEL` |
 
 Set `AI_MODE=live` to use the configured providers. A paid call is made only when the relevant operation runs. Keys are never read from other projects or harvested from the machine. Incomplete/refused/malformed model output fails closed. `ANTHROPIC_MAX_TOKENS` includes thinking and the answer. No chain-of-thought is stored. Prompt/model provenance is stored for generated media.
 
-The `ImageGenerator`, `VideoGenerator` and `CaptionGenerator` interfaces are in `social/providers.py`. A provider-neutral video gateway can be configured later with `VIDEO_PROVIDER=http`, `VIDEO_PROVIDER_URL`, and its secret key. Its contract is `POST {"prompt":"..."}` → `{"media_base64":"...","model":"provider/model-version"}` for an MP4. No commercial video provider was chosen. Existing company videos can publish today after configuration.
+Open **Media Studio** for a custom prompt, uploaded references, optional video soundtrack, and platform-specific output. Save a recurring campaign to rotate visual concepts, media formats, source references and promotional/editorial content once the selected accounts are live. Generated posts enter the existing caption, fact, media, duplicate and scheduling checks. Audio can be saved to the library or fitted to a video. The original provider output is preserved; JPEG/H.264-AAC publishing renditions are separate assets with linked provenance.
+
+See [Runway setup and workflows](docs/runway.md) for the API-key slot, supported inputs, job recovery, campaign controls and deployment migration. The legacy OpenAI image provider and generic HTTP video gateway remain opt-in compatibility paths; Media Studio uses Runway. Claude captions/reviews and OpenAI visual review/embeddings retain their own keys.
 
 ## Connect accounts later
 
@@ -109,7 +112,7 @@ Missing config means Not connected and dry run. A successful connect does not it
 
 ## Switch a platform to live
 
-After approval to publish publicly, configure production authentication, HTTPS origins, encrypted credentials, actual company assets and approved non-demo facts. Set `AI_MODE=live`, `EMBEDDING_PROVIDER=openai`, and the two AI API keys. Connect/validate the target account. Set `LIVE_PLATFORMS=linkedin` (or a comma-separated subset) and restart web/worker. This is configuration-only; no adapter code changes are needed for supported formats.
+After approval to publish publicly, configure production authentication, HTTPS origins, encrypted credentials, actual company assets and approved non-demo facts. Set `AI_MODE=live`, `EMBEDDING_PROVIDER=openai`, and the Runway, Anthropic and OpenAI API keys. Connect/validate the target account. Set `LIVE_PLATFORMS=linkedin` (or a comma-separated subset) and restart web/worker. This is configuration-only; no adapter code changes are needed for supported formats.
 
 Create fresh posts for live publication. Already scheduled dry-run posts remain dry even after credentials are added. Live posts fail closed if their account/configuration disappears or the connected account changes. All gates run again at delivery, including expiry, rights, integrity and approval digest. Fixtures and demo assets/facts cannot pass the live-readiness gate. Platform approvals and real-credential smoke tests are external prerequisites, not something the offline demo can prove.
 

@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -21,7 +21,20 @@ from .db import make_engine, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
 from .lifecycle import PostConflict, lock_post, transition
-from .models import Account, Alert, Asset, CheckResult, Control, FactSheet, Post, RequestRecord, Transition
+from .media_studio import CreativeBrief, queue_jobs, resume_job, validate_sources
+from .models import (
+    Account,
+    Alert,
+    Asset,
+    CheckResult,
+    Control,
+    FactSheet,
+    MediaCampaign,
+    MediaJob,
+    Post,
+    RequestRecord,
+    Transition,
+)
 from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, delete_draft, draft, generate
 from .provider_errors import ProviderError
@@ -224,6 +237,16 @@ def create_app(settings=None):
                 "json": json,
                 "yaml": yaml,
                 "analytics": report(db, settings) if view == "analytics" else None,
+                "media_jobs": db.scalars(
+                    select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)
+                ).all()
+                if view == "media-studio"
+                else [],
+                "media_campaigns": db.scalars(
+                    select(MediaCampaign).order_by(MediaCampaign.created_at.desc())
+                ).all()
+                if view == "media-studio"
+                else [],
             },
         )
 
@@ -233,7 +256,7 @@ def create_app(settings=None):
 
     @app.get("/admin/{view}", response_class=HTMLResponse)
     def admin(view: str, request: Request, db: DB):
-        if view not in {"connections", "queues", "assets", "facts", "compose", "analytics"}:
+        if view not in {"connections", "queues", "assets", "facts", "compose", "analytics", "media-studio"}:
             raise HTTPException(404)
         return page(request, db, view)
 
@@ -265,6 +288,119 @@ def create_app(settings=None):
                 select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(500)
             )
         ]
+
+    @app.post("/api/media-jobs", dependencies=mutation)
+    def create_media_job(payload: CreativeBrief, db: DB):
+        jobs = queue_jobs(db, settings, payload)
+        db.commit()
+        return {"jobs": [{"id": j.id, "platform": j.platform, "state": j.state} for j in jobs]}
+
+    @app.get("/api/media-jobs")
+    def list_media_jobs(db: DB):
+        return [
+            {
+                "id": j.id,
+                "platform": j.platform,
+                "state": j.state,
+                "stage": j.stage,
+                "task_id": j.task_id,
+                "error": j.error,
+                "asset_id": j.output_asset_id,
+                "post_id": j.post_id,
+            }
+            for j in db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100))
+        ]
+
+    @app.post("/forms/media-studio", dependencies=mutation)
+    async def submit_creative(request: Request, db: DB):
+        form = await request.form()
+        try:
+            brief = CreativeBrief(
+                campaign=form.get("campaign", ""),
+                prompt=form.get("prompt", ""),
+                operation=form.get("operation", "image"),
+                platforms=form.getlist("platforms"),
+                facts_id=form.get("facts_id", ""),
+                product=form.get("product", "company"),
+                kind=form.get("kind", "promotional"),
+                rights=form.get("rights", ""),
+                reference_ids=form.getlist("reference_ids"),
+                audio_reference_ids=form.getlist("audio_reference_ids"),
+                audio_prompt=form.get("audio_prompt", ""),
+                duration=form.get("duration", "5"),
+                website=form.get("website") == "on",
+                create_posts=form.get("create_posts") == "on",
+                interval_hours=form.get("interval_hours", "24"),
+            )
+            if form.get("mode") == "recurring":
+                validate_sources(db, brief)
+                if not brief.create_posts or brief.operation == "audio":
+                    raise ValueError("Recurring campaigns must create image/video posts")
+                db.add(MediaCampaign(name=brief.campaign, brief=brief.model_dump(), enabled=False))
+            else:
+                await run_in_threadpool(queue_jobs, db, settings, brief)
+            db.commit()
+        except ValueError as exc:
+            db.rollback()
+            return page(
+                request,
+                db,
+                "media-studio",
+                error_message=str(exc),
+                asset_form={
+                    k: form.getlist(k)
+                    if k in {"platforms", "reference_ids", "audio_reference_ids"}
+                    else str(v)
+                    for k, v in form.items()
+                }
+                | {
+                    "website": str(form.get("website", "")),
+                    "create_posts": str(form.get("create_posts", "")),
+                    "platforms": form.getlist("platforms"),
+                },
+                status_code=400,
+            )
+        return RedirectResponse("/admin/media-studio", status_code=303)
+
+    @app.post("/forms/media-campaigns/{campaign_id}", dependencies=mutation)
+    async def toggle_campaign(campaign_id: str, request: Request, db: DB):
+        campaign = db.get(MediaCampaign, campaign_id)
+        if not campaign:
+            raise HTTPException(404)
+        campaign.enabled = (await request.form()).get("enabled") == "true"
+        campaign.error = ""
+        db.commit()
+        return RedirectResponse("/admin/media-studio", status_code=303)
+
+    @app.post("/forms/media-jobs/{job_id}/{action}", dependencies=mutation)
+    async def media_job_action(job_id: str, action: str, request: Request, db: DB):
+        job = db.scalar(select(MediaJob).where(MediaJob.id == job_id).with_for_update())
+        if not job:
+            raise HTTPException(404)
+        if action == "resume":
+            resume_job(job)
+        elif action == "reconcile" and job.state == "uncertain" and not job.task_id:
+            import re
+
+            from .db import now
+
+            task_id = str((await request.form()).get("task_id", ""))
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
+                raise ValueError("Enter the task ID returned by the original Runway submission")
+            job.task_id, job.state, job.submitted_at, job.error = task_id, "running", now(), ""
+        elif action == "cancel" and job.state in {"queued", "failed", "uncertain"}:
+            # Conditional write prevents a late UI cancellation racing a provider submission.
+            changed = db.execute(
+                update(MediaJob)
+                .where(MediaJob.id == job.id, MediaJob.state == job.state)
+                .values(state="cancelled")
+            )
+            if not changed.rowcount:
+                raise PostConflict("This media job has changed. Refresh before cancelling.")
+        else:
+            raise ValueError("This job cannot perform that action")
+        db.commit()
+        return RedirectResponse("/admin/media-studio", status_code=303)
 
     @app.post("/api/posts", dependencies=mutation)
     def new_post(payload: DraftInput, db: DB):
@@ -416,6 +552,50 @@ def create_app(settings=None):
             permission_reference=form.get("permission_reference", ""),
         )
         db.commit()
+        return RedirectResponse("/admin/assets", status_code=303)
+
+    @app.post("/forms/import-bucket-asset", dependencies=mutation)
+    async def import_bucket_asset(request: Request, db: DB):
+        from datetime import datetime
+
+        from .storage import storage
+
+        if settings.storage_backend != "s3":
+            raise ValueError("Bucket import requires STORAGE_BACKEND=s3")
+        form = await request.form()
+        key = str(form.get("key", "")).strip()
+        if not key or len(key) > 1024:
+            raise ValueError("Enter the existing bucket object key")
+        tags = json.loads(form.get("tags") or "{}")
+        if not isinstance(tags, dict) or not str(form.get("rights", "")).strip():
+            raise ValueError("Usage rights and a JSON object for tags are required")
+        store = storage(settings)
+
+        def import_existing():
+            try:
+                if not 0 < store.head(key)["ContentLength"] <= settings.max_upload_bytes:
+                    raise ValueError("Bucket object is empty or exceeds MAX_UPLOAD_BYTES")
+                ingest(
+                    db,
+                    settings,
+                    store.read(key),
+                    key,
+                    source=str(form.get("source", "company")),
+                    generator=str(form.get("generator", "")) or None,
+                    prompt=str(form.get("prompt", "")) or None,
+                    rights=str(form.get("rights", "")),
+                    tags=tags | {"imported_bucket_key": key},
+                    rights_expire_at=datetime.fromisoformat(form["rights_expire_at"])
+                    if form.get("rights_expire_at")
+                    else None,
+                    customer_permission=form.get("customer_permission") == "on",
+                    permission_reference=str(form.get("permission_reference", "")),
+                )
+                db.commit()
+            finally:
+                store.client.close()
+
+        await run_in_threadpool(import_existing)
         return RedirectResponse("/admin/assets", status_code=303)
 
     @app.post("/forms/generate-asset", dependencies=mutation)

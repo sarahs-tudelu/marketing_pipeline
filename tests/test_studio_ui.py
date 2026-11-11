@@ -19,17 +19,79 @@ from social.provider_errors import ProviderError
 pytestmark = pytest.mark.skipif(not os.getenv("BROWSER_BINARY"), reason="BROWSER_BINARY is not configured")
 
 
+def test_media_studio_custom_prompt_and_responsive_layout(db, settings, tmp_path):
+    playwright = pytest.importorskip("playwright.async_api")
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            page = await browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.set_default_timeout(5000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+
+            async def serve(route):
+                request = route.request
+                assert urlsplit(request.url).netloc == "studio.test"
+                client.cookies.clear()
+                response = client.request(
+                    request.method,
+                    request.url,
+                    content=request.post_data_buffer,
+                    headers=await request.all_headers(),
+                    follow_redirects=False,
+                )
+                await route.fulfill(
+                    status=response.status_code,
+                    headers={
+                        k: v
+                        for k, v in response.headers.items()
+                        if k not in {"content-length", "content-encoding", "transfer-encoding"}
+                    },
+                    body=response.content,
+                )
+
+            await page.route("**/*", serve)
+            await page.goto("http://studio.test/admin/media-studio")
+            await page.get_by_label("Campaign name", exact=True).fill("A custom editorial idea")
+            await page.get_by_label("Your prompt", exact=True).fill(
+                "A calm architectural study in warm light"
+            )
+            await page.get_by_label("Usage rights", exact=True).fill("Company permitted")
+            await page.get_by_label("Use tudelu.com for brand inspiration").uncheck()
+            await page.get_by_label("Content style").select_option("non_promotional")
+            await page.screenshot(path=str(tmp_path / "media-studio-desktop.png"), full_page=True)
+            await page.get_by_role("button", name="Queue idea / save campaign").click()
+            await playwright.expect(
+                page.get_by_role("heading", name="A custom editorial idea · Instagram")
+            ).to_be_visible()
+            jobs = client.get("/api/media-jobs").json()
+            assert len(jobs) == 1 and jobs[0]["state"] == "queued"
+            await page.set_viewport_size({"width": 390, "height": 844})
+            assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            await page.screenshot(path=str(tmp_path / "media-studio-mobile.png"), full_page=True)
+            assert not errors
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
 @pytest.mark.parametrize("platform", ["x", "linkedin", "tiktok"])
 @pytest.mark.parametrize("javascript_enabled", [True, False])
 def test_connect_opens_provider_authorization_with_same_origin_form_policy(
     db, settings, platform, javascript_enabled
 ):
     playwright = pytest.importorskip("playwright.async_api")
-    selected = settings.model_copy(update={
-        "app_base_url": "https://studio.test",
-        platform + "_client_id": "mock-client-id",
-        platform + "_client_secret": settings.token_encryption_key,
-    })
+    selected = settings.model_copy(
+        update={
+            "app_base_url": "https://studio.test",
+            platform + "_client_id": "mock-client-id",
+            platform + "_client_secret": settings.token_encryption_key,
+        }
+    )
 
     async def exercise(client):
         async with playwright.async_playwright() as driver:
@@ -39,7 +101,9 @@ def test_connect_opens_provider_authorization_with_same_origin_form_policy(
             context = await browser.new_context(offline=True, java_script_enabled=javascript_enabled)
             page = await context.new_page()
             errors, provider_requests, submissions = [], [], []
-            page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+            page.on(
+                "console", lambda message: errors.append(message.text) if message.type == "error" else None
+            )
 
             async def serve(route):
                 request = route.request
@@ -54,11 +118,15 @@ def test_connect_opens_provider_authorization_with_same_origin_form_policy(
                     submissions.append(request)
                 client.cookies.clear()
                 response = client.request(
-                    request.method, request.url, content=request.post_data_buffer,
-                    headers=await request.all_headers(), follow_redirects=False,
+                    request.method,
+                    request.url,
+                    content=request.post_data_buffer,
+                    headers=await request.all_headers(),
+                    follow_redirects=False,
                 )
                 headers = {
-                    key: value for key, value in response.headers.items()
+                    key: value
+                    for key, value in response.headers.items()
                     if key not in {"content-encoding", "content-length", "transfer-encoding"}
                 }
                 await route.fulfill(status=response.status_code, headers=headers, body=response.content)
@@ -70,9 +138,9 @@ def test_connect_opens_provider_authorization_with_same_origin_form_policy(
             if not javascript_enabled:
                 await page.locator("#oauth-continue").click()
             try:
-                await playwright.expect(page.get_by_role("heading", name="Provider authorization")).to_be_visible(
-                    timeout=5000
-                )
+                await playwright.expect(
+                    page.get_by_role("heading", name="Provider authorization")
+                ).to_be_visible(timeout=5000)
             except AssertionError as exc:
                 raise AssertionError(f"Provider handoff failed. Browser errors: {errors}") from exc
             assert len(submissions) == len(provider_requests) == 1
@@ -95,7 +163,11 @@ def test_generation_progress_and_completion_in_browser(db, settings, assets, mon
     action = f"/forms/posts/{post.id}/generate" if kind == "caption" else "/forms/generate-asset"
     label = "Generate caption" if kind == "caption" else "Generate image"
     status = "Writing caption" if kind == "caption" else "Generating media"
-    selected = settings if kind == "caption" else settings.model_copy(update={"ai_mode": "live"})
+    selected = (
+        settings
+        if kind == "caption"
+        else settings.model_copy(update={"ai_mode": "live", "image_provider": "openai"})
+    )
 
     def image_failure(*args, **kwargs):
         raise ProviderError(
@@ -252,7 +324,9 @@ async def serve_studio_request(route, client):
 
 
 @pytest.mark.parametrize("session_state", ["missing", "expired", "replaced"])
-def test_stale_upload_refreshes_session_before_one_submission(db, settings, assets, monkeypatch, session_state):
+def test_stale_upload_refreshes_session_before_one_submission(
+    db, settings, assets, monkeypatch, session_state
+):
     playwright = pytest.importorskip("playwright.async_api")
     media_bytes = (settings.media_dir / assets[0].storage_key).read_bytes()
 

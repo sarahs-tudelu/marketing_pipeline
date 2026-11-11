@@ -10,7 +10,7 @@ from sqlalchemy import select
 from .models import Asset
 
 router = APIRouter()
-MEDIA_KEY = re.compile(r"[a-f0-9]{64}\.(jpg|png|gif|webp|mp4|mov|webm)")
+MEDIA_KEY = re.compile(r"[a-f0-9]{64}\.(jpg|png|gif|webp|mp4|mov|webm|mp3|wav|m4a|ogg|flac)")
 MIME = {
     "jpg": "image/jpeg",
     "png": "image/png",
@@ -19,6 +19,11 @@ MIME = {
     "mp4": "video/mp4",
     "mov": "video/quicktime",
     "webm": "video/webm",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "m4a": "audio/mp4",
+    "ogg": "audio/ogg",
+    "flac": "audio/flac",
 }
 
 

@@ -63,8 +63,16 @@ class Settings(BaseSettings):
     caption_provider: Literal["anthropic"] = "anthropic"
     review_provider: Literal["anthropic"] = "anthropic"
     vision_provider: Literal["openai"] = "openai"
-    image_provider: Literal["openai"] = "openai"
-    video_provider: Literal["disabled", "http"] = "disabled"
+    image_provider: Literal["runway", "openai"] = "runway"
+    video_provider: Literal["runway", "disabled", "http"] = "runway"
+    runway_api_key: SecretStr = SecretStr("")
+    runway_api_version: str = "2024-11-06"
+    runway_image_model: Literal["gen4_image"] = "gen4_image"
+    runway_video_model: Literal["gen4.5"] = "gen4.5"
+    runway_edit_model: Literal["aleph2"] = "aleph2"
+    runway_audio_model: Literal["seed_audio"] = "seed_audio"
+    runway_task_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
+    media_jobs_per_tick: int = Field(default=4, ge=1, le=20)
     video_provider_url: str = ""
     video_provider_key: SecretStr = SecretStr("")
     anthropic_api_key: SecretStr = SecretStr("")
@@ -185,6 +193,10 @@ class Profile(BaseModel):
     min_duration: float = 3
     max_duration: float = 60
     max_assets: int = 1
+    image_width: int = Field(default=1080, ge=320, le=1920)
+    image_height: int = Field(default=1080, ge=320, le=1920)
+    video_width: int = Field(default=1280, ge=360, le=1920)
+    video_height: int = Field(default=720, ge=360, le=1920)
 
     @model_validator(mode="after")
     def limits(self):
@@ -198,6 +210,12 @@ class Profile(BaseModel):
             raise ValueError("Cap must be strictly below documented limit")
         if not self.windows or any(time.fromisoformat(a) >= time.fromisoformat(b) for a, b in self.windows):
             raise ValueError("Windows must be nonempty same-day start/end pairs")
+        for kind in ("image", "video"):
+            w, h = getattr(self, kind + "_width"), getattr(self, kind + "_height")
+            if w > self.max_width or w < self.min_width or h < self.min_height or not (
+                getattr(self, kind + "_min_ratio") <= w / h <= getattr(self, kind + "_max_ratio")
+            ) or w % 2 or h % 2:
+                raise ValueError("Generation dimensions must fit the platform envelope and be even")
         return self
 
 

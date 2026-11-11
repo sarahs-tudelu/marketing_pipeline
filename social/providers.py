@@ -408,6 +408,22 @@ class Providers:
             raise ValueError("A prompt, usage rights and a JSON object for tags are required")
         if self.s.ai_mode != "live":
             raise ValueError("Asset generation requires AI_MODE=live and configured provider credentials")
+        if (kind == "image" and self.s.image_provider == "runway") or (
+            kind == "video" and self.s.video_provider == "runway"
+        ) or kind == "audio":
+            from sqlalchemy import select
+
+            from .media_studio import CreativeBrief, queue_jobs
+            from .models import FactSheet
+
+            facts = db.scalar(select(FactSheet).order_by(FactSheet.created_at.desc()).limit(1))
+            if not facts:
+                raise ValueError("Select approved facts in Media Studio before generating")
+            return queue_jobs(db, self.s, CreativeBrief(
+                campaign=str(tags.get("campaign") or "Custom media"), product=str(tags.get("product") or "company"),
+                prompt=prompt, operation=kind, platforms=["linkedin"], facts_id=facts.id,
+                rights=rights, create_posts=False,
+            ))[0]
         if kind == "image":
             provider = OpenAI(self.s)
         elif kind == "video" and self.s.video_provider == "http":

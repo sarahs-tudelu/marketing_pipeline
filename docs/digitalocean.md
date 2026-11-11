@@ -109,11 +109,12 @@ Create these secret names (or change the references to your naming scheme), with
 | `tudelu-session-secret` | A strong random session-signing secret. |
 | `tudelu-admin-password` | The internal administrator password. |
 | `tudelu-anthropic-api-key` | The Claude API key. |
-| `tudelu-openai-api-key` | The OpenAI API key. |
+| `tudelu-openai-api-key` | The OpenAI key for visual review and embeddings. |
+| `tudelu-runway-api-key` | The Runway key for image/video/audio generation. Set `RUNWAY_API_KEY` to its `gsm://` reference or use the blank `.env` slot. |
 | `tudelu-spaces-access-key-id` | The Spaces access key ID; required when using Spaces. |
 | `tudelu-spaces-secret-access-key` | The Spaces secret key; required when using Spaces. |
 
-If only deploying the fixture demo, the two AI key settings can be blank until their secrets exist. Every nonempty `gsm://` reference is fetched at startup, even if its corresponding feature is not yet active. The core database/authentication/encryption secrets are required for production.
+If only deploying the fixture demo, the AI key settings can be blank until their secrets exist. Every nonempty `gsm://` reference is fetched at startup, even if its corresponding feature is not yet active. The core database/authentication/encryption secrets are required for production.
 
 The template also shows optional references for LinkedIn/X/TikTok client secrets, the Meta System User token, Slack and SMTP. Leave those fields blank until configured. OAuth client IDs can be literal values or `gsm://` references; both IDs and secrets are resolved before authorization starts. Account IDs remain ordinary nonsecret settings. Access and refresh tokens obtained through Connections remain encrypted in PostgreSQL; they are not rewritten into `.env` or uploaded to Secret Manager.
 
@@ -186,3 +187,5 @@ Set the same variable in the worker terminal. On Linux/macOS use `TUDELU_ENV_FIL
 Secret Manager tests mock authentication and HTTP. They cover reference parsing, placeholders, permissions/errors, checksum failures, deduplication, input precedence, secret redaction and DB password separation. Managed PostgreSQL tests verify TLS/timeout/password parameters reach psycopg, reject insecure/ambiguous URLs, check trust configuration, and verify the deployment has no bundled DB service. Caddy configuration and its real local routing are tested with the official Caddy binary: media GET/HEAD succeeds, admin/API access on the media host fails, source restrictions hold, and spoofed forwarded/identity headers do not grant access.
 
 The local Docker daemon remains unavailable, so the Droplet images, managed PostgreSQL connection, real Google IAM/ADC, TLS certificate issuance and remote startup have not been exercised. No cloud changes, database connections or secret reads were made during configuration work.
+
+Runway Media Studio requires migration `9b61d8c4a201` and rebuilt web/worker services. See [Runway setup](runway.md). No live platform is enabled by this migration.

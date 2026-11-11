@@ -148,3 +148,34 @@ class Engagement(Base):
     metrics: Mapped[dict] = mapped_column(JSON)
     simulated: Mapped[bool] = mapped_column(Boolean, default=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class MediaCampaign(Base):
+    __tablename__ = "media_campaigns"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(200))
+    brief: Mapped[dict] = mapped_column(JSON)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    sequence: Mapped[int] = mapped_column(Integer, default=0)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class MediaJob(Base):
+    __tablename__ = "media_jobs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("media_campaigns.id"))
+    batch_key: Mapped[str] = mapped_column(String(200), unique=True)
+    platform: Mapped[str] = mapped_column(String(20))
+    brief: Mapped[dict] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    stage: Mapped[str] = mapped_column(String(20), default="visual")
+    task_id: Mapped[str] = mapped_column(String(100), default="")
+    task_history: Mapped[list] = mapped_column(JSON, default=list)
+    source_asset_ids: Mapped[list] = mapped_column(JSON, default=list)
+    output_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"))
+    post_id: Mapped[str | None] = mapped_column(ForeignKey("posts.id"))
+    error: Mapped[str] = mapped_column(Text, default="")
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

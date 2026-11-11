@@ -114,9 +114,26 @@ def inspect_media(data, filename, settings):
             }
     except (OSError, SyntaxError):
         pass
-    if Path(filename).suffix.lower() not in {".mp4", ".mov", ".webm"}:
+    suffix = Path(filename).suffix.lower()
+    audio_mimes = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+                   ".ogg": "audio/ogg", ".flac": "audio/flac"}
+    if suffix in audio_mimes:
+        with av.open(io.BytesIO(data)) as container:
+            if not container.streams.audio or container.streams.video:
+                raise ValueError("Expected an audio-only file")
+            stream = container.streams.audio[0]
+            samples = sum(frame.samples for frame in container.decode(stream))
+            rate = stream.codec_context.sample_rate
+            if not samples or not rate:
+                raise ValueError("Empty or invalid audio")
+            return {"mime": audio_mimes[suffix], "width": 0, "height": 0, "bytes": len(data),
+                    "duration": samples / rate, "codec": stream.codec_context.name,
+                    "sample_rate": rate, "metadata_keys": sorted(container.metadata.keys())}
+    if suffix not in {".mp4", ".mov", ".webm"}:
         raise ValueError("Unsupported or invalid media")
     with av.open(io.BytesIO(data)) as container:
+        if not container.streams.video:
+            raise ValueError("Expected a video stream")
         video = container.streams.video[0]
         codec = video.codec_context
         # Decode to catch corrupted streams, inspecting without rewriting the source.
@@ -179,6 +196,11 @@ def ingest(
         "video/mp4": ".mp4",
         "video/quicktime": ".mov",
         "video/webm": ".webm",
+        "audio/mpeg": ".mp3",
+        "audio/wav": ".wav",
+        "audio/mp4": ".m4a",
+        "audio/ogg": ".ogg",
+        "audio/flac": ".flac",
     }.get(media["mime"])
     if not extension:
         raise ValueError("Unsupported format")

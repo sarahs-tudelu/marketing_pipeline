@@ -30,6 +30,8 @@
     pending.delete(form);
   }
   const labels = {
+    "media-studio": ["Saving creative brief…", "Preparing your media queue or recurring campaign."],
+    "import-bucket-asset": ["Importing bucket asset…", "Preserving the original media and its provenance."],
     connect: ["Opening authorization…", "Preparing your account connection."],
     generate: ["Writing caption…", "Finding the right words. This can take a minute."],
     "generate-asset": ["Generating media…", "Creating your media. This may take a few minutes."],

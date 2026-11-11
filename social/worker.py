@@ -68,6 +68,10 @@ def tick(factory, settings):
     with factory() as db:
         refresh_all(db, settings)
         watch_folder(db, settings)
+        from .media_studio import process_jobs, replenish_campaigns
+
+        replenish_campaigns(db, settings)
+        process_jobs(db, settings)
         advance_queue(db, settings)
         publish_due(db, settings)
         held = db.scalar(select(func.count()).select_from(Post).where(Post.status == "held"))
