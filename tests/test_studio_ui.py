@@ -379,6 +379,7 @@ def test_long_video_progress_refreshes_between_clips_and_preserves_form(db, sett
     playwright = pytest.importorskip("playwright.async_api")
     job = queue_jobs(db, settings, brief_for(db, settings, operation="video", duration=90))[0]
     job.state = "running"
+    assets[0].original_name = "8f98c44dc10ebb7152c7453735800ae76568ca84a153f2c6a8bd91d045f8f591.mp4"
     observe_audio(db, settings, assets[0], Providers(settings))
     db.commit()
 
