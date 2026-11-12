@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 import httpx
 from sqlalchemy import func, select
 
+from .audio_review import review_audio
 from .config import profiles
 from .db import now, uid
 from .facts import Facts, active, caption_fact_ids, composed, content_digest, part_fact_ids, render
@@ -347,6 +348,11 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
             result.garbled_text or result.misused_logos or result.unexpected_people
         ) and all(c in approved for c in result.visible_claims), result.model_dump()
 
+    check("audio_review", lambda: review_audio(db, settings, assets, context, facts, at, providers))
+    audio_check = results[-1]
+    context["audio_review"] = {"passed": audio_check.passed, "details": audio_check.details}
+    for record, asset in zip(context["assets"], assets):
+        record["media"] = asset.media
     check("vision_review", vision_review)
     visual_check = results[-1]
     context["visual_review"] = {"passed": visual_check.passed, "details": visual_check.details}

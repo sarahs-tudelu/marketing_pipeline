@@ -155,6 +155,8 @@ def payload_for(settings, brief, platform, references, *, audio=False):
         outputFormat="mp4",
         ratio="720:1280" if p.video_height > p.video_width else "1280:720",
     )
+    if not 2 <= result["duration"] <= 10:
+        raise ValueError("Runway Gen-4.5 calls must be 2-10 seconds; use the saved multi-clip plan")
     if references:
         result["promptImage"] = references[0]
         return "image_to_video", result

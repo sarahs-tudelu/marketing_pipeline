@@ -20,7 +20,8 @@
     <label class="checkbox"><input type="checkbox" name="website" checked>Use tudelu.com to choose and describe the system shown</label>
     <details><summary>References and video options</summary>
       <label>Product tag<input name="product" required value="company"></label>
-      <label>Video duration (seconds)<input type="number" name="duration" min="3" max="10" value="5"></label>
+      <label>Finished video duration (seconds)<input type="number" name="duration" min="3" max="90" value="5"></label>
+      <small>Up to 90 seconds. Longer videos combine multiple generated or edited clips. Each clip uses a separate Runway task and incurs its own generation cost.</small>
       {% for a in assets if not a.media.mime.startswith('audio/') %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}">{{ a.original_name }} · {{ a.media.mime }}</label>{% else %}<p>Upload reference media in the Asset library.</p>{% endfor %}
       <label>Video soundtrack direction (optional)<textarea name="audio_prompt" rows="2" maxlength="1800" placeholder="Warm ambient music with subtle texture; no vocals."></textarea></label>
     </details>

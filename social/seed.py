@@ -13,7 +13,7 @@ from .scheduler import schedule
 from .storage import ingest
 
 
-def seed_media():
+def seed_media(duration=4):
     canvas = Image.new("RGB", (720, 720), "#173d35")
     draw = ImageDraw.Draw(canvas)
     draw.rounded_rectangle((70, 70, 650, 650), radius=55, fill="#dce7d5")
@@ -27,7 +27,7 @@ def seed_media():
         stream.width = stream.height = 720
         stream.pix_fmt = "yuv420p"
         container.metadata["comment"] = "Tudelu synthetic local fixture; not AI generated"
-        for _ in range(96):
+        for _ in range(round(duration * 24)):
             frame = av.VideoFrame.from_image(canvas)
             for packet in stream.encode(frame):
                 container.mux(packet)

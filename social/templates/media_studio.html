@@ -28,7 +28,7 @@
     <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if asset_form.get('website', 'on') == 'on' else '' }}>Use tudelu.com to choose and describe the system shown</label>
     <p class="muted">Each Runway prompt is written when the job starts, from your prompt, tudelu.com, the selected approved facts, Public company uploads and previous generations. It always depicts a system Tudelu offers. Approved facts remain the only source for caption claims.</p>
     <fieldset><legend>Reference media from your library / bucket</legend>
-      <p class="muted">Images: up to 3. Video generation: 1 image. Video editing: 1 video, up to 30 seconds. Audio: up to 3 bites. A mixed campaign rotates through the selected image/video pool.</p>
+      <p class="muted">Images: up to 3. Video generation: 1 image. Video editing: 1 video; longer edits are split into segments of up to 30 seconds. Audio: up to 3 bites. A mixed campaign rotates through the selected image/video pool.</p>
       {% for a in assets %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in asset_form.get('reference_ids', []) else '' }}>{{ a.original_name }} · {{ a.media.mime }}{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<a href="/admin/assets">Upload references in the asset library</a>{% endfor %}
     </fieldset>
     <details><summary>Video soundtrack (optional)</summary>
@@ -37,9 +37,10 @@
       {% for a in assets if a.media.mime.startswith('audio/') %}<label class="checkbox"><input type="checkbox" name="audio_reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in asset_form.get('audio_reference_ids', []) else '' }}>{{ a.original_name }}</label>{% endfor %}
     </details>
     <div class="two">
-      <label>Video duration (seconds)<input type="number" name="duration" min="3" max="10" value="{{ asset_form.get('duration', '5') }}"></label>
+      <label>Finished video duration (seconds)<input type="number" name="duration" min="3" max="90" value="{{ asset_form.get('duration', '5') }}"></label>
       <label>Recurring interval (hours)<input type="number" name="interval_hours" min="24" max="720" value="{{ asset_form.get('interval_hours', '24') }}"></label>
     </div>
+    <p class="muted">Up to 90 seconds. Generated clips are at most 10 seconds; edit segments are at most 30 seconds. Each clip uses a separate Runway task and incurs its own generation cost.</p>
     {% with values=asset_form, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
     <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
     <p class="muted">Create now runs media, captions, checks and scheduling even when routine automation is off. Next automatic post waits for Automatic posts to be on. Global and platform pauses still apply. Recurring campaigns are saved paused and wait for live, connected accounts.</p>
@@ -63,6 +64,10 @@
     {% if j.error %}<p class="error">{{ j.error }}</p>{% endif %}
     {% if j.task_id %}<small>Runway task: {{ j.task_id }}</small>{% endif %}
     {% if j.state == 'uncertain' and not j.task_id %}<form method="post" action="/forms/media-jobs/{{ j.id }}/reconcile"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Original Runway task ID<input name="task_id" required pattern="[A-Za-z0-9_-]{1,100}"></label><button>Recover original task</button></form>{% endif %}
+    {% if j.brief.get('video_segments') %}
+      {% set completed_clips = j.brief.video_segments|selectattr('output_asset_id', 'defined')|list|length %}
+      <p data-completed-clips="{{ completed_clips }}">Video clips saved: {{ completed_clips }} / {{ j.brief.video_segments|length }} · Finished duration: {{ j.brief.duration }} seconds</p>
+    {% endif %}
     {% if j.post_id %}
       {% set post_state = media_job_posts.get(j.post_id, '') %}
       <p>Post: <b>{{ post_state|replace('_', ' ') }}</b></p>

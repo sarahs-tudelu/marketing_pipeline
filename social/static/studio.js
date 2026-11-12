@@ -194,9 +194,9 @@
         if (!response.ok) return;
         const jobs = await response.json();
         const current = [...queue.querySelectorAll("[data-job-id]")].map((card) => [
-          card.dataset.jobId, card.dataset.jobState, card.dataset.jobStage, card.dataset.jobError, card.dataset.jobOutput, card.dataset.jobPost, card.dataset.jobPostStatus,
+          card.dataset.jobId, card.dataset.jobState, card.dataset.jobStage, card.dataset.jobError, card.dataset.jobOutput, card.dataset.jobPost, card.dataset.jobPostStatus, Number(card.querySelector("[data-completed-clips]")?.dataset.completedClips || 0),
         ]);
-        const updated = jobs.map((job) => [job.id, job.state, job.stage, job.error, job.asset_id || "", job.post_id || "", job.post_status || ""]);
+        const updated = jobs.map((job) => [job.id, job.state, job.stage, job.error, job.asset_id || "", job.post_id || "", job.post_status || "", job.completed_clips || 0]);
         if (JSON.stringify(current) === JSON.stringify(updated)) return;
         const html = await fetch("/admin/media-studio", {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
         if (!html.ok) return;

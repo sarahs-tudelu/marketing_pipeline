@@ -24,6 +24,17 @@
             {% for limitation in description.limitations %}<small>{{ limitation }}</small>{% endfor %}
             <small>{{ description.model }} · Visual reference for captions</small>
           </details>{% endif %}
+          {% if a.media.get('audio_analysis') %}{% set audio = a.media.audio_analysis %}
+          <details><summary>Audio summary and transcript</summary>
+            {% if audio.status == 'incomplete' %}<p class="error">Audio review is incomplete. Recheck the post to resume the remaining tracks.</p>{% endif %}
+            {% if audio.status == 'no_audio' %}<p>No audio stream.</p>{% else %}
+            {% for track in audio.tracks %}<p><b>Track {{ track.track_index + 1 }}</b> · {{ track.duration_seconds|round(1) }} seconds</p>
+              <p>{{ track.observation.summary }}</p>
+              {% if track.observation.uncertain %}<p class="error">Some audio could not be understood. Review remains on hold.</p>{% endif %}
+              {% for part in track.observation.segments %}<p>{{ part.kind|title }}: {{ part.text }}</p>{% endfor %}
+            {% endfor %}{% endif %}
+            <small>{{ audio.model }} · {{ 'Simulated assessment' if audio.simulated else 'Machine listening; usage rights are checked separately' }}</small>
+          </details>{% endif %}
         </td>
         <td>{{ a.source }}<small>{{ a.generator or 'Company supplied' }}{{ ' · demo only' if a.demo_only else '' }}</small></td>
         <td>{{ a.media.width }} × {{ a.media.height }}<small>{{ a.media.mime }} · {{ a.media.bytes }} bytes</small></td>

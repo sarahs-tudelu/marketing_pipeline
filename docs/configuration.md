@@ -77,6 +77,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `ANTHROPIC_MAX_TOKENS` | `16000` | Includes thinking and answer. Incomplete results are held, never accepted silently. |
 | `OPENAI_API_KEY` | `(unset secret)` | OpenAI API key (a ChatGPT subscription alone is not an API credential). |
 | `OPENAI_VISION_MODEL` | `"gpt-6-astra"` | Related configuration in the group above. |
+| `OPENAI_AUDIO_REVIEW_MODEL` | `"gpt-audio-1.5"` | Full-track listening/transcription for the audio review gate; uses OPENAI_API_KEY. |
 | `OPENAI_IMAGE_MODEL` | `"gpt-image-2.5-sunburst-2026-09-08"` | Related configuration in the group above. |
 | `OPENAI_EMBEDDING_MODEL` | `"text-embedding-3-small"` | Related configuration in the group above. |
 | `EMBEDDING_PROVIDER` | `"hash"` | hash = offline similarity fixture; openai required for live publishing. |
@@ -136,7 +137,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `video_min_ratio` | `0.5625` |
 | `video_max_ratio` | `1.777778` |
 | `min_duration` | `3` |
-| `max_duration` | `60` |
+| `max_duration` | `90` |
 | `max_assets` | `1` |
 | `image_width` | `1080` |
 | `image_height` | `1080` |
@@ -149,6 +150,6 @@ Default hard caps: LinkedIn 3, Instagram 5, Facebook 3, X 3, TikTok 3. All targe
 
 ## Provider gateway and credentials
 
-Claude uses official Messages with adaptive thinking and `output_config.effort=xhigh`. Runway uses official asynchronous image/video/audio tasks. OpenAI provides Responses vision and embeddings; legacy image generation remains optional. `AI_MODE=fixture` is offline; live publication additionally requires live AI checks and semantic embeddings. Media Studio workflows and job recovery are in `docs/runway.md`; connection steps are in `README.md`.
+Claude uses official Messages with adaptive thinking and `output_config.effort=xhigh`. Runway uses official asynchronous image/video/audio tasks. OpenAI provides Responses vision, Chat Completions audio listening and embeddings; legacy image generation remains optional. `OPENAI_AUDIO_REVIEW_MODEL` defaults to `gpt-audio-1.5` and uses `OPENAI_API_KEY`. Claude independently reviews the complete audio transcript against active approved facts. `AI_MODE=fixture` is offline; live publication additionally requires live AI checks and semantic embeddings. Media Studio workflows and job recovery are in `docs/runway.md`; connection steps are in `README.md`.
 
 Meta credentials are automatically validated/imported from the three configured environment values at web/worker startup, or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn and TikTok tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.

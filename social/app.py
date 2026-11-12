@@ -353,6 +353,7 @@ def create_app(settings=None):
                 "asset_id": j.output_asset_id,
                 "post_id": j.post_id,
                 "post_status": post_status,
+                "completed_clips": sum(bool(s.get("output_asset_id")) for s in j.brief.get("video_segments", [])),
             }
             for j, post_status in db.execute(select(MediaJob, Post.status).outerjoin(Post, Post.id == MediaJob.post_id).order_by(MediaJob.created_at.desc()).limit(100))
         ]

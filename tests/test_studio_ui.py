@@ -369,6 +369,45 @@ def test_media_queue_updates_without_discarding_creative_brief(db, settings):
         asyncio.run(exercise(client))
 
 
+def test_long_video_progress_refreshes_between_clips_and_preserves_form(db, settings, assets):
+    from test_runway_media import brief_for
+
+    from social.audio_review import observe_audio
+    from social.media_studio import queue_jobs
+    from social.providers import Providers
+
+    playwright = pytest.importorskip("playwright.async_api")
+    job = queue_jobs(db, settings, brief_for(db, settings, operation="video", duration=90))[0]
+    job.state = "running"
+    observe_audio(db, settings, assets[0], Providers(settings))
+    db.commit()
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=os.environ["BROWSER_BINARY"], headless=True)
+            page = await browser.new_page()
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+            await page.goto("http://studio.test/admin/media-studio")
+            duration = page.get_by_label("Finished video duration (seconds)")
+            await playwright.expect(duration).to_have_attribute("max", "90")
+            await duration.fill("90")
+            await playwright.expect(page.locator("#media-queue")).to_contain_text("Video clips saved: 0 / 9")
+            job.brief = job.brief | {"video_segments": [s | {"output_asset_id": assets[0].id} if s["index"] == 0 else s
+                                                     for s in job.brief["video_segments"]]}
+            db.commit()
+            await playwright.expect(page.locator("#media-queue")).to_contain_text("Video clips saved: 1 / 9", timeout=8000)
+            await playwright.expect(duration).to_have_value("90")
+            await page.set_viewport_size({"width": 390, "height": 844})
+            assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            await page.goto("http://studio.test/admin/assets")
+            await page.get_by_text("Audio summary and transcript", exact=True).click()
+            await playwright.expect(page.get_by_text("No audio stream.", exact=True)).to_be_visible()
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
 async def serve_studio_request(route, client):
     request = route.request
     assert urlsplit(request.url).netloc == "studio.test"

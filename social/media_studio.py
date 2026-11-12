@@ -16,10 +16,11 @@ from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob,
 from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
 from .provider_errors import ProviderError
-from .renditions import image_rendition, video_rendition
+from .renditions import image_rendition, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, payload_for
 from .storage import ingest, storage
+from .video_segments import current_segment, edit_reference, plan_segments, save_segment_prompt, segment_brief
 
 # Directions describe how to show the chosen Tudelu system; the prompt writer picks the system.
 CONCEPTS = (
@@ -47,7 +48,7 @@ class CreativeBrief(BaseModel):
     audio_prompt: str = Field(default="", max_length=1800)
     rights: str = Field(min_length=1, max_length=2000)
     owner: str = Field(default="", max_length=200)
-    duration: int = Field(default=5, ge=3, le=10)
+    duration: int = Field(default=5, ge=3, le=90)
     website: bool = True
     create_posts: bool = True
     interval_hours: int = Field(default=24, ge=24, le=720)
@@ -193,8 +194,8 @@ def validate_sources(db, brief, *, live=False):
         raise ValueError("Video editing requires one uploaded video")
     if brief.operation == "mixed" and any(a.media["mime"].startswith("audio/") for a in visual):
         raise ValueError("Put audio in the soundtrack reference selection")
-    if any(a.media["mime"].startswith("video/") and a.media["duration"] > 30 for a in visual):
-        raise ValueError("Runway video edits accept clips up to 30 seconds; upload a shorter source clip")
+    if brief.operation == "video_edit" and brief.duration > 10 and visual[0].media["duration"] + 0.1 < brief.duration:
+        raise ValueError("The requested edit is longer than the uploaded video. Choose a shorter duration or generate a new video.")
     return sources
 
 
@@ -276,6 +277,16 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             seed=int(hashlib.sha256((batch + platform).encode()).hexdigest()[:8], 16),
             execution_mode=settings.ai_mode,
         )
+        if operation in {"video", "video_edit"}:
+            if brief.duration > profile.max_duration:
+                raise ValueError(f"{platform}: choose a duration of at most {profile.max_duration:g} seconds")
+            edit_source = db.get(Asset, refs[0]) if operation == "video_edit" and refs else None
+            if edit_source and brief.duration > 10 and edit_source.media["duration"] + 0.1 < brief.duration:
+                raise ValueError("The requested edit is longer than the selected source video")
+            if brief.duration > (30 if operation == "video_edit" else 10) or (
+                edit_source and edit_source.media["duration"] > 30
+            ):
+                values["video_segments"] = plan_segments(brief.duration, 30 if operation == "video_edit" else 10)
         if operation == "image":
             values.update(audio_prompt="", audio_reference_ids=[])
         job = MediaJob(
@@ -366,7 +377,8 @@ def replenish_campaigns(db, settings):
 
 
 def _save_output(db, settings, job, data):
-    brief = job.brief
+    brief = segment_brief(job)
+    segment = current_segment(job) if job.stage == "visual" else None
     is_audio = job.stage == "audio" or brief["operation"] == "audio"
     model = (
         settings.runway_audio_model
@@ -391,7 +403,7 @@ def _save_output(db, settings, job, data):
         db,
         settings,
         data,
-        f"runway-{job.id}-{job.stage}.{extension}",
+        f"runway-{job.id}-{job.stage}{'-' + str(segment['index'] + 1) if segment else ''}.{extension}",
         source="ai_edited" if refs else "ai_generated",
         generator=("fixture/runway/" if brief["execution_mode"] == "fixture" else "runway/") + model,
         prompt=prompt,
@@ -413,11 +425,23 @@ def _save_output(db, settings, job, data):
             | {"system": brief.get("depicted_system", "")},
             "generated_audio": is_audio,
             "audio_prompt": brief["audio_prompt"],
+            **({"video_segment": {"index": segment["index"], "start": segment["start"],
+                                   "duration": segment["duration"], "input_asset_id": segment.get("input_asset_id")}}
+               if segment else {}),
         },
     )
     job.source_asset_ids = job.source_asset_ids + [asset.id]
-    job.task_history = job.task_history + [{"stage": job.stage, "task_id": job.task_id, "model": model}]
+    job.task_history = job.task_history + [{"stage": job.stage, "task_id": job.task_id, "model": model,
+                                           **({"segment_index": segment["index"], "output_asset_id": asset.id,
+                                               "prompt": prompt, "duration": segment["duration"]} if segment else {})}]
+    if segment:
+        job.brief = job.brief | {"video_segments": [s | {"output_asset_id": asset.id} if s["index"] == segment["index"] else s
+                                                 for s in job.brief["video_segments"]]}
     job.task_id, job.submitted_at = "", None
+    if segment and current_segment(job):
+        job.state = "queued"
+        db.commit()
+        return
     job.state = "queued" if not is_audio and brief["audio_prompt"] else "rendering"
     if job.state == "queued":
         job.stage = "audio"
@@ -445,10 +469,24 @@ def _finish(db, settings, job):
             data = image_rendition(data, profile.image_width, profile.image_height)
             name = f"{job.platform}-{job.id}.jpg"
         else:
-            soundtrack = storage(settings).read(originals[1].storage_key) if len(originals) > 1 else None
-            data = video_rendition(
-                data, profile.video_width, profile.video_height, brief["duration"], soundtrack
-            )
+            sound_asset = next((a for a in originals if a.media["mime"].startswith("audio/")), None)
+            soundtrack = storage(settings).read(sound_asset.storage_key) if sound_asset else None
+            if brief.get("video_segments"):
+                clips = []
+                for segment in brief["video_segments"]:
+                    asset = db.get(Asset, segment.get("output_asset_id"))
+                    if not asset:
+                        raise ValueError("A planned video clip is missing; resume generation before assembly")
+                    clip_data = storage(settings).read(asset.storage_key)
+                    if hashlib.sha256(clip_data).hexdigest() != asset.checksum:
+                        raise ValueError("Video clip integrity failed before assembly")
+                    clips.append((clip_data, 0, segment["duration"]))
+                data = video_sequence(clips, profile.video_width, profile.video_height, soundtrack,
+                                      require_full_duration=True)
+            else:
+                data = video_rendition(
+                    data, profile.video_width, profile.video_height, brief["duration"], soundtrack
+                )
             name = f"{job.platform}-{job.id}.mp4"
         result = ingest(
             db,
@@ -468,7 +506,9 @@ def _finish(db, settings, job):
                 + brief["audio_reference_ids"]
                 + job.source_asset_ids,
                 "rendition": {"platform": job.platform, "original_asset_id": first.id},
-                "generated_audio": len(originals) > 1,
+                "generated_audio": any(a.media["mime"].startswith("audio/") for a in originals),
+                **({"video_sequence": brief["video_segments"], "requested_duration": brief["duration"]}
+                   if brief.get("video_segments") else {}),
             },
         )
         from .gate import media_errors
@@ -570,6 +610,7 @@ def process_jobs(db, settings, provider=None):
                     # Written once and saved before any paid request; resume reuses it.
                     job.brief = job.brief | write_prompt(db, settings, job)
                     db.commit()
+                save_segment_prompt(db, job)
                 if job.brief["execution_mode"] == "fixture":
                     from .seed import seed_media
 
@@ -584,7 +625,8 @@ def process_jobs(db, settings, provider=None):
                         # PyAV detects the actual WAV bytes regardless of provider output extension.
                         data = stream.getvalue()
                     else:
-                        data = seed_media()[0 if brief.operation == "image" else 1]
+                        segment = current_segment(job)
+                        data = seed_media(duration=segment["duration"] if segment else 4)[0 if brief.operation == "image" else 1]
                     _save_output(db, settings, job, data)
                     continue
                 if settings.ai_mode != "live":
@@ -594,9 +636,13 @@ def process_jobs(db, settings, provider=None):
                 ids = brief.audio_reference_ids if job.stage == "audio" else brief.reference_ids
                 if brief.operation == "audio":
                     ids = list(dict.fromkeys(ids + brief.audio_reference_ids))[:3]
-                references = [runway.reference(db.get(Asset, i)) for i in ids]
+                if job.stage == "visual" and brief.operation == "video_edit" and current_segment(job):
+                    # Never send the unsplit original to Runway for a segmented edit.
+                    references = [runway.reference(edit_reference(db, settings, job))]
+                else:
+                    references = [runway.reference(db.get(Asset, i)) for i in ids]
                 endpoint, payload = payload_for(
-                    settings, job.brief, job.platform, references, audio=job.stage == "audio"
+                    settings, segment_brief(job), job.platform, references, audio=job.stage == "audio"
                 )
                 db.refresh(control)
                 db.refresh(account)
@@ -651,7 +697,9 @@ def resume_job(job):
     elif job.state == "uncertain":
         raise ValueError("Reconcile the interrupted submission's task ID in Runway before resuming")
     elif job.source_asset_ids:
-        job.state = "queued" if job.stage == "audio" and len(job.source_asset_ids) == 1 else "rendering"
+        unfinished_video = job.stage == "visual" and current_segment(job)
+        waiting_audio = job.stage == "audio" and not any(h["stage"] == "audio" for h in job.task_history)
+        job.state = "queued" if unfinished_video or waiting_audio else "rendering"
     else:
         job.state = "queued"  # Failure occurred before the paid submission checkpoint.
     job.error = ""

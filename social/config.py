@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     anthropic_max_tokens: int = Field(default=16000, ge=1024)
     openai_api_key: SecretStr = SecretStr("")
     openai_vision_model: str = "gpt-6-astra"
+    openai_audio_review_model: str = "gpt-audio-1.5"
     openai_image_model: str = "gpt-image-2.5-sunburst-2026-09-08"
     openai_embedding_model: str = "text-embedding-3-small"
     embedding_provider: Literal["hash", "openai"] = "hash"
@@ -198,7 +199,7 @@ class Profile(BaseModel):
     video_min_ratio: float = 0.5625
     video_max_ratio: float = 1.777778
     min_duration: float = 3
-    max_duration: float = 60
+    max_duration: float = 90
     max_assets: int = 1
     image_width: int = Field(default=1080, ge=320, le=1920)
     image_height: int = Field(default=1080, ge=320, le=1920)
@@ -249,7 +250,7 @@ def profiles(settings: Settings) -> dict[str, Profile]:
             or not profile.min_width <= profile.max_width <= 1920
             or not 0.8 <= profile.image_min_ratio <= profile.image_max_ratio <= 1.91
             or not 0.5625 <= profile.video_min_ratio <= profile.video_max_ratio <= 1.777778
-            or not 3 <= profile.min_duration <= profile.max_duration <= 60
+            or not 3 <= profile.min_duration <= profile.max_duration <= 90
             or profile.hashtag_limit > 30
         ):
             raise ValueError(f"{name}: exceeds verified conservative envelope")

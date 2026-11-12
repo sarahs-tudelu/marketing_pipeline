@@ -1,6 +1,6 @@
 # Runway Media Studio
 
-Media Studio (`/admin/media-studio`) handles custom ideas and recurring campaigns. Generation uses the Runway API key for images, videos, video edits and audio, including the models hosted by Runway. Caption generation and independent factual review still use Claude; visual review and duplicate embeddings still use OpenAI.
+Media Studio (`/admin/media-studio`) handles custom ideas and recurring campaigns. Generation uses the Runway API key for images, videos, video edits and audio, including the models hosted by Runway. Caption generation and independent factual review still use Claude; visual review, audio listening and duplicate embeddings still use OpenAI.
 
 ## Configuration
 
@@ -23,9 +23,9 @@ Before starting updated services, run `tudelu init` (or `alembic upgrade head`) 
 | Operation | Runway endpoint / model | Inputs |
 |---|---|---|
 | Image | `text_to_image` / `gen4_image` | Prompt and up to three uploaded images |
-| Video | `text_to_video` / `gen4.5` | Prompt; 3–10 seconds |
-| Image animation | `image_to_video` / `gen4.5` | Prompt and one uploaded image; 3–10 seconds |
-| Video edit | `video_to_video` / `aleph2` | Prompt and one uploaded video up to 30 seconds; publishing rendition trimmed to requested duration |
+| Video | `text_to_video` / `gen4.5` | Prompt; up to 90 seconds using clips of 2–10 seconds |
+| Image animation | `image_to_video` / `gen4.5` | Prompt and one uploaded image; up to 90 seconds using clips of 2–10 seconds |
+| Video edit | `video_to_video` / `aleph2` | Prompt and one uploaded video; edits up to 90 seconds, split into inputs of at most 30 seconds |
 | Audio / audio reworking | `sound_effect` / `seed_audio` | Prompt and up to three uploaded audio references |
 
 The request shapes and model IDs were checked against the [official Runway API specification](https://docs.dev.runwayml.com/openapi.json) and [API reference](https://docs.dev.runwayml.com/api.md) on November 11, 2026. The supported model settings intentionally accept only the implemented schemas. Changing to a different model requires updating its payload contract.
@@ -49,6 +49,26 @@ Website text and media summaries guide what is shown; they never become approved
 
 For a video soundtrack, enter audio direction and optionally choose audio references. Runway generates/reworks the audio in a second saved task. The app replaces the visual clip's soundtrack with that result, trims it to the clip, and pads a shorter track with silence. Leaving the soundtrack blank retains any audio delivered with the generated/edited video. Audio-only jobs are library assets; select a video operation to create a social post with audio.
 
+## Finished videos up to 90 seconds
+
+The duration field in Media Studio and the next-post idea form accepts 3–90 seconds for immediate, waiting and recurring ideas. New video generation uses an ordered shot plan with clips no longer than 10 seconds; a 90-second video uses nine Runway tasks. Editing 90 seconds of uploaded footage uses three inputs of at most 30 seconds. Each source interval is saved separately with its original checksum, rights and provenance; the uploaded original is unchanged. An edit cannot request more footage than the source provides. Longer source files can supply the requested opening interval.
+
+Each clip's prompt, seed, source interval, Runway task and result asset are saved. Prompts use a shared setting/system with different camera directions. Continuity between independently generated shots is not guaranteed; the finished montage still goes through vision review. Each clip incurs its own Runway generation cost. The queue reports the number of saved clips, and recovery reuses completed clips and known tasks. Ambiguous submissions still require reconciliation before continuing.
+
+Assembly joins clips in order into one H.264 video at the destination dimensions, with continuous timestamps and original clip audio (silence where a clip has no track). An optional generated soundtrack replaces the combined audio. Short or missing generated clips hold the job instead of stretching footage to fill the requested duration. The maximum is also enforced before generation and at publication; configured lower platform limits remain effective. Existing campaigns keep their saved duration until a new brief is saved.
+
+The per-task bounds were checked on November 12, 2026 against [Runway Gen-4.5](https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5) and [Aleph 2 video editing](https://dev.runwayml.com/learn/edit-and-finish-video-api). Platform references are in [platform verification](platform-verification.md).
+
+## Audio review
+
+Every post check now includes `audio_review` for uploaded and AI media. The exact file checksum is verified, and every audio stream is decoded in full (up to 90 seconds, four mono/stereo tracks). A file without an audio stream passes without a listening call. Unsupported channels, failed decoding, missing coverage or uncertain words hold the post.
+
+`OPENAI_AUDIO_REVIEW_MODEL` (default `gpt-audio-1.5`, using `OPENAI_API_KEY`) listens to the complete PCM WAV tracks and records sounds, speech and sung lyrics. The app saves summaries, transcripts, model, timestamps and checksums in asset metadata. Asset library exposes **Audio summary and transcript**. Audio is untrusted content, and machine listening does not establish music ownership or licensing.
+
+Claude independently checks every transcript segment and its combination with the caption against currently active approved facts and declared rights. Instrumental music, ambience or silence can pass without fact citations. Unclear listening, unsupported claims, incomplete transcript review or provider failures hold publication. Ordinary Recheck runs this step too, and final caption review receives the result alongside vision evidence. The two reviews are independent: passing audio does not clear a vision hold.
+
+Successful observations are reused only for identical file bytes, model and execution mode; partial multitrack work can resume. Factual review runs fresh for each post/check so changed captions or expired facts cannot reuse an old approval. Fixture results are explicitly simulated and cannot satisfy live readiness. Live review adds OpenAI and Anthropic charges. This uses [OpenAI audio inputs](https://developers.openai.com/api/docs/guides/audio-chat-completions) with [gpt-audio-1.5](https://developers.openai.com/api/docs/models/gpt-audio-1.5); no new database migration is required.
+
 ## Platform output and provenance
 
 Every Runway image/video original and publishing rendition receives a text summary in `Asset.media.visual_summary`. The configured OpenAI vision model observes the saved bytes; generation prompts are not treated as evidence. Metadata includes the description, readable visible text, source checksum, model, timestamp and limitations. Videos use at most 12 chronological frames, including the final frame; audio and unseen action are not analyzed. Original media bytes and embedded provenance remain unchanged. See [OpenAI image inputs](https://developers.openai.com/api/docs/guides/images-vision).
@@ -59,7 +79,7 @@ The Media Studio queue displays loading indicators and refreshes in place while 
 
 Each selected platform gets its own job, prompt framing, seed and caption. Platform profiles set rendition dimensions: Instagram images default to 1080×1350, other images to 1080×1080; Instagram, TikTok and Facebook (Reels) videos default to 720×1280 and other videos to 1280×720. Runway receives a supported orientation; the app fits the result into the exact configured dimensions with padding, without stretching or discarding the original. Images become JPEG; videos become H.264/yuv420p at 30 fps with AAC audio where present. Normal platform byte/duration/format checks still apply.
 
-Generated originals and reference originals are retained unchanged. A publishing rendition is a new asset linked to source IDs/checksums, rights, expiry, prompt, model, task, website snapshot and campaign. Embedded metadata in originals is retained; a transcoded rendition is not claimed to retain a cryptographic C2PA signature. Native AI-label flags and review checks remain active. Audio is not transcribed or semantically verified by the existing visual reviewer.
+Generated originals and reference originals are retained unchanged. A publishing rendition is a new asset linked to source IDs/checksums, rights, expiry, prompt, model, task, website snapshot and campaign. Embedded metadata in originals is retained; a transcoded rendition is not claimed to retain a cryptographic C2PA signature. Native AI-label flags and review checks remain active. Audio receives its own full-track review, described above.
 
 ## Custom ideas and recurring campaigns
 
