@@ -23,15 +23,16 @@ from social.storage import ingest, storage
 
 def brief_for(db, settings, **overrides):
     sheet = load_facts(db, settings.facts_path)
-    return CreativeBrief(
-        campaign="Fresh ideas",
-        prompt="Warm architectural textures",
-        platforms=["instagram"],
-        facts_id=sheet.id,
-        rights="Company permitted",
-        website=False,
-        **overrides,
-    )
+    values = {
+        "campaign": "Fresh ideas",
+        "prompt": "Warm architectural textures",
+        "platforms": ["instagram"],
+        "facts_id": sheet.id,
+        "rights": "public",
+        "owner": "Tudelu",
+        "website": False,
+    }
+    return CreativeBrief(**(values | overrides))
 
 
 def wave_bytes():
@@ -155,7 +156,12 @@ def test_video_with_generated_audio_is_muxed_and_originals_retained(db, settings
     assert result.tags["generated_audio"]
 
 
+def written_prompt(*args):
+    return {"generation_prompt": "A pergola at dusk", "depicted_system": "Pergolas", "prompt_writer": {}}
+
+
 def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets, monkeypatch):
+    monkeypatch.setattr("social.media_studio.write_prompt", written_prompt)
     monkeypatch.setattr("social.providers.OpenAI.call", lambda *args, **kwargs: {
         "status": "completed", "output": [{"type": "message", "content": [{
             "type": "output_text", "text": json.dumps({
@@ -212,7 +218,8 @@ def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets,
     assert "secret-url" not in json.dumps(job.brief) + json.dumps(job.task_history)
 
 
-def test_ambiguous_submission_is_not_retried(db, settings):
+def test_ambiguous_submission_is_not_retried(db, settings, monkeypatch):
+    monkeypatch.setattr("social.media_studio.write_prompt", written_prompt)
     job = queue_jobs(db, settings, brief_for(db, settings))[0]
     job.brief = job.brief | {"execution_mode": "live"}
     db.commit()
@@ -353,7 +360,7 @@ def test_media_studio_form_api_csrf_and_saved_paused_campaign(db, settings):
                 "prompt": "Warm textures",
                 "platforms": "instagram",
                 "facts_id": brief.facts_id,
-                "rights": "Owned",
+                "rights": "public",
                 "operation": "mixed",
                 "kind": "mixed",
                 "create_posts": "on",
@@ -427,7 +434,8 @@ def test_import_existing_private_bucket_object_preserves_source(db, settings, mo
             data={
                 "csrf": client.get("/api/session").json()["csrf"],
                 "key": "uploads/original.jpg",
-                "rights": "Company owned; editing permitted",
+                "rights": "public",
+                "owner": "Tudelu",
                 "tags": '{"product":"company"}',
             },
             follow_redirects=False,
@@ -436,3 +444,4 @@ def test_import_existing_private_bucket_object_preserves_source(db, settings, mo
     asset = db.scalar(select(Asset))
     assert objects["uploads/original.jpg"] == objects[asset.storage_key] == original
     assert asset.source == "company" and asset.tags["imported_bucket_key"] == "uploads/original.jpg"
+    assert (asset.rights, asset.owner) == ("public", "Tudelu")

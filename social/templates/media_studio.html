@@ -25,8 +25,8 @@
       <label>Product tag<input name="product" required value="{{ asset_form.get('product', 'company') }}"></label>
       <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}" {{ 'selected' if asset_form.get('facts_id') == f.id else '' }}>{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
     </div>
-    <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if asset_form.get('website', 'on') == 'on' else '' }}>Use tudelu.com for brand inspiration</label>
-    <p class="muted">Website context guides the mood. Approved facts remain the source for product claims.</p>
+    <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if asset_form.get('website', 'on') == 'on' else '' }}>Use tudelu.com to choose and describe the system shown</label>
+    <p class="muted">Each Runway prompt is written when the job starts, from your prompt, tudelu.com, the selected approved facts, Public company uploads and previous generations. It always depicts a system Tudelu offers. Approved facts remain the only source for caption claims.</p>
     <fieldset><legend>Reference media from your library / bucket</legend>
       <p class="muted">Images: up to 3. Video generation: 1 image. Video editing: 1 video, up to 30 seconds. Audio: up to 3 bites. A mixed campaign rotates through the selected image/video pool.</p>
       {% for a in assets %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in asset_form.get('reference_ids', []) else '' }}>{{ a.original_name }} · {{ a.media.mime }}{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<a href="/admin/assets">Upload references in the asset library</a>{% endfor %}
@@ -40,7 +40,7 @@
       <label>Video duration (seconds)<input type="number" name="duration" min="3" max="10" value="{{ asset_form.get('duration', '5') }}"></label>
       <label>Recurring interval (hours)<input type="number" name="interval_hours" min="24" max="720" value="{{ asset_form.get('interval_hours', '24') }}"></label>
     </div>
-    <label>Usage rights<input name="rights" required value="{{ asset_form.get('rights', '') }}" placeholder="Owner and permitted uses, including reference editing and audio rights"></label>
+    {% with values=asset_form, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
     <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
     <p class="muted">Create now runs media, captions, checks and scheduling even when routine automation is off. Next automatic post waits for Automatic posts to be on. Global and platform pauses still apply. Recurring campaigns are saved paused and wait for live, connected accounts.</p>
     <button class="primary">Queue idea / save campaign</button>
@@ -72,6 +72,12 @@
     {% if j.output_asset_id %}<a class="button" href="/admin/assets">View in asset library</a>{% endif %}
     {% if j.state in ['failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resume"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume saved task / output</button></form>{% endif %}
     {% if j.state in ['planned','queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
+    {% if j.brief.get('prompt_writer') %}{% set sources = j.brief.prompt_writer.sources %}
+    <details><summary>Prompt sent to Runway{{ ' · ' ~ j.brief.depicted_system if j.brief.get('depicted_system') else '' }}</summary>
+      <p>{{ j.brief.generation_prompt }}</p>
+      <small>Written by {{ j.brief.prompt_writer.writer }} from {{ 'tudelu.com, ' if sources.website else '' }}facts {{ sources.facts_version }}, {{ sources.uploaded_asset_ids|length }} uploaded, {{ sources.reference_ids|length }} selected and {{ sources.previous_asset_ids|length }} previously generated media · {{ rights_label(j.brief.rights) }}{{ ' · ' ~ j.brief.owner if j.brief.get('owner') else '' }}</small>
+    </details>
+    {% elif j.brief.operation != 'audio' and j.stage == 'visual' %}<small>The Runway prompt is written when this job starts.</small>{% endif %}
     <details><summary>Prompt and provenance</summary><pre>{{ json.dumps(j.brief, indent=2) }}</pre></details>
   </article>{% else %}<p>No media jobs yet.</p>{% endfor %}
 </section>

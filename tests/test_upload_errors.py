@@ -21,7 +21,7 @@ def upload(client, data, name="clip.mp4", **fields):
         data={
             "csrf": token,
             "source": "company",
-            "rights": "Company owned",
+            "rights": "public",
             "tags": '{"product":"company"}',
             "rights_expire_at": "2030-01-01T12:00",
             "customer_permission": "on",
@@ -62,7 +62,7 @@ def test_upload_storage_error_is_actionable_preserves_fields_and_rolls_back(
         response = upload(client, seed_media()[1], name="clip<script>.mp4")
         assert response.status_code == 503 and hint in response.text
         assert 'role="alert"' in response.text and "select the file again" in response.text
-        for value in ['value="Company owned"', 'value="release-123"', 'value="2030-01-01T12:00"']:
+        for value in ['<option value="public" selected>', 'value="release-123"', 'value="2030-01-01T12:00"']:
             assert value in response.text
         assert "clip&lt;script&gt;.mp4" in response.text
         assert "private-access-key" not in response.text + caplog.text
@@ -104,7 +104,8 @@ def test_upload_other_failures_are_sanitized(db, settings, monkeypatch, error, h
         ({"tags": "[]"}, "JSON object"),
         ({"tags": "invalid"}, "JSON object"),
         ({"rights_expire_at": "bad"}, "valid rights expiry"),
-        ({"rights": ""}, "Usage rights"),
+        ({"rights": ""}, "Choose usage rights"),
+        ({"rights": "Company owned"}, "Choose usage rights"),
     ],
 )
 def test_upload_invalid_metadata_returns_form_without_saving(db, settings, fields, hint):

@@ -80,7 +80,7 @@ def test_admin_idea_buttons_preserve_selected_workflow(db, settings, tmp_path, b
             await form.get_by_label("Your idea", exact=True).fill(brief.prompt)
             await form.get_by_label("Post name", exact=True).fill(brief.campaign)
             await form.locator('select[name="facts_id"]').select_option(brief.facts_id)
-            await form.get_by_label("Usage rights", exact=True).fill(brief.rights)
+            await form.get_by_label("Usage rights", exact=True).select_option(brief.rights)
             await form.screenshot(path=str(tmp_path / "admin-idea-desktop.png"))
             await page.set_viewport_size({"width": 390, "height": 844})
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")

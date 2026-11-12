@@ -322,6 +322,11 @@ class BaseAdapter:
                 self.platform == "linkedin"
                 and p.hostname == "www.linkedin.com"
                 and p.path.startswith("/dms-uploads/")
+            ) and not (
+                # Reels byte upload host; receives the Page token as documented by Meta.
+                self.platform == "facebook"
+                and p.hostname == "rupload.facebook.com"
+                and p.path.startswith("/video-upload/")
             ):
                 raise PublishError("validation", "Refusing to send credentials outside official API hosts")
         if not authorized and not any(

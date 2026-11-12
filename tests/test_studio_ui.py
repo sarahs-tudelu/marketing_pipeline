@@ -59,8 +59,8 @@ def test_media_studio_custom_prompt_and_responsive_layout(db, settings, tmp_path
             await page.get_by_label("Your prompt", exact=True).fill(
                 "A calm architectural study in warm light"
             )
-            await page.get_by_label("Usage rights", exact=True).fill("Company permitted")
-            await page.get_by_label("Use tudelu.com for brand inspiration").uncheck()
+            await page.get_by_label("Usage rights", exact=True).select_option("public")
+            await page.get_by_label("Use tudelu.com to choose and describe the system shown").uncheck()
             await page.get_by_label("Content style").select_option("non_promotional")
             await page.screenshot(path=str(tmp_path / "media-studio-desktop.png"), full_page=True)
             await page.get_by_role("button", name="Queue idea / save campaign").click()
@@ -214,7 +214,7 @@ def test_generation_progress_and_completion_in_browser(db, settings, assets, mon
             form = page.locator(f'form[action="{action}"]')
             if kind == "image":
                 await form.locator('[name="prompt"]').fill("A preview image")
-                await form.locator('[name="rights"]').fill("Internal preview")
+                await form.locator('[name="rights"]').select_option("not_public")
             handle = await form.element_handle()
             # Pause native submission after session refresh so the pending UI is inspectable.
             await page.evaluate("""() => {
@@ -416,7 +416,8 @@ def test_stale_upload_refreshes_session_before_one_submission(
             await page.goto("http://studio.test/admin/assets")
             form = page.locator('form[action="/forms/assets"]')
             old_token = await form.locator('[name="csrf"]').input_value()
-            await form.locator('[name="rights"]').fill("Company-owned original")
+            await form.locator('[name="rights"]').select_option("public")
+            await form.locator('[name="owner"]').fill("Company-owned original")
             await form.locator('[name="file"]').set_input_files(
                 {"name": "session-recovery.jpg", "mimeType": "image/jpeg", "buffer": media_bytes}
             )
@@ -484,14 +485,16 @@ def test_storage_upload_failure_is_visible_and_form_can_retry(db, settings, asse
             await page.route("**/*", lambda route: serve_studio_request(route, client))
             await page.goto("http://studio.test/admin/assets")
             form = page.locator('form[action="/forms/assets"]')
-            await form.locator('[name="rights"]').fill("Company-owned original")
+            await form.locator('[name="rights"]').select_option("public")
+            await form.locator('[name="owner"]').fill("Company-owned original")
             await form.locator('[name="file"]').set_input_files({
                 "name": "original.jpg", "mimeType": "image/jpeg", "buffer": data,
             })
             async with page.expect_navigation():
                 await form.get_by_role("button", name="Ingest asset").click()
             await playwright.expect(page.get_by_role("alert")).to_contain_text("bucket write permissions")
-            await playwright.expect(form.locator('[name="rights"]')).to_have_value("Company-owned original")
+            await playwright.expect(form.locator('[name="rights"]')).to_have_value("public")
+            await playwright.expect(form.locator('[name="owner"]')).to_have_value("Company-owned original")
             await playwright.expect(page.get_by_role("status")).to_contain_text("select the file again")
             assert "private-token" not in await page.content()
             await page.screenshot(path=str(tmp_path / "upload-error.png"), full_page=True)

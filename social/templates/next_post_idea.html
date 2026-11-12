@@ -16,8 +16,8 @@
       <label>Content style<select name="kind"><option value="promotional">Promotional</option><option value="non_promotional">Non-promotional / editorial</option></select></label>
       <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}">{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
     </div>
-    <label>Usage rights<input name="rights" required placeholder="Who owns the references and where the output may be used"></label>
-    <label class="checkbox"><input type="checkbox" name="website" checked>Use tudelu.com for brand inspiration</label>
+    {% with values={}, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
+    <label class="checkbox"><input type="checkbox" name="website" checked>Use tudelu.com to choose and describe the system shown</label>
     <details><summary>References and video options</summary>
       <label>Product tag<input name="product" required value="company"></label>
       <label>Video duration (seconds)<input type="number" name="duration" min="3" max="10" value="5"></label>

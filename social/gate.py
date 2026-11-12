@@ -91,6 +91,11 @@ def media_errors(assets, profile, platform):
                 errors.append(f"{a.id}: duration")
             if not 23 <= m.get("fps", 0) <= 60 or any(c != "aac" for c in m.get("audio_codecs", [])):
                 errors.append(f"{a.id}: frame rate/audio codec")
+            # Reels minimum is 540x960 (either orientation).
+            if platform == "facebook" and (
+                min(m["width"], m["height"]) < 540 or max(m["width"], m["height"]) < 960
+            ):
+                errors.append(f"{a.id}: Reels need at least 540x960")
             if m.get("bit_rate", 0) > 25_000_000:
                 errors.append(f"{a.id}: bitrate")
         elif (
@@ -107,19 +112,11 @@ def check_disclosure(post, assets, live=False):
     reasons = []
     if post.ai_disclosure != needed:
         reasons.append("Incorrect AI disclosure flag for asset provenance")
-    # The Page video endpoint currently has no implemented native disclosure field.
-    # Preserve dry runs, but do not substitute a caption for Meta's required video label.
-    if (
-        live
-        and needed
-        and post.platform == "facebook"
-        and any(a.media["mime"].startswith("video/") for a in assets)
-    ):
-        reasons.append(
-            "Live Facebook AI video requires a supported native AI label; this adapter cannot set it"
-        )
+    # Facebook videos publish as Reels, whose finish call carries is_ai_generated.
+    # Facebook photos have no API label field; Meta labels them from embedded metadata.
+    facebook_video = post.platform == "facebook" and any(a.media["mime"].startswith("video/") for a in assets)
     method = {"instagram": "is_ai_generated", "x": "made_with_ai", "tiktok": "manual_label"}.get(
-        post.platform, "preserved_metadata"
+        post.platform, "is_ai_generated" if facebook_video else "preserved_metadata"
     )
     return not reasons, {
         "required": needed,
@@ -227,10 +224,14 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     )
     needed = any(a.source != "company" for a in assets)
     check("disclosure", lambda: check_disclosure(post, assets, live))
-    check(
-        "rights",
-        lambda: (all(a.rights and (not a.rights_expire_at or at < a.rights_expire_at) for a in assets), {}),
-    )
+
+    def rights():
+        # Not public media supports dry runs only; legacy unclassified text keeps its prior behavior.
+        private = [a.id for a in assets if a.rights == "not_public"] if live else []
+        current = all(a.rights and (not a.rights_expire_at or at < a.rights_expire_at) for a in assets)
+        return current and not private, {"not_public_for_live": private} if private else {}
+
+    check("rights", rights)
     check("media", lambda: (not (errors := media_errors(assets, profile, post.platform)), {"errors": errors}))
     check(
         "provenance_integrity",
@@ -308,6 +309,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
                 "product_family": a.tags.get("product_family", a.tags.get("product")),
                 "tags": a.tags,
                 "rights": a.rights,
+                "owner": a.owner,
                 "rights_status": a.tags.get("rights_status"),
                 "rights_expire_at": a.rights_expire_at,
                 "source_or_creation_record": {

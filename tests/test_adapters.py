@@ -1,11 +1,13 @@
+import json
 from datetime import timedelta
+from urllib.parse import parse_qsl
 
 import httpx
 import pytest
 from sqlalchemy import select
 
 from social.adapters import ADAPTERS
-from social.adapters.base import PublishError, error_for
+from social.adapters.base import Deferred, PublishError, error_for
 from social.db import now
 from social.facts import load_facts
 from social.gate import run_gate
@@ -44,9 +46,13 @@ def prepared(db, settings, assets, platform, video=None, ai=False):
     return post
 
 
-@pytest.mark.parametrize("platform", ["linkedin", "instagram", "facebook", "x", "tiktok"])
-def test_dry_adapter_records_requests_without_network(db, settings, assets, video_bytes, platform):
-    post = prepared(db, settings, assets, platform, video_bytes if platform == "tiktok" else None, ai=True)
+@pytest.mark.parametrize("platform", ["linkedin", "instagram", "facebook", "facebook-reel", "x", "tiktok"])
+def test_dry_adapter_records_requests_without_network(
+    db, settings, assets, video_bytes, reel_bytes, platform
+):
+    video = {"tiktok": video_bytes, "facebook-reel": reel_bytes}.get(platform)
+    platform = platform.removesuffix("-reel")
+    post = prepared(db, settings, assets, platform, video, ai=True)
     assert post.ai_disclosure
     assert "AI-generated or AI-edited media." not in post.caption
 
@@ -64,30 +70,139 @@ def test_dry_adapter_records_requests_without_network(db, settings, assets, vide
         assert next(r for r in records if r.step == "container-0").request["json"]["is_ai_generated"] is True
     if platform == "x":
         assert next(r for r in records if r.step == "publish").request["json"]["made_with_ai"] is True
+    if platform == "facebook" and video:
+        assert [r.step for r in records] == ["reel-start", "reel-upload", "reel-status", "publish"]
+        assert records[-1].request["form"]["is_ai_generated"] == "true"
     if platform == "tiktok":
         init = next(r for r in records if r.step == "inbox-init")
         assert "/inbox/video/init/" in init.request["url"]
         assert set(init.request["json"]) == {"source_info"}
 
 
-def test_facebook_ai_video_requires_native_label_before_live_requests(db, settings, assets, video_bytes):
+@pytest.fixture(scope="module")
+def reel_bytes(video_bytes):
+    from social.renditions import video_rendition
+
+    return video_rendition(video_bytes, 720, 1280, 4)
+
+
+def live_facebook(db, settings, post, handler):
+    account = db.get(Account, "facebook")
+    account.external_id, account.validated_at = "page", now()
+    account.credentials = Vault(settings).encrypt(
+        {"access_token": "SECRET-PAGE", "system_token": "SECRET-SYS"}
+    )
+    db.commit()
+    adapter = ADAPTERS["facebook"](settings, db, post, httpx.Client(transport=httpx.MockTransport(handler)))
+    adapter.dry = False
+    return adapter
+
+
+def reel_api(video, statuses, finishes, seen):
+    def handler(request):
+        seen.append(request)
+        if request.url.path == "/v26.0/page/video_reels":
+            assert request.headers["authorization"] == "Bearer SECRET-PAGE"
+            if request.headers["content-type"] == "application/json":
+                assert json.loads(request.content) == {"upload_phase": "start"}
+                return httpx.Response(
+                    200,
+                    json={
+                        "video_id": "reel-1",
+                        "upload_url": "https://rupload.facebook.com/video-upload/v26.0/reel-1",
+                    },
+                )
+            finishes.append(dict(parse_qsl(request.content.decode())))
+            return httpx.Response(200, json={"success": True})
+        if request.url.host == "rupload.facebook.com":
+            assert request.url.path == "/video-upload/v26.0/reel-1"
+            assert request.headers["authorization"] == "OAuth SECRET-PAGE"
+            assert request.headers["offset"] == "0" and request.headers["file_size"] == str(len(video))
+            assert request.content == video
+            return httpx.Response(200, json={"success": True})
+        if request.url.path == "/v26.0/reel-1":
+            assert request.url.params["fields"] == "status"
+            return httpx.Response(200, json={"status": statuses.pop(0)})
+        pytest.fail(f"Unexpected API request {request.method} {request.url}")
+
+    return handler
+
+
+COMPLETE = {"video_status": "upload_complete", "uploading_phase": {"status": "complete"}}
+
+
+def test_facebook_ai_video_publishes_as_reel_with_native_ai_label(db, settings, assets, reel_bytes):
     from social.gate import evaluate
 
-    post = prepared(db, settings, assets, "facebook", video_bytes, ai=True)
+    post = prepared(db, settings, assets, "facebook", reel_bytes, ai=True)
     results, _ = evaluate(db, settings, post, live=True)
     disclosure = next(c for c in results if c.name == "disclosure")
-    assert not disclosure.passed
-    assert "native AI label" in disclosure.details["reasons"][0]
-    adapter = ADAPTERS["facebook"](
-        settings,
-        db,
-        post,
-        httpx.Client(transport=httpx.MockTransport(lambda _: pytest.fail("Must not contact Facebook"))),
+    assert disclosure.passed and disclosure.details["method"] == "is_ai_generated"
+    finishes, seen = [], []
+    adapter = live_facebook(db, settings, post, reel_api(reel_bytes, [COMPLETE], finishes, seen))
+    result = adapter.publish(post, post.idempotency_key)
+    assert (result.platform_post_id, result.url) == ("reel-1", "https://www.facebook.com/reel/reel-1")
+    assert finishes == [
+        {
+            "video_id": "reel-1",
+            "upload_phase": "finish",
+            "video_state": "PUBLISHED",
+            "description": post.caption,
+            "is_ai_generated": "true",
+        }
+    ]
+    assert not any("graph-video" in str(r.url) or "/uploads" in r.url.path for r in seen)
+    # A restart after Facebook acknowledged the reel recovers it without any request.
+    adapter.client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: pytest.fail("Recovery used network"))
     )
-    adapter.dry = False
-    with pytest.raises(PublishError, match="native AI label"):
+    assert adapter.publish(post, post.idempotency_key).platform_post_id == "reel-1"
+    for record in db.scalars(select(RequestRecord).where(RequestRecord.post_id == post.id)):
+        assert "SECRET-PAGE" not in str(record.request) and "SECRET-SYS" not in str(record.request)
+        assert "encrypted" in record.response
+
+
+def test_facebook_company_reel_is_not_labeled_ai(db, settings, assets, reel_bytes):
+    post = prepared(db, settings, assets, "facebook", reel_bytes)
+    finishes = []
+    live_facebook(db, settings, post, reel_api(reel_bytes, [COMPLETE], finishes, [])).publish(
+        post, post.idempotency_key
+    )
+    assert finishes[0]["is_ai_generated"] == "false"
+
+
+def test_facebook_reel_waits_for_upload_and_rejects_processing_errors(db, settings, assets, reel_bytes):
+    post = prepared(db, settings, assets, "facebook", reel_bytes, ai=True)
+    uploading = {"video_status": "uploading", "uploading_phase": {"status": "in_progress"}}
+    statuses, finishes, seen = [uploading, COMPLETE], [], []
+    adapter = live_facebook(db, settings, post, reel_api(reel_bytes, statuses, finishes, seen))
+    with pytest.raises(Deferred):
         adapter.publish(post, post.idempotency_key)
-    assert not db.scalars(select(RequestRecord).where(RequestRecord.post_id == post.id)).all()
+    assert not finishes
+    adapter.publish(post, post.idempotency_key)
+    assert len(finishes) == 1
+    assert len([r for r in seen if r.url.host == "rupload.facebook.com"]) == 1
+
+    other = prepared(db, settings, assets, "facebook", reel_bytes, ai=True)
+    failed = {
+        "video_status": "processing",
+        "uploading_phase": {"status": "complete"},
+        "processing_phase": {"status": "error", "error": {"message": "Resolution too low."}},
+    }
+    finishes = []
+    adapter = live_facebook(db, settings, other, reel_api(reel_bytes, [failed], finishes, []))
+    with pytest.raises(PublishError, match="540x960") as error:
+        adapter.publish(other, other.idempotency_key)
+    assert error.value.kind == "validation" and not finishes
+
+
+def test_facebook_video_below_reels_minimum_is_held(db, settings, assets, video_bytes):
+    from social.config import profiles
+    from social.gate import media_errors
+
+    small = ingest(db, settings, video_bytes, "square.mp4", rights="Company owned")
+    assert any("540x960" in e for e in media_errors([small], profiles(settings)["facebook"], "facebook"))
+    assert media_errors([small], profiles(settings)["instagram"], "instagram") == []
 
 
 def test_tiktok_manual_alert_keeps_label_instruction_without_caption_disclosure(
@@ -372,8 +487,8 @@ def test_instagram_carousel_disclosure_on_parent_only(db, settings, assets):
 
 
 @pytest.mark.parametrize("platform", ["facebook", "linkedin", "x"])
-def test_video_upload_paths(db, settings, assets, video_bytes, platform):
-    post = prepared(db, settings, assets, platform, video_bytes)
+def test_video_upload_paths(db, settings, assets, video_bytes, reel_bytes, platform):
+    post = prepared(db, settings, assets, platform, reel_bytes if platform == "facebook" else video_bytes)
     result = ADAPTERS[platform](settings, db, post).publish(post, post.idempotency_key)
     assert result.status == "published"
     rows = db.scalars(select(RequestRecord)).all()

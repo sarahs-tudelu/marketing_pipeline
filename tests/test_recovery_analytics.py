@@ -128,6 +128,15 @@ def test_insights_read_only_contracts(db, settings, post, monkeypatch, platform)
     method, url, kwargs = calls[0]
     assert method == ("POST" if platform == "tiktok" else "GET")
     assert not any(part in url for part in ("/publish", "/likes", "/comments", "/follow"))
+    if platform == "facebook":
+        assert url.endswith("/123/insights")
+        from social.models import RequestRecord
+
+        db.add(RequestRecord(post_id=post.id, step="reel-start", request={}, dry_run=False))
+        db.flush()
+        fetch(db, settings, post)
+        assert calls[-1][1].endswith("/123/video_insights")
+        assert "fb_reels_total_plays" in calls[-1][2]["params"]["metric"]
 
 
 def test_analytics_cadence_suggestions_never_change_caps(db, settings, post):

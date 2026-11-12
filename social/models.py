@@ -17,6 +17,7 @@ class Asset(Base):
     prompt: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[dict] = mapped_column(JSON, default=dict)
     rights: Mapped[str] = mapped_column(Text)
+    owner: Mapped[str] = mapped_column(String(200), default="", server_default="")
     rights_expire_at: Mapped[datetime | None] = mapped_column(DateTime)
     customer_permission: Mapped[bool] = mapped_column(Boolean, default=False)
     permission_reference: Mapped[str] = mapped_column(Text, default="")

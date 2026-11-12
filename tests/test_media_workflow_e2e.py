@@ -43,7 +43,8 @@ def test_uploaded_reference_to_generated_media_and_caption(db, settings, monkeyp
             data={
                 "csrf": token,
                 "source": "company",
-                "rights": "Synthetic test media; internal use only",
+                "rights": "not_public",
+                "owner": "Synthetic test media",
                 "tags": '{"product":"demo"}',
             },
             files={"file": (filename, data, mime)},
@@ -73,7 +74,7 @@ def test_uploaded_reference_to_generated_media_and_caption(db, settings, monkeyp
             "facts_id": facts.id,
             "product": "demo",
             "kind": "promotional",
-            "rights": "Synthetic internal test generation",
+            "rights": "not_public",
             "duration": "3",
         }
         if operation == "soundtrack":
@@ -120,7 +121,8 @@ def test_invalid_upload_preserves_metadata_then_valid_retry_succeeds(db, setting
         form = {
             "csrf": client.get("/api/session").json()["csrf"],
             "source": "company",
-            "rights": "Internal retry test",
+            "rights": "not_public",
+            "owner": "Internal retry test",
             "tags": '{"product":"demo"}',
         }
         failed = client.post(

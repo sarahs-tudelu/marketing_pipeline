@@ -36,7 +36,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `ADMIN_PASSWORD` | `(unset secret)` | Related configuration in the group above. |
 | `PROXY_AUTH_SECRET` | `(unset secret)` | Proxy must strip incoming auth headers and set X-Authenticated-User and X-Tudelu-Proxy-Secret. |
 | `META_API_VERSION` | `"v26.0"` | Verified/pinned platform API versions; review docs before updating. |
-| `META_APP_ID` | `(unset)` | Meta App ID needed for Facebook video's resumable upload API. |
+| `META_APP_ID` | `(unset)` | Optional Meta App ID. Not used for publishing: Facebook videos upload as Reels with the Page token. |
 | `LINKEDIN_API_VERSION` | `"202609"` | Related configuration in the group above. |
 | `X_API_VERSION` | `"2"` | Related configuration in the group above. |
 | `TIKTOK_API_VERSION` | `"v2"` | Related configuration in the group above. |

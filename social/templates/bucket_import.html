@@ -6,7 +6,7 @@
   <label>Object key<input name="key" required value="{{ bucket_form.get('key', '') }}" placeholder="uploads/showroom-walkthrough.mp4"></label>
   <label>Source<select name="source">{% for source in ['company','ai_generated','ai_edited'] %}<option {{ 'selected' if bucket_form.get('source', 'company') == source else '' }}>{{ source }}</option>{% endfor %}</select></label>
   <div class="two"><label>AI model / generator<input name="generator" value="{{ bucket_form.get('generator', '') }}"></label><label>Generation/edit prompt<input name="prompt" value="{{ bucket_form.get('prompt', '') }}"></label></div>
-  <label>Usage rights<input name="rights" value="{{ bucket_form.get('rights', '') }}" required></label>
+  {% with values=bucket_form %}{% include "rights_fields.html" %}{% endwith %}
   <label>Rights expiry (UTC, optional)<input type="datetime-local" name="rights_expire_at" value="{{ bucket_form.get('rights_expire_at', '') }}"></label>
   <label>Product/campaign tags (JSON)<input name="tags" value="{{ bucket_form.get('tags', '{}') }}"></label>
   <label class="checkbox"><input type="checkbox" name="customer_permission" {{ 'checked' if bucket_form.get('customer_permission') == 'on' else '' }}>Customer content permission is documented</label>

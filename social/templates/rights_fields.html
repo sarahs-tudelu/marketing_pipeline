@@ -1,0 +1,8 @@
+<div class="two">
+  <label>Usage rights<select name="rights" aria-label="Usage rights" required>
+    <option value="">Choose…</option>
+    {% for value, label in rights_choices.items() %}<option value="{{ value }}" {{ 'selected' if values.get('rights') == value else '' }}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <label>Owner (optional)<input name="owner" maxlength="200" value="{{ values.get('owner', '') }}" placeholder="{{ owner_hint|default('Who owns this media') }}"></label>
+</div>
+<small>Public media can be published. Not public media is for internal use and dry runs only.</small>

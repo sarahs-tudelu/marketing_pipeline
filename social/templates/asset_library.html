@@ -27,7 +27,7 @@
         </td>
         <td>{{ a.source }}<small>{{ a.generator or 'Company supplied' }}{{ ' · demo only' if a.demo_only else '' }}</small></td>
         <td>{{ a.media.width }} × {{ a.media.height }}<small>{{ a.media.mime }} · {{ a.media.bytes }} bytes</small></td>
-        <td>{{ a.rights }}</td>
+        <td>{{ rights_label(a.rights) }}{% if a.owner %}<small>Owner: {{ a.owner }}</small>{% endif %}{% if a.rights_expire_at %}<small>Expires {{ a.rights_expire_at }} UTC</small>{% endif %}</td>
       </tr>
     {% else %}
       <tr><td colspan="5" class="empty">Upload or generate media to see it here.</td></tr>

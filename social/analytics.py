@@ -6,7 +6,7 @@ from sqlalchemy import select
 from .adapters import adapter
 from .config import profiles
 from .db import now
-from .models import Engagement, Post
+from .models import Engagement, Post, RequestRecord
 from .monitoring import alert
 
 
@@ -29,6 +29,20 @@ def fetch(db, settings, post, client=None):
         return flatten_insights(
             a.direct(
                 "GET", f"{a.base}/{remote}/insights", params={"metric": "views,reach,total_interactions"}
+            )
+        )
+    if post.platform == "facebook" and db.scalar(
+        select(RequestRecord.id).where(RequestRecord.post_id == post.id, RequestRecord.step == "reel-start")
+    ):
+        # Reels are video objects; Meta documents these lifetime Reels metrics on video_insights.
+        return flatten_insights(
+            a.direct(
+                "GET",
+                f"{a.base}/{remote}/video_insights",
+                params={
+                    "metric": "fb_reels_total_plays,post_impressions_unique,"
+                    "post_video_likes_by_reaction_type,post_video_social_actions"
+                },
             )
         )
     if post.platform == "facebook":

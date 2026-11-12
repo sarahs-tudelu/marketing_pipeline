@@ -12,6 +12,7 @@ from botocore.config import Config
 from PIL import Image
 
 from .models import Asset
+from .rights import owner_value, usage_rights
 
 
 class MediaStore(Protocol):
@@ -204,6 +205,7 @@ def ingest(
     prompt=None,
     tags=None,
     rights="",
+    owner="",
     rights_expire_at=None,
     customer_permission=False,
     permission_reference="",
@@ -256,6 +258,7 @@ def ingest(
         prompt=prompt,
         tags=tags or {},
         rights=rights,
+        owner=owner_value(owner),
         rights_expire_at=rights_expire_at,
         customer_permission=customer_permission,
         permission_reference=permission_reference,
@@ -279,6 +282,7 @@ def watch_folder(db, settings):
             path = (root / values.pop("filename")).resolve()
             if not path.is_relative_to(root):
                 raise ValueError("Invalid watched file path")
+            values["rights"] = usage_rights(values.get("rights"))
             if values.get("rights_expire_at"):
                 from datetime import datetime
 

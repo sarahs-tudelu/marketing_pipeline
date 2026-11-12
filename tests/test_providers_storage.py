@@ -180,7 +180,8 @@ def test_watched_manifest_preserves_expiry_offset(db, settings, assets):
         json.dumps(
             {
                 "filename": "fixture.jpg",
-                "rights": "Company owned",
+                "rights": "public",
+                "owner": "Tudelu",
                 "rights_expire_at": "2030-01-01T10:00:00-05:00",
             }
         )
@@ -192,4 +193,5 @@ def test_watched_manifest_preserves_expiry_offset(db, settings, assets):
 
     added = db.scalar(select(Asset).where(Asset.original_name == "fixture.jpg"))
     assert added.rights_expire_at == datetime(2030, 1, 1, 15)
+    assert (added.rights, added.owner) == ("public", "Tudelu")
     assert (settings.watch_dir / "fixture.done.json").exists()

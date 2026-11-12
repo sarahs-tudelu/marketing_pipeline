@@ -7,28 +7,30 @@ from html.parser import HTMLParser
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import case, select, update
 
 from .config import PLATFORMS, profiles
 from .db import now, uid
-from .facts import Facts, active
 from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob, Post
 from .pipeline import draft
+from .prompting import utf16_trim, write_prompt
 from .provider_errors import ProviderError
 from .renditions import image_rendition, video_rendition
+from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, payload_for
 from .storage import ingest, storage
 
+# Directions describe how to show the chosen Tudelu system; the prompt writer picks the system.
 CONCEPTS = (
-    ("detail", "Close-up material detail, soft side light, precise architectural composition."),
-    ("space", "Wide architectural space study, natural light, calm human-scale perspective."),
-    ("process", "Design-studio mood, tactile material palette, thoughtful composition."),
-    ("daylight", "Explore light and shadow through the day, warm editorial atmosphere."),
-    ("geometry", "Graphic study of geometry and rhythm, restrained colors, clean lines."),
-    ("seasonal", "An inviting seasonal setting, subtle environmental movement."),
-    ("focus", "One focal product detail with generous negative space and a slow reveal."),
-    ("inspiration", "Design inspiration vignette, unexpected viewpoint, refined textures."),
+    ("detail", "Close-up of the system's materials, joints and finish in soft side light."),
+    ("space", "Wide view of the installed system in its setting at human scale, natural light."),
+    ("process", "The system in operation: its panels, louvers or blades moving through their range."),
+    ("daylight", "Light and shadow moving across the installed system through the day, warm editorial mood."),
+    ("geometry", "Graphic composition of the system's lines and rhythm, restrained colors, clean lines."),
+    ("seasonal", "The installed system in an inviting seasonal setting with subtle environmental movement."),
+    ("focus", "One defining feature of the system with generous negative space and a slow reveal."),
+    ("inspiration", "An unexpected viewpoint of the installed system, refined textures, calm atmosphere."),
 )
 
 
@@ -44,11 +46,25 @@ class CreativeBrief(BaseModel):
     audio_reference_ids: list[str] = Field(default_factory=list, max_length=3)
     audio_prompt: str = Field(default="", max_length=1800)
     rights: str = Field(min_length=1, max_length=2000)
+    owner: str = Field(default="", max_length=200)
     duration: int = Field(default=5, ge=3, le=10)
     website: bool = True
     create_posts: bool = True
     interval_hours: int = Field(default=24, ge=24, le=720)
     workflow: Literal["automatic", "immediate", "next"] = "automatic"
+
+    @field_validator("rights")
+    @classmethod
+    def rights_choice(cls, value, info: ValidationInfo):
+        # Briefs saved before the Public/Not public choice keep their text when reloaded.
+        if (info.context or {}).get("stored") and value.strip():
+            return value
+        return usage_rights(value)
+
+    @field_validator("owner")
+    @classmethod
+    def owner_text(cls, value):
+        return owner_value(value)
 
     @model_validator(mode="after")
     def valid(self):
@@ -70,24 +86,33 @@ class CreativeBrief(BaseModel):
 
 
 class WebsiteText(HTMLParser):
+    """Visible homepage text in page order, plus meta descriptions and image descriptions."""
+
+    SKIP = {"script", "style", "noscript", "svg", "template"}
+    META = {"description", "og:description", "twitter:description", "keywords"}
+
     def __init__(self):
         super().__init__()
-        self.parts, self.capture = [], False
+        self.lines, self.images, self.meta, self.skip = [], [], [], 0
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"title", "h1", "h2"}:
-            self.capture = True
         attrs = dict(attrs)
-        if tag == "meta" and attrs.get("name") == "description":
-            self.parts.append(attrs.get("content", ""))
+        if tag in self.SKIP:
+            self.skip += 1
+        if tag == "meta" and (attrs.get("name") or attrs.get("property")) in self.META:
+            self.meta.append(attrs.get("content") or "")
+        if tag == "img" and (attrs.get("alt") or "").strip():
+            self.images.append(" ".join(attrs["alt"].split()))
 
     def handle_endtag(self, tag):
-        if tag in {"title", "h1", "h2"}:
-            self.capture = False
+        if tag in self.SKIP and self.skip:
+            self.skip -= 1
 
     def handle_data(self, data):
-        if self.capture and data.strip():
-            self.parts.append(data.strip())
+        text = " ".join(data.split())
+        # Page order is kept so labels such as "Coming soon" stay beside their system.
+        if not self.skip and text and (not self.lines or self.lines[-1] != text):
+            self.lines.append(text)
 
 
 def website_snapshot(settings):
@@ -95,6 +120,7 @@ def website_snapshot(settings):
         return {
             "url": "https://tudelu.com/",
             "text": "Offline architectural design fixture",
+            "image_descriptions": [],
             "demo_only": True,
         }
     try:
@@ -109,12 +135,13 @@ def website_snapshot(settings):
                         raise ValueError("Website response too large")
         parser = WebsiteText()
         parser.feed(content.decode("utf-8", errors="replace"))
-        summary = " ".join(" ".join(parser.parts).split())[:1200]
-        if not summary:
+        text = " | ".join([m for m in parser.meta if m.strip()] + parser.lines)[:6000]
+        if not text:
             raise ValueError("No brand context on website")
         return {
             "url": "https://tudelu.com/",
-            "text": summary,
+            "text": text,
+            "image_descriptions": list(dict.fromkeys(parser.images))[:30],
             "sha256": hashlib.sha256(content).hexdigest(),
             "fetched_at": now().isoformat(),
         }
@@ -147,6 +174,11 @@ def validate_sources(db, brief, *, live=False):
             raise ValueError("Customer references require documented permission")
         if asset_id in brief.audio_reference_ids and not asset.media["mime"].startswith("audio/"):
             raise ValueError("Soundtrack references must be audio files")
+        if brief.rights == "public" and asset.rights == "not_public":
+            raise ValueError(
+                f"{asset.original_name} is marked Not public, so media made from it cannot be Public. "
+                "Choose Not public, or use a reference cleared for public use."
+            )
         sources.append(asset)
     visual = [a for a in sources if a.id in brief.reference_ids]
     expected = {"image": "image/", "video": "image/", "video_edit": "video/", "audio": "audio/"}
@@ -204,8 +236,6 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
                 options.append("video_edit")
             if platform == "tiktok":
                 options = [v for v in options if v != "image"]
-            if platform == "facebook" and settings.wants_live(platform, db.get(Account, platform)):
-                options = ["image"]  # Existing native AI-video disclosure gate remains in force.
             operation = options[sequence % len(options)]
         content_kind = brief.kind
         if content_kind == "mixed":
@@ -229,30 +259,19 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             offset = sequence % len(refs)
             refs = refs[offset:] + refs[:offset]
         refs = refs[: 3 if operation in {"image", "audio"} else 1]
-        facts = Facts.model_validate(db.get(FactSheet, brief.facts_id).document)
-        approved = [
-            f.text for f in facts.facts if active(f, now()) and f.product in {brief.product, "company"}
-        ]
         intent = (
-            "Invite exploration; no invented product claims."
+            "Invite exploration of the system."
             if content_kind == "promotional"
-            else ("Editorial design inspiration; no sales pitch or purchase call to action.")
+            else "Editorial design inspiration rather than a sales pitch."
         )
-        suffix = f" {direction} {intent} {platform}: {profile.tone[:65]}. "
-        suffix += "Preserve referenced product geometry. No text, logos or customer testimony."
-        if snapshot:
-            suffix += " Brand mood from tudelu.com: " + snapshot["text"][:90]
-        if approved:
-            suffix += " Approved context: " + approved[sequence % len(approved)][:90]
-        prompt = brief.prompt if operation == "audio" else brief.prompt + suffix
-        # API limit is UTF-16 units; user brief is always retained before optional context.
-        prompt = prompt.encode("utf-16-le")[:2000].decode("utf-16-le", errors="ignore")
         values.update(
             operation=operation,
             kind=content_kind,
             reference_ids=refs,
             concept=concept,
-            generation_prompt=prompt,
+            direction=f"{direction} {intent}",
+            # Visual prompts are written by the worker just before submission (social/prompting.py).
+            generation_prompt=utf16_trim(brief.prompt) if operation == "audio" else "",
             website_snapshot=snapshot,
             seed=int(hashlib.sha256((batch + platform).encode()).hexdigest()[:8], 16),
             execution_mode=settings.ai_mode,
@@ -305,7 +324,7 @@ def replenish_campaigns(db, settings):
     ).all():
         if not can_automate(db, settings):
             return
-        brief = CreativeBrief.model_validate(campaign.brief)
+        brief = CreativeBrief.model_validate(campaign.brief, context={"stored": True})
         pending_idea = db.scalar(select(MediaJob.id).where(
             MediaJob.platform.in_(brief.platforms),
             MediaJob.brief["workflow"].as_string().in_(["next", "immediate"]),
@@ -376,7 +395,8 @@ def _save_output(db, settings, job, data):
         source="ai_edited" if refs else "ai_generated",
         generator=("fixture/runway/" if brief["execution_mode"] == "fixture" else "runway/") + model,
         prompt=prompt,
-        rights=brief["rights"],
+        rights=combined_rights(brief["rights"], refs),
+        owner=brief.get("owner", ""),
         rights_expire_at=min(expiries) if expiries else None,
         demo_only=brief["execution_mode"] == "fixture" or any(a.demo_only for a in refs),
         tags={
@@ -389,7 +409,8 @@ def _save_output(db, settings, job, data):
             ],
             "media_job_id": job.id,
             "website_snapshot": brief["website_snapshot"],
-            "creative_brief": {k: brief[k] for k in ("prompt", "concept", "kind")},
+            "creative_brief": {k: brief[k] for k in ("prompt", "concept", "kind")}
+            | {"system": brief.get("depicted_system", "")},
             "generated_audio": is_audio,
             "audio_prompt": brief["audio_prompt"],
         },
@@ -438,6 +459,7 @@ def _finish(db, settings, job):
             generator=first.generator,
             prompt=first.prompt,
             rights=first.rights,
+            owner=first.owner,
             rights_expire_at=first.rights_expire_at,
             demo_only=first.demo_only,
             tags=first.tags
@@ -473,6 +495,16 @@ def _finish(db, settings, job):
         job.post_id = post.id
     job.state, job.error = "complete", ""
     db.commit()
+
+
+def needs_prompt(job):
+    """Visual jobs get a written prompt once; queued jobs from before this existed are rewritten."""
+    return (
+        job.stage == "visual"
+        and job.brief["operation"] != "audio"
+        and "prompt_writer" not in job.brief
+        and not job.task_history
+    )
 
 
 def process_jobs(db, settings, provider=None):
@@ -530,9 +562,14 @@ def process_jobs(db, settings, provider=None):
                     _save_output(db, settings, job, runway.download(task["output"][0]))
                     continue
                 brief = CreativeBrief.model_validate(
-                    {k: v for k, v in job.brief.items() if k in CreativeBrief.model_fields}
+                    {k: v for k, v in job.brief.items() if k in CreativeBrief.model_fields},
+                    context={"stored": True},
                 )
                 validate_sources(db, brief, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+                if needs_prompt(job):
+                    # Written once and saved before any paid request; resume reuses it.
+                    job.brief = job.brief | write_prompt(db, settings, job)
+                    db.commit()
                 if job.brief["execution_mode"] == "fixture":
                     from .seed import seed_media
 

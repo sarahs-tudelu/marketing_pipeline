@@ -1,3 +1,4 @@
+import re
 from urllib.parse import quote
 
 from ..security import public_url
@@ -127,8 +128,22 @@ class Facebook(BaseAdapter):
     platform = "facebook"
 
     def delivery_result(self, body, headers):
+        started = self.checkpoint("reel-start")
+        if started:
+            return self.reel_result(started[0], body)
         remote = body.get("post_id", body["id"])
         return PublishResult(remote, "" if self.dry else f"https://www.facebook.com/{remote}", "published")
+
+    def reel_result(self, started, body):
+        # The finish call returns only {"success": true}; the reel is identified by its video ID.
+        if body.get("success") is not True:
+            raise PublishError(
+                "ambiguous", "Facebook did not confirm the reel was published; check the Page before retrying"
+            )
+        video_id = started["video_id"]
+        return PublishResult(
+            video_id, "" if self.dry else f"https://www.facebook.com/reel/{video_id}", "published"
+        )
 
     @property
     def base(self):
@@ -144,42 +159,7 @@ class Facebook(BaseAdapter):
         target = self.account.external_id or "DRY_PAGE"
         asset = self.assets()[0]
         if asset.media["mime"].startswith("video/"):
-            if not self.dry and not self.s.meta_app_id:
-                raise PublishError("validation", "META_APP_ID required for video uploads")
-            # Resumable Upload API uses the System User token, then Page token publishes.
-            system_headers = {"Authorization": "OAuth " + self.credentials.get("system_token", "DRY_RUN")}
-            result, _ = self.request(
-                "video-init",
-                "POST",
-                f"{self.base}/{self.s.meta_app_id or 'DRY_APP'}/uploads",
-                params={
-                    "file_name": asset.original_name,
-                    "file_length": asset.media["bytes"],
-                    "file_type": "video/mp4",
-                },
-                headers=system_headers,
-                fake={"id": "upload:dry-session"},
-            )
-            result, _ = self.request(
-                "video-upload",
-                "POST",
-                f"{self.base}/{result['id']}",
-                headers=system_headers | {"file_offset": "0", "Content-Type": "application/octet-stream"},
-                content=self.store.read(asset.storage_key),
-                fake={"h": "dry-video-handle"},
-            )
-            result, _ = self.request(
-                "publish",
-                "POST",
-                f"https://graph-video.facebook.com/{self.s.meta_api_version}/{target}/videos",
-                data={
-                    "title": self.post.campaign,
-                    "description": self.post.caption,
-                    "fbuploader_video_file_chunk": result["h"],
-                },
-                fake={"id": f"dry-facebook-{self.post.id}"},
-                irreversible=True,
-            )
+            return self._publish_reel(target, asset)
         else:
             url = self.store.url(asset.storage_key)
             if not self.dry:
@@ -194,6 +174,71 @@ class Facebook(BaseAdapter):
             )
         remote = result.get("post_id", result["id"])
         return PublishResult(remote, "" if self.dry else f"https://www.facebook.com/{remote}", "published")
+
+    def _publish_reel(self, target, asset):
+        """Reels API: start, upload bytes, confirm the upload, then publish with the AI label.
+
+        The Page token authorizes every step. The bytes go to rupload.facebook.com, which Meta
+        documents for Reels; is_ai_generated is set on the final (finish) call.
+        """
+        dry_id = f"dry-reel-{self.post.id}"
+        started, _ = self.request(
+            "reel-start",
+            "POST",
+            f"{self.base}/{target}/video_reels",
+            json={"upload_phase": "start"},
+            fake={"video_id": dry_id, "upload_url": f"https://rupload.facebook.com/video-upload/{dry_id}"},
+        )
+        video_id = str(started.get("video_id", ""))
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", video_id):
+            raise PublishError("validation", "Facebook did not return a reel video ID")
+        data = self.store.read(asset.storage_key)
+        self.request(
+            "reel-upload",
+            "POST",
+            started.get("upload_url") or f"https://rupload.facebook.com/video-upload/{video_id}",
+            headers={
+                "Authorization": "OAuth " + self.credentials.get("access_token", "DRY_RUN"),
+                "offset": "0",
+                "file_size": str(len(data)),
+                "Content-Type": "application/octet-stream",
+            },
+            content=data,
+            fake={"success": True},
+        )
+        status, _ = self.request(
+            "reel-status",
+            "GET",
+            f"{self.base}/{video_id}",
+            params={"fields": "status"},
+            fake={"status": {"video_status": "upload_complete", "uploading_phase": {"status": "complete"}}},
+            volatile=True,
+        )
+        status = status.get("status", {})
+        phases = [status.get(p, {}).get("status") for p in ("uploading_phase", "processing_phase")]
+        if status.get("video_status") in {"error", "expired", "upload_failed"} or "error" in phases:
+            raise PublishError(
+                "validation",
+                "Facebook could not accept the reel video. Check its resolution (at least 540x960), "
+                "duration (3-90 seconds), frame rate (24-60 fps) and format.",
+            )
+        if phases[0] != "complete":
+            raise Deferred(60)
+        result, _ = self.request(
+            "publish",
+            "POST",
+            f"{self.base}/{target}/video_reels",
+            data={
+                "video_id": video_id,
+                "upload_phase": "finish",
+                "video_state": "PUBLISHED",
+                "description": self.post.caption,
+                "is_ai_generated": "true" if self.post.ai_disclosure else "false",
+            },
+            fake={"success": True},
+            irreversible=True,
+        )
+        return self.reel_result(started, result)
 
 
 class LinkedIn(BaseAdapter):

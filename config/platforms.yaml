@@ -20,6 +20,9 @@ instagram:
   image_formats: [image/jpeg]
   max_assets: 10
 facebook:
+  # Videos publish as Reels (9:16 recommended by Meta's Reels publishing guide).
+  video_width: 720
+  video_height: 1280
   max_length: 5000
   hashtag_limit: 3
   tone: friendly and personal; natural questions, relatable language and gentle invitations

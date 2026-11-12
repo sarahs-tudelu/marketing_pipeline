@@ -42,6 +42,7 @@ from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, delete_draft, draft, generate
 from .provider_errors import ProviderError
 from .providers import Providers
+from .rights import RIGHTS, owner_value, rights_label, usage_rights
 from .scheduler import schedule
 from .storage import ingest
 from .upload_errors import describe_upload_error, upload_error_details
@@ -273,6 +274,8 @@ def create_app(settings=None):
                 "settings": settings,
                 "json": json,
                 "yaml": yaml,
+                "rights_choices": RIGHTS,
+                "rights_label": rights_label,
                 "analytics": report(db, settings) if view == "analytics" else None,
                 "media_jobs": media_jobs,
                 "media_job_posts": media_job_posts,
@@ -373,6 +376,7 @@ def create_app(settings=None):
                 product=form.get("product", "company"),
                 kind=form.get("kind", "promotional"),
                 rights=form.get("rights", ""),
+                owner=form.get("owner", ""),
                 reference_ids=form.getlist("reference_ids"),
                 audio_reference_ids=form.getlist("audio_reference_ids"),
                 audio_prompt=form.get("audio_prompt", ""),
@@ -647,6 +651,7 @@ def create_app(settings=None):
             for key in (
                 "source",
                 "rights",
+                "owner",
                 "rights_expire_at",
                 "generator",
                 "prompt",
@@ -674,7 +679,8 @@ def create_app(settings=None):
             raise ValueError("Enter a valid rights expiry date and time, or leave it blank") from None
         return {
             "source": values["source"] or "company",
-            "rights": values["rights"],
+            "rights": usage_rights(values["rights"]),
+            "owner": owner_value(values["owner"]),
             "rights_expire_at": expiry,
             "generator": values["generator"] or None,
             "prompt": values["prompt"] or None,
@@ -719,8 +725,6 @@ def create_app(settings=None):
             if not key or len(key) > 1024:
                 raise ValueError("Enter the existing bucket object key")
             arguments = media_form_arguments(values)
-            if not arguments["rights"].strip():
-                raise ValueError("Usage rights are required")
             arguments["tags"] = arguments["tags"] | {"imported_bucket_key": key}
 
             def import_existing():
@@ -741,7 +745,7 @@ def create_app(settings=None):
     @app.post("/forms/generate-asset", dependencies=mutation)
     async def generate_asset(request: Request, db: DB):
         form = await request.form()
-        values = {key: str(form.get(key, "")) for key in ("prompt", "kind", "rights", "tags")}
+        values = {key: str(form.get(key, "")) for key in ("prompt", "kind", "rights", "owner", "tags")}
         try:
             try:
                 tags = json.loads(values["tags"] or "{}")
@@ -752,8 +756,9 @@ def create_app(settings=None):
                 db,
                 values["prompt"],
                 values["kind"],
-                values["rights"],
+                usage_rights(values["rights"]),
                 tags,
+                owner_value(values["owner"]),
             )
         except ValueError as exc:
             db.rollback()

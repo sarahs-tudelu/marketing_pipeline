@@ -115,7 +115,8 @@ def test_image_form_shows_error_preserves_input_and_can_recover(db, settings, mo
                 "csrf": client.get("/api/session").json()["csrf"],
                 "prompt": '</textarea><script>alert("unsafe")</script>',
                 "kind": "image",
-                "rights": "Company permitted",
+                "rights": "public",
+                "owner": "Tudelu marketing",
                 "tags": '{"campaign":"test"}',
             }
             response = client.post("/forms/generate-asset", data=form)
@@ -130,7 +131,8 @@ def test_image_form_shows_error_preserves_input_and_can_recover(db, settings, mo
             assert 'role="alert"' in response.text
             assert "&lt;/textarea&gt;&lt;script&gt;" in response.text
             assert '<script>alert("unsafe")</script>' not in response.text
-            assert 'value="Company permitted"' in response.text
+            assert '<option value="public" selected>' in response.text
+            assert 'value="Tudelu marketing"' in response.text
             assert "fake-key" not in response.text + caplog.text
             assert "private content" not in response.text + caplog.text
             assert len(calls) == (0 if failure == "missing_key" else 1)
@@ -159,7 +161,8 @@ def test_image_form_success_preserves_bytes_and_provenance(db, settings, monkeyp
                     "csrf": client.get("/api/session").json()["csrf"],
                     "prompt": "Abstract background",
                     "kind": "image",
-                    "rights": "Permitted use",
+                    "rights": "public",
+                    "owner": "Tudelu",
                     "tags": '{"campaign":"test"}',
                 },
                 follow_redirects=False,
@@ -169,10 +172,14 @@ def test_image_form_success_preserves_bytes_and_provenance(db, settings, monkeyp
     assert asset.source == "ai_generated" and asset.prompt == "Abstract background"
     assert asset.generator == settings.openai_image_model
     assert asset.tags == {"campaign": "test"}
+    assert (asset.rights, asset.owner) == ("public", "Tudelu")
     assert LocalStore(settings).read(asset.storage_key) == data
 
 
-@pytest.mark.parametrize("tags,rights", [("not json", "Permitted"), ("[]", "Permitted"), ("{}", " ")])
+@pytest.mark.parametrize(
+    "tags,rights",
+    [("not json", "public"), ("[]", "public"), ("{}", " "), ("{}", "Company permitted")],
+)
 def test_invalid_form_rejected_before_paid_generation(db, settings, monkeypatch, tags, rights):
     settings = settings.model_copy(update={"ai_mode": "live", "image_provider": "openai"})
 
