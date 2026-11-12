@@ -315,7 +315,10 @@ def test_policy_failure_auto_pauses_worker(db, settings, post, monkeypatch):
 
 def test_worker_retry_backoff_and_idempotent_success(db, settings, post, monkeypatch):
     run_gate(db, settings, post)
-    at = schedule(db, settings, post)
+    # Keep every retry inside the publishing window, even when tests run near
+    # closing time. The worker correctly defers retries outside that window.
+    earliest = (now() + timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
+    at = schedule(db, settings, post, earliest=earliest)
     from social.adapters.base import PublishResult
 
     calls = []

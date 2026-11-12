@@ -7,7 +7,7 @@ from sqlalchemy import select
 from .config import PLATFORMS
 from .facts import load_facts
 from .gate import run_gate
-from .models import Asset, Post, RequestRecord
+from .models import Account, Asset, Post, RequestRecord
 from .pipeline import bootstrap, draft, generate, publish_due
 from .scheduler import schedule
 from .storage import ingest
@@ -60,7 +60,7 @@ def seed(db, settings):
 
 
 def demo(db, settings):
-    if settings.live_platforms or settings.ai_mode != "fixture":
+    if any(settings.wants_live(p, db.get(Account, p)) for p in PLATFORMS) or settings.ai_mode != "fixture":
         raise ValueError("Demo requires empty LIVE_PLATFORMS and AI_MODE=fixture")
     facts, assets = seed(db, settings)
     existing = db.scalars(select(Post).where(Post.campaign == "Pipeline demonstration")).all()

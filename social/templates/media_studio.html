@@ -4,7 +4,7 @@
   <form method="post" action="/forms/media-studio">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="two">
-      <label>Workflow<select name="mode"><option value="once">One-off idea</option><option value="recurring" {{ 'selected' if asset_form.get('mode') == 'recurring' else '' }}>Recurring campaign</option></select></label>
+      <label>Workflow<select name="mode"><option value="once">Create now — full workflow</option><option value="next" {{ 'selected' if asset_form.get('mode') == 'next' else '' }}>Next automatic post</option><option value="recurring" {{ 'selected' if asset_form.get('mode') == 'recurring' else '' }}>Recurring campaign</option></select></label>
       <label>Campaign name<input name="campaign" required maxlength="200" value="{{ asset_form.get('campaign', '') }}" placeholder="A fresh perspective on flexible spaces"></label>
     </div>
     <label>Your prompt<textarea name="prompt" rows="4" maxlength="450" required placeholder="Describe the scene, mood, movement or edit you have in mind.">{{ asset_form.get('prompt', '') }}</textarea></label>
@@ -42,7 +42,7 @@
     </div>
     <label>Usage rights<input name="rights" required value="{{ asset_form.get('rights', '') }}" placeholder="Owner and permitted uses, including reference editing and audio rights"></label>
     <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
-    <p class="muted">One-off ideas enter the same checks and scheduling flow as other posts. Recurring campaigns are saved paused; enable them below when ready. They wait for live, connected accounts. Each batch rotates concepts, source references and formats.</p>
+    <p class="muted">Create now runs media, captions, checks and scheduling even when routine automation is off. Next automatic post waits for Automatic posts to be on. Global and platform pauses still apply. Recurring campaigns are saved paused and wait for live, connected accounts.</p>
     <button class="primary">Queue idea / save campaign</button>
   </form>
 </section>
@@ -54,17 +54,24 @@
     <form method="post" action="/forms/media-campaigns/{{ c.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if c.enabled else 'true' }}"><button>{{ 'Pause campaign' if c.enabled else 'Enable campaign' }}</button></form>
   </article>{% else %}<p>No recurring campaigns yet.</p>{% endfor %}
 </section>
-<section><div class="section-head"><h2>Generation queue</h2><a class="button" href="/admin/media-studio">Refresh status</a></div>
-  <p class="muted">The worker processes this queue in the background. Run <code>tudelu worker</code> locally, or keep the deployed worker service running.</p>
-  {% for j in media_jobs %}<article class="card"><h3>{{ j.brief.campaign }} · {{ j.platform|title }}</h3>
+<section id="media-queue"><div class="section-head"><h2>Generation queue</h2><a class="button" href="/admin/media-studio">Refresh status</a></div>
+  <p class="muted">Progress updates automatically while your media is prepared.</p>
+  {% for j in media_jobs %}<article class="card" data-job-id="{{ j.id }}" data-job-state="{{ j.state }}" data-job-stage="{{ j.stage }}" data-job-error="{{ j.error }}" data-job-output="{{ j.output_asset_id or '' }}" data-job-post="{{ j.post_id or '' }}" data-job-post-status="{{ media_job_posts.get(j.post_id, '') }}"><h3>{{ j.brief.campaign }} · {{ j.platform|title }}</h3>
+    {% if j.state == 'planned' %}<p role="status">Saved for the next automatic post. Waiting for automation and an available platform queue.</p>{% endif %}
+    {% if j.state in ['queued','submitting','running','rendering'] %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>{{ {'queued':'Waiting to start…', 'submitting':'Starting generation…', 'running':'Generating media…', 'rendering':'Preparing media and visual summary…'}[j.state] }}</strong><small>You can leave this page; progress is saved.</small></span></div>{% endif %}
     <p><span class="status">{{ j.state }}</span> · {{ j.brief.operation }} · {{ j.brief.concept }} · {{ j.stage }}</p>
     {% if j.error %}<p class="error">{{ j.error }}</p>{% endif %}
     {% if j.task_id %}<small>Runway task: {{ j.task_id }}</small>{% endif %}
     {% if j.state == 'uncertain' and not j.task_id %}<form method="post" action="/forms/media-jobs/{{ j.id }}/reconcile"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Original Runway task ID<input name="task_id" required pattern="[A-Za-z0-9_-]{1,100}"></label><button>Recover original task</button></form>{% endif %}
-    {% if j.post_id %}<a class="button primary" href="/posts/{{ j.post_id }}">Open post</a>{% endif %}
+    {% if j.post_id %}
+      {% set post_state = media_job_posts.get(j.post_id, '') %}
+      <p>Post: <b>{{ post_state|replace('_', ' ') }}</b></p>
+      {% if post_state in ['draft','generated','approved'] and (j.brief.get('workflow') == 'immediate' or automation_enabled) %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Preparing caption, checks and schedule…</span></div>{% endif %}
+      <a class="button primary" href="/posts/{{ j.post_id }}">Open post</a>
+    {% endif %}
     {% if j.output_asset_id %}<a class="button" href="/admin/assets">View in asset library</a>{% endif %}
     {% if j.state in ['failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resume"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume saved task / output</button></form>{% endif %}
-    {% if j.state in ['queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
+    {% if j.state in ['planned','queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
     <details><summary>Prompt and provenance</summary><pre>{{ json.dumps(j.brief, indent=2) }}</pre></details>
   </article>{% else %}<p>No media jobs yet.</p>{% endfor %}
 </section>

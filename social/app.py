@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import secrets
 from contextlib import asynccontextmanager
@@ -11,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
@@ -22,7 +23,7 @@ from .config import PLATFORMS, get_settings, profiles
 from .db import make_engine, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
-from .lifecycle import PostConflict, lock_post, transition
+from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
 from .media_studio import CreativeBrief, queue_jobs, resume_job, validate_sources
 from .models import (
     Account,
@@ -60,6 +61,10 @@ def create_app(settings=None):
     engine = make_engine(settings.database_dsn)
     factory = sessions(engine)
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    static_dir = Path(__file__).parent / "static"
+    static_version = hashlib.sha256(
+        (static_dir / "studio.js").read_bytes() + (static_dir / "studio.css").read_bytes()
+    ).hexdigest()[:12]
     settings.media_dir.mkdir(parents=True, exist_ok=True)
 
     @asynccontextmanager
@@ -196,6 +201,7 @@ def create_app(settings=None):
         asset_form=None,
         upload_form=None,
         bucket_form=None,
+        post_busy=None,
         status_code=200,
     ):
         request.session.setdefault("csrf", secrets.token_urlsafe(32))
@@ -212,6 +218,8 @@ def create_app(settings=None):
                     "connected": a.connected(),
                     "dry": a.dry,
                     "oauth_ready": connections.ready(settings, account.platform),
+                    "live_enabled": settings.wants_live(account.platform, account),
+                    "live_available": settings.auth_mode != "dev" and bool(settings.session_secret.get_secret_value()) and bool(settings.token_encryption_key.get_secret_value()),
                 }
             )
         post = db.get(Post, post_id) if post_id else None
@@ -222,12 +230,15 @@ def create_app(settings=None):
             posts = [p for p in posts if p.status in {"held", "awaiting_manual", "failed"}]
         from .analytics import report
 
+        media_jobs = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-studio" else []
+        media_job_posts = dict(db.execute(select(Post.id, Post.status).where(Post.id.in_([j.post_id for j in media_jobs if j.post_id]))).all())
         return templates.TemplateResponse(
             request=request,
             name="studio.html",
             status_code=status_code,
             context={
                 "view": view,
+                "static_version": static_version,
                 "error_message": error_message,
                 "asset_form": asset_form or {},
                 "upload_form": upload_form or {},
@@ -236,8 +247,12 @@ def create_app(settings=None):
                 "csrf": request.session["csrf"],
                 "posts": posts,
                 "post": post,
+                "post_busy": ((post.status == "publishing" or post_processing(engine, post.id)) if post_busy is None else post_busy) if post else False,
+                "post_revision": db.scalar(select(func.max(Transition.id)).where(Transition.post_id == post.id)) if post else 0,
                 "connections": state,
+                "any_live": any(not c["dry"] for c in state),
                 "control": db.get(Control, 1),
+                "automation_enabled": settings.automates_posts(db.get(Control, 1)),
                 "platforms": PLATFORMS,
                 "assets": db.scalars(select(Asset).order_by(Asset.created_at.desc())).all(),
                 "facts": db.scalars(select(FactSheet).order_by(FactSheet.created_at.desc())).all(),
@@ -259,11 +274,8 @@ def create_app(settings=None):
                 "json": json,
                 "yaml": yaml,
                 "analytics": report(db, settings) if view == "analytics" else None,
-                "media_jobs": db.scalars(
-                    select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)
-                ).all()
-                if view == "media-studio"
-                else [],
+                "media_jobs": media_jobs,
+                "media_job_posts": media_job_posts,
                 "media_campaigns": db.scalars(
                     select(MediaCampaign).order_by(MediaCampaign.created_at.desc())
                 ).all()
@@ -329,14 +341,29 @@ def create_app(settings=None):
                 "error": j.error,
                 "asset_id": j.output_asset_id,
                 "post_id": j.post_id,
+                "post_status": post_status,
             }
-            for j in db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100))
+            for j, post_status in db.execute(select(MediaJob, Post.status).outerjoin(Post, Post.id == MediaJob.post_id).order_by(MediaJob.created_at.desc()).limit(100))
         ]
+
+    @app.get("/api/posts/{post_id}/activity")
+    def post_activity(post_id: str, db: DB):
+        post = db.get(Post, post_id)
+        if not post or post.status == "deleted":
+            raise HTTPException(404)
+        return {
+            "processing": post.status == "publishing" or post_processing(engine, post_id),
+            "status": post.status,
+            "revision": db.scalar(select(func.max(Transition.id)).where(Transition.post_id == post_id)) or 0,
+        }
 
     @app.post("/forms/media-studio", dependencies=mutation)
     async def submit_creative(request: Request, db: DB):
         form = await request.form()
         try:
+            mode = str(form.get("mode", "once"))
+            if mode not in {"once", "next", "recurring"}:
+                raise ValueError("Choose Create now, Next automatic post, or Recurring campaign")
             brief = CreativeBrief(
                 campaign=form.get("campaign", ""),
                 prompt=form.get("prompt", ""),
@@ -353,6 +380,7 @@ def create_app(settings=None):
                 website=form.get("website") == "on",
                 create_posts=form.get("create_posts") == "on",
                 interval_hours=form.get("interval_hours", "24"),
+                workflow={"once": "immediate", "next": "next", "recurring": "automatic"}[mode],
             )
             if form.get("mode") == "recurring":
                 validate_sources(db, brief)
@@ -410,7 +438,7 @@ def create_app(settings=None):
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
                 raise ValueError("Enter the task ID returned by the original Runway submission")
             job.task_id, job.state, job.submitted_at, job.error = task_id, "running", now(), ""
-        elif action == "cancel" and job.state in {"queued", "failed", "uncertain"}:
+        elif action == "cancel" and job.state in {"planned", "queued", "failed", "uncertain"}:
             # Conditional write prevents a late UI cancellation racing a provider submission.
             changed = db.execute(
                 update(MediaJob)
@@ -522,13 +550,52 @@ def create_app(settings=None):
         form = await request.form()
         parts = json.loads(form["parts"]) if "parts" in form else None
         try:
+            if post_processing(engine, post_id):
+                raise PostBusy("This post is being processed")
             await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts)
-        except PostConflict as exc:
+        except PostBusy:
+            db.rollback()
+            return page(request, db, "post", post_id, post_busy=True, status_code=202)
+        except PostConflict:
             db.rollback()
             if db.get(Post, post_id).status == "deleted":
                 return RedirectResponse("/", status_code=303)
-            return page(request, db, "post", post_id, error_message=str(exc), status_code=409)
+            # Another tab or the worker completed the action; display its saved result.
+            return RedirectResponse(f"/posts/{post_id}", status_code=303)
         return RedirectResponse("/" if post.status == "deleted" else f"/posts/{post.id}", status_code=303)
+
+    @app.post("/forms/live-platform", dependencies=mutation)
+    async def live_platform(request: Request, db: DB):
+        from .adapters import ADAPTERS
+
+        form = await request.form()
+        platform, value = str(form.get("platform", "")), str(form.get("enabled", ""))
+        account = db.get(Account, platform)
+        if not account or value not in {"true", "false"}:
+            raise HTTPException(400, "Select a platform and a valid live-posting setting")
+        enabled = value == "true"
+        if enabled:
+            if settings.auth_mode == "dev" or not settings.session_secret.get_secret_value() or not settings.token_encryption_key.get_secret_value():
+                raise HTTPException(400, "Configure authenticated access before enabling live posting")
+            selected = ADAPTERS[platform](settings, db, None)
+            if not selected.connected():
+                raise HTTPException(400, "Connect and validate this platform before enabling live posting")
+        account.live_enabled = enabled
+        db.commit()
+        event("platform_live_changed", platform=platform, enabled=enabled, actor=request.state.actor)
+        return RedirectResponse("/admin/connections", status_code=303)
+
+    @app.post("/forms/automation", dependencies=mutation)
+    async def automation_control(request: Request, db: DB):
+        form = await request.form()
+        value = str(form.get("enabled", ""))
+        if value not in {"true", "false"}:
+            raise HTTPException(400, "Choose a valid automatic-post setting")
+        control = db.get(Control, 1)
+        control.automation_enabled = value == "true"
+        db.commit()
+        event("automation_changed", enabled=control.automation_enabled, actor=request.state.actor)
+        return RedirectResponse("/", status_code=303)
 
     @app.post("/forms/control", dependencies=mutation)
     async def control(request: Request, db: DB):

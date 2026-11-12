@@ -154,18 +154,21 @@ def test_connect_opens_provider_authorization_with_same_origin_form_policy(
         asyncio.run(exercise(client))
 
 
-@pytest.mark.parametrize("kind", ["caption", "image"])
+@pytest.mark.parametrize("kind", ["caption", "image", "checks"])
 def test_generation_progress_and_completion_in_browser(db, settings, assets, monkeypatch, tmp_path, kind):
     playwright = pytest.importorskip("playwright.async_api")
     facts = load_facts(db, settings.facts_path)
     post = draft(db, "linkedin", "Browser preview", [a.id for a in assets], facts.id, product="demo")
-    route_path = f"/posts/{post.id}" if kind == "caption" else "/admin/assets"
-    action = f"/forms/posts/{post.id}/generate" if kind == "caption" else "/forms/generate-asset"
-    label = "Generate caption" if kind == "caption" else "Generate image"
-    status = "Writing caption" if kind == "caption" else "Generating media"
+    if kind == "checks":
+        from social.pipeline import generate
+        generate(db, settings, post)
+    route_path = "/admin/assets" if kind == "image" else f"/posts/{post.id}"
+    action = f"/forms/posts/{post.id}/{'check' if kind == 'checks' else 'generate'}" if kind != "image" else "/forms/generate-asset"
+    label = {"caption": "Generate caption", "checks": "Run automated checks", "image": "Generate image"}[kind]
+    status = {"caption": "Writing caption", "checks": "Checking post", "image": "Generating media"}[kind]
     selected = (
         settings
-        if kind == "caption"
+        if kind != "image"
         else settings.model_copy(update={"ai_mode": "live", "image_provider": "openai"})
     )
 
@@ -245,10 +248,10 @@ def test_generation_progress_and_completion_in_browser(db, settings, assets, mon
             assert len(requests) == 1
             assert parse_qs(requests[0].post_data)["csrf"]
             assert not errors
-            assert await page.locator(".loading-state").count() == 0
+            assert await page.locator(".loading-state:visible").count() == 0
             if kind == "caption":
                 assert await page.get_by_role("button", name="Run automated checks").is_enabled()
-            else:
+            elif kind == "image":
                 assert await page.get_by_role("button", name=label).is_enabled()
                 assert "Preview provider unavailable" in await page.get_by_role("alert").inner_text()
                 assert await form.locator('[name="prompt"]').input_value() == "A preview image"
@@ -286,7 +289,7 @@ def test_delete_confirmation_and_cached_page_restore_in_browser(db, settings, as
             button = page.get_by_role("button", name="Delete draft")
             await button.click()
             assert await button.is_enabled()
-            assert await page.locator(".loading-state").count() == 0
+            assert await page.locator(".loading-state:visible").count() == 0
             # Stop native navigation after the enhancer runs, then emulate a cached-page return.
             await page.evaluate("HTMLFormElement.prototype.submit = function () {}")
             generate = page.get_by_role("button", name="Generate caption")
@@ -295,7 +298,71 @@ def test_delete_confirmation_and_cached_page_restore_in_browser(db, settings, as
             await page.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted:true}))")
             assert await generate.is_enabled()
             assert await page.locator('[aria-busy="true"]').count() == 0
-            assert await page.locator(".loading-state").count() == 0
+            assert await page.locator(".loading-state:visible").count() == 0
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
+def test_background_post_progress_disables_actions_and_updates_result(db, settings, assets, monkeypatch):
+    from social.pipeline import generate
+
+    playwright = pytest.importorskip("playwright.async_api")
+    facts = load_facts(db, settings.facts_path)
+    post = draft(db, "linkedin", "Background progress", [assets[0].id], facts.id, product="demo")
+    busy = True
+    monkeypatch.setattr("social.app.post_processing", lambda *args: busy)
+
+    async def exercise(client):
+        nonlocal busy
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=os.environ["BROWSER_BINARY"], headless=True)
+            page = await browser.new_page()
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+            await page.goto(f"http://studio.test/posts/{post.id}")
+            await playwright.expect(page.get_by_role("button", name="Generate caption")).to_be_disabled()
+            await playwright.expect(page.get_by_role("button", name="Delete draft")).to_be_disabled()
+            await playwright.expect(page.locator("#post-progress")).to_be_visible()
+            generate(db, settings, post)
+            busy = False
+            await playwright.expect(page.get_by_role("button", name="Run automated checks")).to_be_enabled(timeout=8000)
+            await playwright.expect(page.locator("#post-progress")).to_be_hidden()
+            assert await page.get_by_role("alert").count() == 0
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
+def test_media_queue_updates_without_discarding_creative_brief(db, settings):
+    from test_runway_media import brief_for
+
+    from social.media_studio import process_jobs, queue_jobs
+    from social.worker import advance_queue
+
+    playwright = pytest.importorskip("playwright.async_api")
+    job = queue_jobs(db, settings, brief_for(db, settings))[0]
+    db.commit()
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=os.environ["BROWSER_BINARY"], headless=True)
+            page = await browser.new_page()
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+            await page.goto("http://studio.test/admin/media-studio")
+            await page.get_by_label("Your prompt", exact=True).fill("Keep my next creative idea")
+            await playwright.expect(page.locator("#media-queue .loading-spinner")).to_be_visible()
+            for _ in range(3):
+                process_jobs(db, settings)
+            assert job.state == "complete"
+            await playwright.expect(page.locator("#media-queue .status")).to_have_text("complete", timeout=8000)
+            await playwright.expect(page.get_by_label("Your prompt", exact=True)).to_have_value("Keep my next creative idea")
+            await playwright.expect(page.locator("#media-queue .loading-spinner")).to_be_visible()
+            advance_queue(db, settings)
+            await playwright.expect(page.locator("#media-queue")).to_contain_text("scheduled", timeout=8000)
+            await playwright.expect(page.locator("#media-queue .loading-spinner")).to_have_count(0)
+            await playwright.expect(page.get_by_label("Your prompt", exact=True)).to_have_value("Keep my next creative idea")
             await browser.close()
 
     with TestClient(create_app(settings), base_url="http://studio.test") as client:

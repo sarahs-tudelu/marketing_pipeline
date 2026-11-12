@@ -119,10 +119,9 @@ def test_repeated_generate_form_shows_current_post_and_api_returns_conflict(db, 
         first = client.post(path, data={"csrf": csrf}, follow_redirects=False)
         assert first.status_code == 303
         repeated = client.post(path, data={"csrf": csrf})
-        assert repeated.status_code == 409
+        assert repeated.status_code == 200
         assert repeated.headers["content-type"].startswith("text/html")
-        assert "already moved beyond draft" in repeated.text
-        assert 'role="alert"' in repeated.text
+        assert 'role="alert"' not in repeated.text
         assert "Post workspace" in repeated.text
         assert "Generate caption</button>" not in repeated.text
         assert (
@@ -156,3 +155,49 @@ def test_postgresql_nowait_lock_conflict_is_distinct_from_database_failure(sqlst
     statement = session.scalar.call_args.args[0]
     assert "FOR UPDATE NOWAIT" in str(statement.compile(dialect=postgresql.dialect()))
     assert session.rollback.called == (sqlstate == "55P03")
+
+
+@pytest.mark.parametrize("action", ["generate", "check"])
+def test_running_operation_is_visible_and_duplicate_form_shows_progress(db, settings, assets, action):
+    post = make_draft(db, settings, assets)
+    if action == "check":
+        generate(db, settings, post)
+    entered, release = Event(), Event()
+    calls = []
+
+    class Slow(Providers):
+        def caption(self, context):
+            calls.append("caption")
+            entered.set()
+            assert release.wait(10)
+            return super().caption(context)
+
+        def review(self, context):
+            calls.append("checks")
+            entered.set()
+            assert release.wait(10)
+            return super().review(context)
+
+    def perform():
+        with Session(db.get_bind(), expire_on_commit=False) as session:
+            selected = session.get(Post, post.id)
+            (generate if action == "generate" else run_gate)(session, settings, selected, providers=Slow(settings))
+
+    with TestClient(create_app(settings)) as client, ThreadPoolExecutor(max_workers=1) as pool:
+        csrf = client.get("/api/session").json()["csrf"]
+        activity_url = f"/api/posts/{post.id}/activity"
+        before = client.get(activity_url).json()
+        future = pool.submit(perform)
+        try:
+            assert entered.wait(5)
+            assert client.get(activity_url).json()["processing"] is True
+            response = client.post(f"/forms/posts/{post.id}/{action}", data={"csrf": csrf})
+            assert response.status_code == 202
+            assert "Processing post" in response.text and 'data-processing="true"' in response.text
+            assert 'role="alert"' not in response.text
+            assert len(calls) == 1
+        finally:
+            release.set()
+        future.result(timeout=5)
+        after = client.get(activity_url).json()
+        assert not after["processing"] and after["revision"] != before["revision"]

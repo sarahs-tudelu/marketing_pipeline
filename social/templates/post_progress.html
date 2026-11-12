@@ -1,0 +1,7 @@
+<div id="post-progress" class="loading-state" role="status" aria-live="polite"
+     data-activity-url="/api/posts/{{ post.id }}/activity" data-revision="{{ post_revision or 0 }}"
+     data-phase="{{ post.status }}"
+     data-processing="{{ 'true' if post_busy else 'false' }}" {{ 'hidden' if not post_busy else '' }}>
+  <span class="loading-spinner" aria-hidden="true"></span>
+  <span><strong>Processing post…</strong><small>Work is already running. The result will update here automatically.</small></span>
+</div>

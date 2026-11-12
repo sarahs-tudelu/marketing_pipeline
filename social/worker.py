@@ -3,13 +3,14 @@ from pathlib import Path
 
 import portalocker
 from apscheduler.schedulers.blocking import BlockingScheduler
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 
+from .automation import can_automate
 from .config import get_settings
 from .connections import import_meta_from_env, refresh_all
 from .db import make_engine, now, sessions
 from .lifecycle import PostConflict
-from .models import Post
+from .models import MediaJob, Post
 from .monitoring import alert, deliver_alerts, event, setup_logging
 from .pipeline import bootstrap, generate, publish_due
 from .storage import watch_folder
@@ -17,23 +18,34 @@ from .storage import watch_folder
 
 def advance_queue(db, settings):
     from .gate import run_gate
-    from .models import Account, Control
+    from .models import Account
     from .scheduler import schedule
 
-    if not settings.auto_advance or db.get(Control, 1).killed:
+    if not can_automate(db, settings, requested=True):
         return
-    posts = db.scalars(
-        select(Post).where(Post.status.in_(["draft", "generated", "approved"])).limit(10)
-    ).all()
+    active = ["draft", "generated", "approved"]
+    requested = set(db.scalars(
+        select(MediaJob.post_id).join(Post, Post.id == MediaJob.post_id).where(
+            MediaJob.state == "complete", MediaJob.brief["workflow"].as_string() == "immediate",
+            Post.status.in_(active),
+        )
+    ))
+    query = select(Post).where(Post.status.in_(active))
+    if not can_automate(db, settings):
+        query = query.where(Post.id.in_(requested))
+    posts = db.scalars(query.order_by(case((Post.id.in_(requested), 0), else_=1), Post.created_at).limit(10)).all()
     for post in posts:
+        explicit = post.id in requested
+        if not can_automate(db, settings, requested=explicit):
+            continue
         if db.get(Account, post.platform).paused:
             continue
         try:
             if post.status == "draft":
                 generate(db, settings, post)
-            if post.status == "generated":
+            if post.status == "generated" and can_automate(db, settings, requested=explicit):
                 run_gate(db, settings, post)
-            if post.status == "approved":
+            if post.status == "approved" and can_automate(db, settings, requested=explicit):
                 schedule(db, settings, post)
         except PostConflict:
             db.rollback()  # The admin or another transaction is already handling this post.
@@ -68,8 +80,9 @@ def tick(factory, settings):
     with factory() as db:
         refresh_all(db, settings)
         watch_folder(db, settings)
-        from .media_studio import process_jobs, replenish_campaigns
+        from .media_studio import activate_planned_jobs, process_jobs, replenish_campaigns
 
+        activate_planned_jobs(db, settings)
         replenish_campaigns(db, settings)
         process_jobs(db, settings)
         advance_queue(db, settings)

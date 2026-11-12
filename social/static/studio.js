@@ -1,6 +1,40 @@
 (() => {
   const pending = new Map();
   let sessionRefresh;
+  const postProgress = document.getElementById("post-progress");
+  const postForms = [...document.querySelectorAll('form[action^="/forms/posts/"]')];
+  const remoteDisabled = new Map();
+  let postBusy = false;
+  let postEdited = false;
+  postForms.forEach((form) => form.addEventListener("input", () => { postEdited = true; }));
+
+  function relatedForms(form) {
+    const match = new URL(form.action).pathname.match(/^\/forms\/posts\/([^/]+)\//);
+    return match ? postForms.filter((other) => new URL(other.action).pathname.startsWith(`/forms/posts/${match[1]}/`)) : [form];
+  }
+
+  function showPostBusy(busy) {
+    postBusy = busy;
+    if (!postProgress) return;
+    postProgress.hidden = !busy;
+    if (busy) {
+      postProgress.querySelector(".loading-spinner").hidden = false;
+      const publishing = postProgress.dataset.phase === "publishing";
+      postProgress.querySelector("strong").textContent = publishing ? "Preparing delivery…" : "Processing post…";
+      postProgress.querySelector("small").textContent = publishing ? "Running final checks or waiting for the platform. Publication is not confirmed yet." : "Work is already running. The result will update here automatically.";
+    }
+    postForms.forEach((form) => {
+      form.querySelectorAll('button, input[type="submit"]').forEach((button) => {
+        if (busy) {
+          if (!remoteDisabled.has(button)) remoteDisabled.set(button, button.disabled);
+          button.disabled = true;
+        } else if (remoteDisabled.has(button)) {
+          button.disabled = remoteDisabled.get(button);
+          remoteDisabled.delete(button);
+        }
+      });
+    });
+  }
 
   function refreshSession() {
     // Share concurrent refreshes so an expired session gets only one new cookie.
@@ -30,6 +64,7 @@
     pending.delete(form);
   }
   const labels = {
+    automation: ["Updating automation…", "Saving your automatic-post preference."],
     "media-studio": ["Saving creative brief…", "Preparing your media queue or recurring campaign."],
     "import-bucket-asset": ["Importing bucket asset…", "Preserving the original media and its provenance."],
     connect: ["Opening authorization…", "Preparing your account connection."],
@@ -49,7 +84,7 @@
     if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
     if (new URL(form.action).origin !== window.location.origin) return;
     event.preventDefault();
-    if (pending.has(form)) {
+    if (relatedForms(form).some((other) => pending.has(other)) || (postForms.includes(form) && postBusy)) {
       return;
     }
     if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
@@ -58,7 +93,7 @@
     form.querySelector(".session-error")?.remove();
     const action = new URL(form.action).pathname.split("/").filter(Boolean).pop();
     const [label, detail] = labels[action] || ["Working…", "Please wait."];
-    const buttons = [...form.querySelectorAll('button, input[type="submit"]')];
+    const buttons = relatedForms(form).flatMap((other) => [...other.querySelectorAll('button, input[type="submit"]')]);
     const states = buttons.map((button) => ({button, disabled: button.disabled}));
     const status = document.createElement("div");
     status.className = "loading-state";
@@ -115,4 +150,60 @@
   window.addEventListener("pageshow", () => {
     pending.forEach((_, form) => { restore(form); });
   });
+
+  if (postProgress) {
+    let polling = false;
+    showPostBusy(postProgress.dataset.processing === "true");
+    const pollPost = async () => {
+      if (document.hidden || pending.size || polling) return;
+      polling = true;
+      try {
+        const response = await fetch(postProgress.dataset.activityUrl, {
+          credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) return;
+        const activity = await response.json();
+        if (pending.size) return;
+        postProgress.dataset.phase = activity.status;
+        showPostBusy(activity.processing);
+        if (!activity.processing && String(activity.revision) !== postProgress.dataset.revision) {
+          if (!postEdited) window.location.reload();
+          else {
+            postProgress.hidden = false;
+            postProgress.querySelector(".loading-spinner").hidden = true;
+            postProgress.querySelector("strong").textContent = "Post updated";
+            postProgress.querySelector("small").textContent = "Your edits are still here. Reload when ready to see the latest results.";
+          }
+        }
+      } catch { /* A temporary polling failure never submits or repeats an action. */ }
+      finally { polling = false; }
+    };
+    setInterval(pollPost, 2000);
+    window.addEventListener("focus", pollPost);
+  }
+
+  if (document.getElementById("media-queue")) {
+    let polling = false;
+    const pollMedia = async () => {
+      const queue = document.getElementById("media-queue");
+      if (document.hidden || pending.size || polling || queue.contains(document.activeElement)) return;
+      polling = true;
+      try {
+        const response = await fetch("/api/media-jobs", {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
+        if (!response.ok) return;
+        const jobs = await response.json();
+        const current = [...queue.querySelectorAll("[data-job-id]")].map((card) => [
+          card.dataset.jobId, card.dataset.jobState, card.dataset.jobStage, card.dataset.jobError, card.dataset.jobOutput, card.dataset.jobPost, card.dataset.jobPostStatus,
+        ]);
+        const updated = jobs.map((job) => [job.id, job.state, job.stage, job.error, job.asset_id || "", job.post_id || "", job.post_status || ""]);
+        if (JSON.stringify(current) === JSON.stringify(updated)) return;
+        const html = await fetch("/admin/media-studio", {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
+        if (!html.ok) return;
+        const replacement = new DOMParser().parseFromString(await html.text(), "text/html").getElementById("media-queue");
+        if (replacement && !pending.size && !queue.contains(document.activeElement)) queue.replaceWith(replacement);
+      } catch { /* Keep the last known state and the manual refresh link available. */ }
+      finally { polling = false; }
+    };
+    setInterval(pollMedia, 3000);
+  }
 })();

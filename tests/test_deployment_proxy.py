@@ -30,7 +30,7 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
             assert not self.headers.get("X-Authenticated-User")
             assert not self.headers.get("X-Tudelu-Proxy-Secret")
             if self.path.startswith("/media/"):
-                assert self.path == "/media/" + filename
+                assert self.path in media_paths
                 assert not self.headers.get("Authorization")
                 assert not self.headers.get("Cookie")
                 self.send_response(200)
@@ -55,6 +55,24 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
     app_port, media_port = available_port(), available_port()
     payload = b"media-fixture"
     filename = hashlib.sha256(payload).hexdigest() + ".jpg"
+    filenames = [
+        hashlib.sha256(payload).hexdigest() + extension
+        for extension in (
+            ".jpg",
+            ".png",
+            ".gif",
+            ".webp",
+            ".mp4",
+            ".mov",
+            ".webm",
+            ".mp3",
+            ".wav",
+            ".m4a",
+            ".ogg",
+            ".flac",
+        )
+    ]
+    media_paths = {"/media/" + name for name in filenames}
     (tmp_path / filename).write_bytes(payload)
     conf = Path("deploy/Caddyfile").read_text().replace("web:8000", f"127.0.0.1:{upstream.server_port}")
     conf = conf.replace("/srv/runtime/media", tmp_path.as_posix())
@@ -91,8 +109,18 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
             assert response.status_code == 200 and response.content == payload
             assert "immutable" in response.headers["cache-control"]
             assert client.head(f"http://127.0.0.1:{media_port}/{filename}").status_code == 200
+            for name in filenames:
+                url = f"http://127.0.0.1:{media_port}/{name}"
+                response = client.get(
+                    url, headers={"Authorization": "Basic test", "Cookie": "session=private"}
+                )
+                assert response.status_code == 200, name
+                assert response.content == payload
+                assert client.head(url).status_code == 200, name
             for suffix in ("/", "/api/session", "/.env", "/oauth/x/callback?code=fixture"):
                 assert client.get(f"http://127.0.0.1:{media_port}{suffix}").status_code == 404
+            for name in (filename + ".html", "unhashed.mp3", filename.replace(".jpg", ".json")):
+                assert client.get(f"http://127.0.0.1:{media_port}/{name}").status_code == 404
             assert client.post(f"http://127.0.0.1:{media_port}/{filename}").status_code == 404
             response = client.get(
                 f"http://127.0.0.1:{app_port}/admin/connections",

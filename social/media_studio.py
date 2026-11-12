@@ -8,7 +8,7 @@ from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 
 from .config import PLATFORMS, profiles
 from .db import now, uid
@@ -48,6 +48,7 @@ class CreativeBrief(BaseModel):
     website: bool = True
     create_posts: bool = True
     interval_hours: int = Field(default=24, ge=24, le=720)
+    workflow: Literal["automatic", "immediate", "next"] = "automatic"
 
     @model_validator(mode="after")
     def valid(self):
@@ -167,7 +168,7 @@ def validate_sources(db, brief, *, live=False):
 
 def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None):
     brief = CreativeBrief.model_validate(brief)
-    sources = validate_sources(db, brief, live=any(settings.wants_live(p) for p in brief.platforms))
+    sources = validate_sources(db, brief, live=any(settings.wants_live(p, db.get(Account, p)) for p in brief.platforms))
     if settings.ai_mode == "live" and not settings.runway_api_key.get_secret_value():
         raise ValueError("RUNWAY_API_KEY is missing. Fill in .env and restart web/worker.")
     if (
@@ -203,7 +204,7 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
                 options.append("video_edit")
             if platform == "tiktok":
                 options = [v for v in options if v != "image"]
-            if platform == "facebook" and settings.wants_live(platform):
+            if platform == "facebook" and settings.wants_live(platform, db.get(Account, platform)):
                 options = ["image"]  # Existing native AI-video disclosure gate remains in force.
             operation = options[sequence % len(options)]
         content_kind = brief.kind
@@ -263,6 +264,7 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             batch_key=batch + ":" + platform,
             platform=platform,
             brief=values,
+            state="planned" if brief.workflow == "next" and not campaign else "queued",
         )
         db.add(job)
         result.append(job)
@@ -270,18 +272,54 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
     return result
 
 
+def activate_planned_jobs(db, settings):
+    from .automation import can_automate
+
+    if not can_automate(db, settings):
+        return
+    activated = set()
+    for job in db.scalars(select(MediaJob).where(MediaJob.state == "planned").order_by(MediaJob.created_at)).all():
+        if not can_automate(db, settings):
+            return
+        account = db.get(Account, job.platform)
+        if account.paused or job.platform in activated:
+            continue
+        busy = db.scalar(select(MediaJob.id).where(
+            MediaJob.platform == job.platform, MediaJob.state.in_(["queued", "submitting", "running", "rendering"])
+        ).limit(1))
+        if busy:
+            continue
+        changed = db.execute(update(MediaJob).where(MediaJob.id == job.id, MediaJob.state == "planned").values(state="queued"))
+        db.commit()
+        if changed.rowcount:
+            activated.add(job.platform)
+
+
 def replenish_campaigns(db, settings):
-    if not settings.auto_advance or db.get(Control, 1).killed or settings.ai_mode != "live":
+    from .automation import can_automate
+
+    if not can_automate(db, settings) or settings.ai_mode != "live":
         return
     for campaign in db.scalars(
         select(MediaCampaign).where(MediaCampaign.enabled.is_(True), MediaCampaign.next_run_at <= now())
     ).all():
+        if not can_automate(db, settings):
+            return
         brief = CreativeBrief.model_validate(campaign.brief)
+        pending_idea = db.scalar(select(MediaJob.id).where(
+            MediaJob.platform.in_(brief.platforms),
+            MediaJob.brief["workflow"].as_string().in_(["next", "immediate"]),
+            MediaJob.state.in_(["planned", "queued", "submitting", "running", "rendering", "failed", "uncertain"]),
+        ).limit(1))
+        if pending_idea:
+            campaign.error = "Waiting for the admin's requested post idea to finish."
+            db.commit()
+            continue
         # Active recurring campaigns only spend when every selected publishing account is live/ready.
         from .adapters import ADAPTERS
 
         if any(
-            not settings.wants_live(p) or db.get(Account, p).paused or ADAPTERS[p](settings, db, None).dry
+            not settings.wants_live(p, db.get(Account, p)) or db.get(Account, p).paused or ADAPTERS[p](settings, db, None).dry
             for p in brief.platforms
         ):
             campaign.error = "Waiting for selected platforms to be live, connected and unpaused."
@@ -366,10 +404,18 @@ def _save_output(db, settings, job, data):
 
 
 def _finish(db, settings, job):
+    from .visual_context import ensure_visual_summary
+
     brief = job.brief
     originals = [db.get(Asset, i) for i in job.source_asset_ids]
     first = originals[0]
-    if brief["operation"] == "audio":
+    summary_settings = settings.model_copy(update={"ai_mode": brief["execution_mode"]})
+    for original in originals:
+        ensure_visual_summary(db, summary_settings, original)
+        db.commit()
+    if job.output_asset_id:
+        result = db.get(Asset, job.output_asset_id)
+    elif brief["operation"] == "audio":
         result = first
     else:
         profile = profiles(settings)[job.platform]
@@ -409,7 +455,11 @@ def _finish(db, settings, job):
         if errors:
             raise ValueError("Generated rendition failed platform checks: " + ", ".join(errors))
     job.output_asset_id = result.id
-    if brief["create_posts"]:
+    # Keep the rendition on summary failure; resume never regenerates or re-renders it.
+    db.commit()
+    ensure_visual_summary(db, summary_settings, result)
+    db.commit()
+    if brief["create_posts"] and not job.post_id:
         post = draft(
             db,
             job.platform,
@@ -433,7 +483,7 @@ def process_jobs(db, settings, provider=None):
     jobs = db.scalars(
         select(MediaJob)
         .where(MediaJob.state.in_(["queued", "submitting", "running", "rendering"]))
-        .order_by(MediaJob.created_at)
+        .order_by(case((MediaJob.brief["workflow"].as_string() == "immediate", 0), else_=1), MediaJob.created_at)
         .limit(settings.media_jobs_per_tick)
     ).all()
     runway = provider or Runway(settings)
@@ -482,7 +532,7 @@ def process_jobs(db, settings, provider=None):
                 brief = CreativeBrief.model_validate(
                     {k: v for k, v in job.brief.items() if k in CreativeBrief.model_fields}
                 )
-                validate_sources(db, brief, live=settings.wants_live(job.platform))
+                validate_sources(db, brief, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
                 if job.brief["execution_mode"] == "fixture":
                     from .seed import seed_media
 

@@ -122,6 +122,16 @@ def generate(db, settings, post, providers=None):
         "recent_captions": [p.caption for p in recent],
     }
     try:
+        from .visual_context import current_summary, ensure_visual_summary
+
+        # Older Runway assets acquire the same metadata when captions are next generated.
+        for asset in assets:
+            if "runway/" in (asset.generator or ""):
+                ensure_visual_summary(db, settings, asset)
+        context["visual_context"] = [
+            {"asset_id": a.id, **summary}
+            for a in assets if (summary := current_summary(a, settings))
+        ]
         parts = providers.caption(context)
         caption = render(parts, profile, facts, post.platform, settings)
         post.parts, post.caption = parts, caption
@@ -178,7 +188,9 @@ def publish_due(db, settings, at=None, client=None):
         db.refresh(candidate)
         post = candidate
         account = db.get(Account, post.platform)
-        if db.get(Control, 1).killed or account.paused:
+        if db.get(Control, 1).killed or account.paused or (
+            not post.dry_run and account.live_enabled is False
+        ):
             db.rollback()
             continue
         already_delivered = db.scalar(

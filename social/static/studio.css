@@ -3,3 +3,4 @@
 .asset-preview{display:block;width:160px;height:120px;object-fit:contain;background:#f4f6f4;border:1px solid #dfe6df;border-radius:6px}td .button{margin-top:10px}
 
 .loading-state{display:flex;align-items:center;gap:12px;margin:16px 0 0;padding:14px 16px;background:#f0f5ed;border:1px solid #d4e2ce;border-radius:8px;font-size:13px}.loading-state strong{display:block;color:#245c4d}.loading-spinner{flex:0 0 22px;width:22px;height:22px;border:3px solid #d2dfcd;border-top-color:#245c4d;border-radius:50%;animation:loading-spin .8s linear infinite}.compact-button{margin-top:8px;padding:6px 10px;font-size:12px}.actions{flex-wrap:wrap}.actions form[aria-busy="true"]{flex-basis:100%}@keyframes loading-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.loading-spinner{animation:none}}
+[hidden]{display:none!important}

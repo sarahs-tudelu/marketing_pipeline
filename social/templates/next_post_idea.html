@@ -1,0 +1,33 @@
+<section id="next-post-idea">
+  <h2>Give the next post an idea</h2>
+  <p>Describe what you want. The workflow will generate or edit media, describe the visual content, write a caption, run checks and schedule the post when it passes.</p>
+  <form method="post" action="/forms/media-studio">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="create_posts" value="on">
+    <label>Your idea<textarea name="prompt" rows="4" maxlength="450" required placeholder="A short video showing how a flexible room changes from a quiet workspace to a welcoming gathering space."></textarea></label>
+    <div class="two">
+      <label>Post name<input name="campaign" maxlength="200" required placeholder="A name to find this idea later"></label>
+      <label>Media<select name="operation"><option value="image">Generate an image</option><option value="video">Generate or animate a video</option><option value="video_edit">Edit an uploaded video</option></select></label>
+    </div>
+    <fieldset><legend>Platforms</legend>{% for c in connections %}
+      <label class="checkbox"><input type="checkbox" name="platforms" value="{{ c.account.platform }}" {{ 'checked' if c.account.platform == 'instagram' else '' }}>{{ c.account.platform|title }} · {{ 'Simulated' if c.dry else 'Live' }}</label>
+    {% endfor %}</fieldset>
+    <div class="two">
+      <label>Content style<select name="kind"><option value="promotional">Promotional</option><option value="non_promotional">Non-promotional / editorial</option></select></label>
+      <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}">{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
+    </div>
+    <label>Usage rights<input name="rights" required placeholder="Who owns the references and where the output may be used"></label>
+    <label class="checkbox"><input type="checkbox" name="website" checked>Use tudelu.com for brand inspiration</label>
+    <details><summary>References and video options</summary>
+      <label>Product tag<input name="product" required value="company"></label>
+      <label>Video duration (seconds)<input type="number" name="duration" min="3" max="10" value="5"></label>
+      {% for a in assets if not a.media.mime.startswith('audio/') %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}">{{ a.original_name }} · {{ a.media.mime }}</label>{% else %}<p>Upload reference media in the Asset library.</p>{% endfor %}
+      <label>Video soundtrack direction (optional)<textarea name="audio_prompt" rows="2" maxlength="1800" placeholder="Warm ambient music with subtle texture; no vocals."></textarea></label>
+    </details>
+    <div class="actions">
+      <button name="mode" value="next">Use for next automatic post</button>
+      <button class="primary" name="mode" value="once">Create now</button>
+    </div>
+    <small>Next automatic post waits until Automatic posts is on. Create now starts as soon as the worker is available and completes the workflow even when routine automation is off. Global and platform pauses still apply. Publication follows the normal checks, delivery settings and schedule.</small>
+  </form>
+</section>

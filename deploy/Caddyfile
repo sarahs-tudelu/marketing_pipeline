@@ -22,7 +22,7 @@
 {$MEDIA_BASE_URL} {
 	@asset {
 		method GET HEAD
-		path_regexp asset ^/[a-f0-9]{64}\.(jpg|png|gif|webp|mp4|mov|webm)$
+		path_regexp asset ^/[a-f0-9]{64}\.(jpg|png|gif|webp|mp4|mov|webm|mp3|wav|m4a|ogg|flac)$
 	}
 	handle @asset {
 		reverse_proxy web:8000 {

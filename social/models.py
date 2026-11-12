@@ -42,6 +42,7 @@ class Account(Base):
     refresh_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime)
     paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    live_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
     auth_error: Mapped[str] = mapped_column(Text, default="")
 
@@ -128,6 +129,7 @@ class Control(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     killed: Mapped[bool] = mapped_column(Boolean, default=False)
     revision: Mapped[int] = mapped_column(Integer, default=0)
+    automation_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class Alert(Base):

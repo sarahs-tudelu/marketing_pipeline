@@ -155,7 +155,14 @@ def test_video_with_generated_audio_is_muxed_and_originals_retained(db, settings
     assert result.tags["generated_audio"]
 
 
-def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets):
+def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets, monkeypatch):
+    monkeypatch.setattr("social.providers.OpenAI.call", lambda *args, **kwargs: {
+        "status": "completed", "output": [{"type": "message", "content": [{
+            "type": "output_text", "text": json.dumps({
+                "summary": "A green square.", "visible_text": [], "limitations": [],
+            }),
+        }]}],
+    })
     job = queue_jobs(db, settings, brief_for(db, settings, reference_ids=[assets[0].id]))[0]
     job.brief = job.brief | {"execution_mode": "live"}
     db.commit()

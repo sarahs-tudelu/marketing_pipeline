@@ -161,8 +161,15 @@ class Settings(BaseSettings):
             raise ValueError("Proxy authentication requires PROXY_AUTH_SECRET")
         return self
 
-    def wants_live(self, platform: str) -> bool:
+    def wants_live(self, platform: str, account=None) -> bool:
+        if account is not None and account.live_enabled is not None:
+            return account.live_enabled
         return platform in self.live_platforms.split(",")
+
+    def automates_posts(self, control=None) -> bool:
+        if control is not None and control.automation_enabled is not None:
+            return control.automation_enabled
+        return self.auto_advance
 
 
 class Profile(BaseModel):

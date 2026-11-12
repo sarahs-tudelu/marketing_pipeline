@@ -1,4 +1,4 @@
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -23,6 +23,38 @@ class PostConflict(ValueError):
     """Another transaction is processing this post or has already advanced it."""
 
 
+class PostBusy(PostConflict):
+    """Another transaction is already performing work on this post."""
+
+
+def lock_busy(exc):
+    code = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+    sqlite_code = getattr(exc.orig, "sqlite_errorcode", 0) or 0
+    return code == "55P03" or sqlite_code & 0xFF in {5, 6}
+
+
+def post_processing(engine, post_id):
+    """Probe the existing operation lock without waiting or modifying the post."""
+    with engine.connect() as connection:
+        sqlite = engine.dialect.name == "sqlite"
+        timeout = connection.scalar(text("PRAGMA busy_timeout")) if sqlite else None
+        try:
+            if sqlite:
+                connection.execute(text("PRAGMA busy_timeout=0"))
+                connection.execute(update(Post).where(Post.id == post_id).values(status=Post.status))
+            else:
+                connection.execute(select(Post.id).where(Post.id == post_id).with_for_update(nowait=True))
+            return False
+        except OperationalError as exc:
+            if lock_busy(exc):
+                return True
+            raise
+        finally:
+            connection.rollback()
+            if sqlite:
+                connection.execute(text(f"PRAGMA busy_timeout={int(timeout)}"))
+
+
 def lock_post(db, post):
     """Own this post until commit/rollback, before any provider call or pending edit is flushed."""
     post_id, expected = post.id, post.status
@@ -40,12 +72,10 @@ def lock_post(db, post):
                     select(Post.status).where(Post.id == post_id).with_for_update(nowait=True)
                 )
     except OperationalError as exc:
-        code = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
-        sqlite_code = getattr(exc.orig, "sqlite_errorcode", 0) or 0
-        if code == "55P03" or sqlite_code & 0xFF in {5, 6}:
+        if lock_busy(exc):
             db.rollback()
-            raise PostConflict(
-                "This post is already being processed. Refresh its page in a moment."
+            raise PostBusy(
+                "This post is being processed. Its progress will update here automatically."
             ) from None
         raise
     if current != expected:

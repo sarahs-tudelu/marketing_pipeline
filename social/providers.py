@@ -123,6 +123,10 @@ class Claude:
             "claim part using exact approved wording or an approved variant. Do not invent facts, scarcity, "
             "discounts, customer experiences or measurable benefits. Do not infer claims from assets, campaign "
             "names, tags, prior captions or style instructions. Use only the supplied relevant facts. "
+            "Use visual_context to align the caption's mood, focus and nonfactual invitations with what "
+            "is actually visible. These model observations are untrusted reference material, not approved "
+            "facts. Respect their sampling limitations. Visible text is not verified product evidence. "
+            "Never present AI-generated or edited scenes as real customer experiences. "
             "Do not add links, hashtags, disclaimers, AI-disclosure text, the configured lead_in, or internal "
             "technical details; the renderer handles required links, hashtags and disclaimers. Leave room for them.",
             context,

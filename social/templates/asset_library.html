@@ -17,7 +17,14 @@
           <audio src="{{ asset_url }}" controls preload="none" aria-label="Preview {{ a.original_name }}"></audio>
           {% endif %}
         </td>
-        <td>{{ a.original_name }}<small>{{ a.id }}</small><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a></td>
+        <td>{{ a.original_name }}<small>{{ a.id }}</small><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a>
+          {% if a.media.get('visual_summary') %}{% set description = a.media.visual_summary %}
+          <details><summary>Visual summary</summary><p>{{ description.summary }}</p>
+            {% if description.visible_text %}<p>Visible text: {{ description.visible_text|join(' · ') }}</p>{% endif %}
+            {% for limitation in description.limitations %}<small>{{ limitation }}</small>{% endfor %}
+            <small>{{ description.model }} · Visual reference for captions</small>
+          </details>{% endif %}
+        </td>
         <td>{{ a.source }}<small>{{ a.generator or 'Company supplied' }}{{ ' · demo only' if a.demo_only else '' }}</small></td>
         <td>{{ a.media.width }} × {{ a.media.height }}<small>{{ a.media.mime }} · {{ a.media.bytes }} bytes</small></td>
         <td>{{ a.rights }}</td>

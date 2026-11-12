@@ -89,7 +89,7 @@ class BaseAdapter:
         self.vault = Vault(settings)
         self.client = client or httpx.Client(timeout=settings.http_timeout_seconds, follow_redirects=False)
         self.credentials = self.vault.decrypt(self.account.credentials) if self.account.credentials else {}
-        self.dry = not self.connected() or not settings.wants_live(self.platform)
+        self.dry = not self.connected() or not settings.wants_live(self.platform, self.account)
 
     def connected(self):
         required = bool(
@@ -170,6 +170,8 @@ class BaseAdapter:
         self.db.expire_all()
         if self.db.get(Control, 1).killed or self.db.get(Account, self.platform).paused:
             raise PublishError("paused", "Publishing paused")
+        if not self.dry and self.db.get(Account, self.platform).live_enabled is False:
+            raise PublishError("paused", "Live posting is switched off for this platform")
 
     def request(
         self,
