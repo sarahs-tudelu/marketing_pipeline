@@ -4,7 +4,8 @@
 <form method="post" action="/forms/assets" enctype="multipart/form-data">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label>Media file<input type="file" name="file" accept="image/*,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/flac" required></label>
-  <label>Source<select name="source">{% for source in ['company','ai_generated','ai_edited'] %}<option {{ 'selected' if upload_form.get('source', 'company') == source else '' }}>{{ source }}</option>{% endfor %}</select></label>
+  <label>Source<select name="source">{% for source, label in [('company','Company media (no AI generation or editing)'),('ai_generated','AI-generated'),('ai_edited','AI-edited real media')] %}<option value="{{ source }}" {{ 'selected' if upload_form.get('source', 'company') == source else '' }}>{{ label }}</option>{% endfor %}</select></label>
+  <p>For AI media, select AI-generated or AI-edited and provide the model and prompt. This enables visual review and platform AI disclosure.</p>
   {% with values=upload_form %}{% include "rights_fields.html" %}{% endwith %}
   <label>Rights expiry (UTC, optional)<input type="datetime-local" name="rights_expire_at" value="{{ upload_form.get('rights_expire_at', '') }}"></label>
   <div class="two">
@@ -12,6 +13,7 @@
     <label>Generation/edit prompt<input name="prompt" value="{{ upload_form.get('prompt', '') }}"></label>
   </div>
   <label>Product/campaign tags (JSON)<input name="tags" value="{{ upload_form.get('tags', '{}') }}"></label>
+  <p>Identify the depicted product families, for example <code>{"product_family": ["canopies", "pergolas"]}</code>. AI assets are recorded as concepts automatically.</p>
   <label class="checkbox"><input type="checkbox" name="customer_permission" {{ 'checked' if upload_form.get('customer_permission') == 'on' else '' }}>Customer content permission is documented</label>
   <label>Permission evidence reference<input name="permission_reference" value="{{ upload_form.get('permission_reference', '') }}"></label>
   <button class="primary">Ingest asset</button>

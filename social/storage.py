@@ -12,6 +12,7 @@ from botocore.config import Config
 from PIL import Image
 
 from .models import Asset
+from .provenance import source_error
 from .rights import owner_value, usage_rights
 
 
@@ -211,18 +212,22 @@ def ingest(
     permission_reference="",
     demo_only=False,
 ):
-    if source not in {"company", "ai_generated", "ai_edited"}:
-        raise ValueError("Invalid asset source")
     if not isinstance(filename, str) or not filename.strip() or len(Path(filename).name) > 255:
         raise ValueError("Choose a media file with a filename of 255 characters or fewer")
     if tags is not None and not isinstance(tags, dict):
         raise ValueError("Tags must be a JSON object")
+    generator, prompt = (generator or "").strip() or None, (prompt or "").strip() or None
+    tags = dict(tags or {})
+    if error := source_error(source, generator, prompt, tags):
+        raise ValueError(error)
+    if source != "company" and not tags.get("asset_type"):
+        tags["asset_type"] = "ai_concept"
+    if not tags.get("product_family") and tags.get("product"):
+        tags["product_family"] = tags["product"]
     if generator and len(generator) > 200:
         raise ValueError("AI model / generator must be 200 characters or fewer")
     if not rights.strip() or not data or len(data) > settings.max_upload_bytes:
         raise ValueError("Usage rights and a nonempty file within MAX_UPLOAD_BYTES are required")
-    if source != "company" and (not generator or not prompt):
-        raise ValueError("AI assets require generator/model and prompt provenance")
     if customer_permission and not permission_reference.strip():
         raise ValueError("Customer permission requires an evidence reference")
     if rights_expire_at and rights_expire_at.tzinfo:

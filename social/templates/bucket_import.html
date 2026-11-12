@@ -4,11 +4,13 @@
 <form method="post" action="/forms/import-bucket-asset">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label>Object key<input name="key" required value="{{ bucket_form.get('key', '') }}" placeholder="uploads/showroom-walkthrough.mp4"></label>
-  <label>Source<select name="source">{% for source in ['company','ai_generated','ai_edited'] %}<option {{ 'selected' if bucket_form.get('source', 'company') == source else '' }}>{{ source }}</option>{% endfor %}</select></label>
+  <label>Source<select name="source">{% for source, label in [('company','Company media (no AI generation or editing)'),('ai_generated','AI-generated'),('ai_edited','AI-edited real media')] %}<option value="{{ source }}" {{ 'selected' if bucket_form.get('source', 'company') == source else '' }}>{{ label }}</option>{% endfor %}</select></label>
+  <p>For AI media, select AI-generated or AI-edited and provide the model and prompt. This enables visual review and platform AI disclosure.</p>
   <div class="two"><label>AI model / generator<input name="generator" value="{{ bucket_form.get('generator', '') }}"></label><label>Generation/edit prompt<input name="prompt" value="{{ bucket_form.get('prompt', '') }}"></label></div>
   {% with values=bucket_form %}{% include "rights_fields.html" %}{% endwith %}
   <label>Rights expiry (UTC, optional)<input type="datetime-local" name="rights_expire_at" value="{{ bucket_form.get('rights_expire_at', '') }}"></label>
   <label>Product/campaign tags (JSON)<input name="tags" value="{{ bucket_form.get('tags', '{}') }}"></label>
+  <p>Identify the depicted product families, for example <code>{"product_family": ["canopies", "pergolas"]}</code>. AI assets are recorded as concepts automatically.</p>
   <label class="checkbox"><input type="checkbox" name="customer_permission" {{ 'checked' if bucket_form.get('customer_permission') == 'on' else '' }}>Customer content permission is documented</label>
   <label>Permission evidence reference<input name="permission_reference" value="{{ bucket_form.get('permission_reference', '') }}"></label>
   <button>Import bucket asset</button>

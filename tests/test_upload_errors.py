@@ -106,6 +106,9 @@ def test_upload_other_failures_are_sanitized(db, settings, monkeypatch, error, h
         ({"rights_expire_at": "bad"}, "valid rights expiry"),
         ({"rights": ""}, "Choose usage rights"),
         ({"rights": "Company owned"}, "Choose usage rights"),
+        ({"generator": "Seedance 2.5", "prompt": "Canopy concept"}, "AI creation details require Source"),
+        ({"tags": '{"asset_type":"ai_concept"}'}, "AI creation details require Source"),
+        ({"source": "ai_generated", "generator": "  ", "prompt": "Concept"}, "prompt provenance"),
     ],
 )
 def test_upload_invalid_metadata_returns_form_without_saving(db, settings, fields, hint):
@@ -142,3 +145,19 @@ def test_corrupt_mp4_missing_file_and_over_limit_return_actionable_errors(db, se
 def test_ingest_rejects_non_object_tags_before_storage(db, settings):
     with pytest.raises(ValueError, match="JSON object"):
         ingest(db, settings, seed_media()[0], "photo.jpg", tags=["not-an-object"], rights="Owned")
+
+
+def test_ai_upload_source_correction_preserves_entries_and_original_bytes(db, settings):
+    data = seed_media()[1]
+    fields = {"generator": "Seedance 2.5", "prompt": "Canopy concept", "tags": '{"product":"canopies"}'}
+    with TestClient(create_app(settings)) as client:
+        response = upload(client, data, **fields)
+        assert response.status_code == 400
+        assert 'value="Seedance 2.5"' in response.text and 'value="Canopy concept"' in response.text
+        assert 'value="ai_generated"' in response.text
+        assert not db.scalar(select(Asset))
+        assert upload(client, data, source="ai_generated", **fields).status_code == 303
+    asset = db.scalar(select(Asset))
+    assert asset.source == "ai_generated"
+    assert asset.tags == {"product": "canopies", "product_family": "canopies", "asset_type": "ai_concept"}
+    assert LocalStore(settings).read(asset.storage_key) == data

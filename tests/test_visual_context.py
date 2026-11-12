@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import select
 from test_runway_media import brief_for
 
+from social.facts import load_facts
 from social.media_studio import process_jobs, queue_jobs, resume_job
 from social.models import Asset, Post
 from social.pipeline import draft, generate
@@ -76,6 +77,24 @@ def test_runway_summary_reaches_caption_context_and_library(db, settings):
     assert captured[0]["visual_context"][0]["summary"] == asset.media["visual_summary"]["summary"]
     assert captured[0]["visual_context"][0]["asset_id"] == asset.id
     assert all("SIMULATED visual" not in f["text"] for f in captured[0]["facts"])
+
+
+def test_uploaded_ai_video_summary_reaches_caption_context(db, settings):
+    asset = ingest(db, settings, seed_media()[1], "uploaded.mp4", source="ai_generated",
+                   generator="Seedance 2.5", prompt="Concept", rights="public", tags={"product": "demo"})
+    facts = load_facts(db, settings.facts_path)
+    post = draft(db, "facebook", "Uploaded AI media", [asset.id], facts.id, product="demo")
+    observed = []
+
+    class Capture(Providers):
+        def caption(self, context):
+            observed.append(context)
+            return super().caption(context)
+
+    generate(db, settings, post, providers=Capture(settings))
+    assert post.ai_disclosure
+    assert observed[0]["visual_context"][0]["asset_id"] == asset.id
+    assert current_summary(asset, settings)["asset_checksum"] == asset.checksum
 
 
 def test_summary_failure_resumes_saved_rendition_without_regenerating(db, settings, monkeypatch):

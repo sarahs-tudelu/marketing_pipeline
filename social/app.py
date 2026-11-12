@@ -41,6 +41,7 @@ from .models import (
 )
 from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, delete_draft, draft, generate
+from .provenance import requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 from .retries import block_reason as retry_block_reason
@@ -494,7 +495,7 @@ def create_app(settings=None):
             facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
             post.parts = parts
             post.fact_ids = caption_fact_ids(parts)
-            post.ai_disclosure = any(db.get(Asset, id).source != "company" for id in post.asset_ids)
+            post.ai_disclosure = any(requires_ai_review(db.get(Asset, id)) for id in post.asset_ids)
             post.caption = render(parts, profiles(settings)[post.platform], facts, post.platform, settings)
             post.approved_digest = ""
             transition(db, post, "generated", "Edited caption and fact citations", actor)

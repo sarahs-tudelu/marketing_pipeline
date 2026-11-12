@@ -171,7 +171,7 @@ def test_image_form_success_preserves_bytes_and_provenance(db, settings, monkeyp
     asset = db.scalar(select(Asset))
     assert asset.source == "ai_generated" and asset.prompt == "Abstract background"
     assert asset.generator == settings.openai_image_model
-    assert asset.tags == {"campaign": "test"}
+    assert asset.tags == {"campaign": "test", "asset_type": "ai_concept"}
     assert (asset.rights, asset.owner) == ("public", "Tudelu")
     assert LocalStore(settings).read(asset.storage_key) == data
 

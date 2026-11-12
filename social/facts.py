@@ -164,7 +164,10 @@ def content_digest(post, assets):
             "parts": post.parts,
             "facts": post.facts_id,
             "platform": post.platform,
-            "assets": [(a.id, a.checksum, a.source, a.rights, a.rights_expire_at) for a in assets],
+            "assets": [
+                (a.id, a.checksum, a.source, a.rights, a.rights_expire_at, a.generator, a.prompt, a.tags)
+                for a in assets
+            ],
             "ai": post.ai_disclosure,
             "campaign": post.campaign,
             "product": post.product,

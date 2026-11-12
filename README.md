@@ -46,6 +46,8 @@ Compose runs migrations before the web/worker, binds the UI to host loopback, an
 
 Upload original company or AI media through Asset library. Choose usage rights (**Public** or **Not public**) and optionally the owner, and supply product/campaign tags and expiry. Not public media can support dry runs and internal references but is never published live. Rights saved as free text before this choice existed display as *Unclassified* and keep their earlier behavior. AI media requires the model and prompt. Real customer content additionally needs `{"real_customer_content": true}` in tags, a permission checkbox and an evidence reference. Embedded C2PA/IPTC remains in the original bytes; SHA-256 integrity is checked before publishing. The app does not claim to cryptographically verify C2PA signatures. It never transcodes the stored original. Incompatible media is held; supply a new compliant rendition with its own provenance record.
 
+Select **AI-generated** or **AI-edited real media** for AI uploads and bucket imports. AI model/prompt fields cannot be saved as company media; the form preserves entries and explains how to correct the source. AI assets default to `asset_type: ai_concept`; `product` also supplies `product_family` when absent. For mixed-family assets, supply the depicted families explicitly in `product_family` (a list is supported). Caption generation adds an observed visual summary for uploaded AI media from any generator. Existing conflicting source records require correction and cannot skip AI visual review or disclosure. Changes to creation records or tags invalidate earlier approvals.
+
 For watched ingestion, write the media to `WATCH_DIR` first, then atomically place a JSON manifest last:
 
 ```json

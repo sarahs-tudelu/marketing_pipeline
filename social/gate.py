@@ -12,6 +12,7 @@ from .db import now, uid
 from .facts import Facts, active, caption_fact_ids, composed, content_digest, part_fact_ids, render
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
+from .provenance import asset_source_error, asset_type, requires_ai_review
 from .providers import Providers
 from .security import public_url
 from .storage import storage
@@ -108,8 +109,8 @@ def media_errors(assets, profile, platform):
 
 
 def check_disclosure(post, assets, live=False):
-    needed = any(a.source != "company" for a in assets)
-    reasons = []
+    needed = any(requires_ai_review(a) for a in assets)
+    reasons = [f"{a.id}: {error}" for a in assets if (error := asset_source_error(a))]
     if post.ai_disclosure != needed:
         reasons.append("Incorrect AI disclosure flag for asset provenance")
     # Facebook videos publish as Reels, whose finish call carries is_ai_generated.
@@ -222,7 +223,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
             {},
         ),
     )
-    needed = any(a.source != "company" for a in assets)
+    needed = any(requires_ai_review(a) for a in assets)
     check("disclosure", lambda: check_disclosure(post, assets, live))
 
     def rights():
@@ -304,13 +305,13 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
             {
                 "asset_id": a.id,
                 "source": a.source,
-                "asset_type": a.tags.get("asset_type"),
+                "asset_type": asset_type(a),
                 "media": a.media,
-                "product_family": a.tags.get("product_family", a.tags.get("product")),
+                "product_family": a.tags.get("product_family") or a.tags.get("product"),
                 "tags": a.tags,
                 "rights": a.rights,
                 "owner": a.owner,
-                "rights_status": a.tags.get("rights_status"),
+                "rights_status": a.tags.get("rights_status") or a.rights,
                 "rights_expire_at": a.rights_expire_at,
                 "source_or_creation_record": {
                     "generator": a.generator,

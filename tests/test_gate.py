@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from social.db import now
-from social.facts import Facts, render, save_facts
+from social.facts import Facts, content_digest, render, save_facts
 from social.gate import check_urls, evaluate, media_errors, run_gate, weighted_length
 from social.models import CheckResult, FactSheet, Post
 from social.providers import Providers, Review, VisionReview
@@ -92,6 +92,59 @@ def test_failed_visual_review_is_available_to_independent_review_and_still_block
     assert observed[0]["passed"] is False
     assert post.status == "held"
     assert not next(c for c in results if c.name == "vision_review").passed
+
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_legacy_company_asset_with_ai_creation_record_requires_vision_and_source_correction(
+    db, settings, post, assets, flag
+):
+    asset = assets[0]
+    asset.generator, asset.prompt = "Seedance 2.5", "Illustrative canopy"
+    post.ai_disclosure = flag
+    observed = []
+
+    class Capture(Providers):
+        def vision(self, assets, context):
+            observed.append(context)
+            return super().vision(assets, context)
+
+    result = checks(db, settings, post, providers=Capture(settings))
+    assert observed and result["vision_review"].details["reasons"]
+    disclosure = result["disclosure"]
+    assert not disclosure.passed and disclosure.details["required"]
+    assert any("AI creation details require Source" in r for r in disclosure.details["reasons"])
+    asset.source = "ai_generated"
+    post.ai_disclosure = True
+    assert checks(db, settings, post)["disclosure"].passed
+
+
+def test_legacy_ai_source_supplies_known_metadata_without_inventing_product_family(db, settings, post, assets):
+    asset = assets[0]
+    asset.source, asset.generator, asset.prompt = "ai_generated", "Seedance 2.5", "Concept"
+    asset.tags = {}
+    asset.rights = "public"
+    post.ai_disclosure = True
+    observed = []
+
+    class Capture(Providers):
+        def review(self, context):
+            observed.append(context["assets"][0])
+            return super().review(context)
+
+    checks(db, settings, post, providers=Capture(settings))
+    assert observed[0]["asset_type"] == "ai_concept"
+    assert observed[0]["rights_status"] == "public"
+    assert observed[0]["product_family"] is None
+
+
+@pytest.mark.parametrize("field,value", [
+    ("generator", "Seedance 2.5"), ("prompt", "A new concept"),
+    ("tags", {"product_family": ["canopies", "pergolas"]}),
+])
+def test_provenance_corrections_invalidate_existing_approval(post, assets, field, value):
+    previous = content_digest(post, assets)
+    setattr(assets[0], field, value)
+    assert content_digest(post, assets) != previous
 
 
 @pytest.mark.parametrize(

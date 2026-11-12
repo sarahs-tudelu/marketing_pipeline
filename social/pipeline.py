@@ -10,6 +10,7 @@ from .gate import evaluate
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Account, Asset, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import alert, event
+from .provenance import requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 
@@ -58,7 +59,7 @@ def generate(db, settings, post, providers=None):
     providers = providers or Providers(settings)
     facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
     assets = [db.get(Asset, id) for id in post.asset_ids]
-    post.ai_disclosure = any(a.source != "company" for a in assets)
+    post.ai_disclosure = any(requires_ai_review(a) for a in assets)
     profile = profiles(settings)[post.platform]
     variant = int(hashlib.sha256(post.id.encode()).hexdigest()[:8], 16)
     recent = db.scalars(
@@ -124,9 +125,9 @@ def generate(db, settings, post, providers=None):
     try:
         from .visual_context import current_summary, ensure_visual_summary
 
-        # Older Runway assets acquire the same metadata when captions are next generated.
+        # Uploaded AI media gets observed context too, regardless of generator vendor.
         for asset in assets:
-            if "runway/" in (asset.generator or ""):
+            if requires_ai_review(asset):
                 ensure_visual_summary(db, settings, asset)
         context["visual_context"] = [
             {"asset_id": a.id, **summary}

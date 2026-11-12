@@ -99,6 +99,8 @@ def test_claude_review_independent_and_incomplete_output_rejected(settings):
     assert review.score == 0.5 and review.unsupported_claims
     assert len(seen[0]["messages"]) == 1
     assert seen[0]["output_config"]["effort"] == "xhigh"
+    assert "independent sampling strategies" in seen[0]["system"]
+    assert "unreviewed audio" in seen[0]["system"]
     provider.client = httpx.Client(
         transport=httpx.MockTransport(
             lambda _: httpx.Response(200, json={"stop_reason": "max_tokens", "content": []})
