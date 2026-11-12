@@ -22,11 +22,18 @@ class Instagram(BaseAdapter):
     def get_status(self, remote_id):
         return self.direct("GET", f"{self.base}/{remote_id}", params={"fields": "id,permalink"})
 
+    def quota_headers(self):
+        # This read endpoint requires the user token that granted Page access.
+        # Container creation/publication still use the derived Page token.
+        token = self.credentials.get("system_token")
+        return {"Authorization": "Bearer " + token} if token else self.headers()
+
     def limit(self):
         return self.direct(
             "GET",
             f"{self.base}/{self.account.external_id}/content_publishing_limit",
             params={"fields": "config,quota_usage"},
+            headers=self.quota_headers(),
         )
 
     def _publish(self):
@@ -36,6 +43,7 @@ class Instagram(BaseAdapter):
             "GET",
             f"{self.base}/{target}/content_publishing_limit",
             params={"fields": "config,quota_usage"},
+            headers=self.quota_headers(),
             fake={"data": [{"quota_usage": 0, "config": {"quota_total": 50}}]},
             volatile=True,
         )

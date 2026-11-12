@@ -219,6 +219,46 @@ def test_tiktok_manual_alert_keeps_label_instruction_without_caption_disclosure(
     assert "AI-generated or AI-edited media." not in alert.message
 
 
+def test_instagram_uses_system_token_for_quota_and_page_token_for_publishing(db, settings, assets, monkeypatch):
+    monkeypatch.setattr("social.adapters.platforms.public_url", lambda u: u)
+    settings = settings.model_copy(update={"media_base_url": "https://media.example.org"})
+    post = prepared(db, settings, assets, "instagram")
+    account = db.get(Account, "instagram")
+    account.external_id, account.validated_at = "ig-account", now()
+    account.credentials = Vault(settings).encrypt({"access_token": "SECRET-PAGE", "system_token": "SECRET-SYS"})
+    db.commit()
+    seen = []
+
+    def handler(request):
+        path = request.url.path
+        seen.append(path)
+        if path.endswith("/content_publishing_limit"):
+            if request.headers["authorization"] != "Bearer SECRET-SYS":
+                return httpx.Response(400, json={"error": {"code": 200, "message": "API access blocked."}})
+            return httpx.Response(200, json={"data": [{"quota_usage": 0, "config": {"quota_total": 100}}]})
+        assert request.headers["authorization"] == "Bearer SECRET-PAGE"
+        responses = {
+            "/v26.0/ig-account/media": {"id": "container"},
+            "/v26.0/container": {"status_code": "FINISHED"},
+            "/v26.0/ig-account/media_publish": {"id": "ig-post"},
+            "/v26.0/ig-post": {"permalink": "https://www.instagram.com/p/example/"},
+        }
+        assert path in responses
+        return httpx.Response(200, json=responses[path])
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    adapter = ADAPTERS["instagram"](settings, db, post, client)
+    adapter.dry = False
+    assert adapter.limit()["data"][0]["quota_usage"] == 0
+    result = adapter.publish(post, post.idempotency_key)
+    assert result.status == "published" and result.platform_post_id == "ig-post"
+    assert seen.count("/v26.0/ig-account/content_publishing_limit") == 2
+    records = db.scalars(select(RequestRecord).where(RequestRecord.post_id == post.id)).all()
+    assert all(record.state == "done" for record in records)
+    assert all(record.request["headers"]["Authorization"] == "<redacted>" for record in records)
+    assert "SECRET-" not in json.dumps([record.request for record in records])
+
+
 @pytest.mark.parametrize("platform", ["linkedin", "instagram", "facebook", "x", "tiktok"])
 def test_mocked_live_publish_flows(db, settings, assets, video_bytes, monkeypatch, platform):
     monkeypatch.setattr("social.adapters.platforms.public_url", lambda u: u)

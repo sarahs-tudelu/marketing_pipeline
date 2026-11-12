@@ -337,7 +337,8 @@ class BaseAdapter:
 
     def direct(self, method, url, **kwargs):
         self._validate_host(url, True)
-        response = self.client.request(method, url, headers=self.headers(), **kwargs)
+        headers = self.headers() | kwargs.pop("headers", {})
+        response = self.client.request(method, url, headers=headers, **kwargs)
         body = response.json()
         failure = error_for(response, body)
         if failure:
