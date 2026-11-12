@@ -135,6 +135,8 @@ def test_fixture_generation_offline_platform_rendition_and_post(db, settings, op
             (1080, 1350) if operation == "image" else (720, 1280)
         )
         assert result.tags["source_asset_ids"]
+        if operation == "image":
+            assert result.media["embedded_provenance"]["ai_declared"]
         assert db.get(Asset, result.tags["rendition"]["original_asset_id"]).checksum != result.checksum
         from social.config import profiles
 

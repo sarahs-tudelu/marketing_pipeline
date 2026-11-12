@@ -11,6 +11,7 @@ from .audio_review import review_audio
 from .config import profiles
 from .db import now, uid
 from .facts import Facts, active, caption_fact_ids, composed, content_digest, part_fact_ids, render
+from .image_provenance import verify_asset_metadata
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
 from .provenance import asset_source_error, asset_type, requires_ai_review
@@ -109,7 +110,7 @@ def media_errors(assets, profile, platform):
     return errors
 
 
-def check_disclosure(post, assets, live=False):
+def check_disclosure(post, assets, live=False, *, settings=None):
     needed = any(requires_ai_review(a) for a in assets)
     reasons = [f"{a.id}: {error}" for a in assets if (error := asset_source_error(a))]
     if post.ai_disclosure != needed:
@@ -120,11 +121,17 @@ def check_disclosure(post, assets, live=False):
     method = {"instagram": "is_ai_generated", "x": "made_with_ai", "tiktok": "manual_label"}.get(
         post.platform, "is_ai_generated" if facebook_video else "preserved_metadata"
     )
+    evidence = [verify_asset_metadata(a, settings) for a in assets if requires_ai_review(a)] if method == "preserved_metadata" else []
+    if live:
+        reasons.extend(f"{e['asset_id']}: {e['reason']}" for e in evidence if not e["byte_verified"])
     return not reasons, {
         "required": needed,
         "method": method,
         "caption_disclosure": False,
         "reasons": reasons,
+        "embedded_evidence": evidence,
+        "metadata_verified": bool(evidence) and all(e["byte_verified"] for e in evidence),
+        "metadata_required_for_live": needed and method == "preserved_metadata",
         "limitations": "Platform detection of embedded metadata is not guaranteed."
         if needed and method == "preserved_metadata"
         else "",
@@ -225,7 +232,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         ),
     )
     needed = any(requires_ai_review(a) for a in assets)
-    check("disclosure", lambda: check_disclosure(post, assets, live))
+    check("disclosure", lambda: check_disclosure(post, assets, live, settings=settings))
 
     def rights():
         # Not public media supports dry runs only; legacy unclassified text keeps its prior behavior.
@@ -300,7 +307,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
             "required_disclaimers": facts.required_disclaimers,
             "hashtags": facts.hashtags.get(post.platform, [])[: profile.hashtag_limit],
             "automatic_caption_disclosure": False,
-            "disclosure_check": next(c.details for c in results if c.name == "disclosure"),
+            "disclosure_check": next(c.details | {"passed": c.passed} for c in results if c.name == "disclosure"),
         },
         "assets": [
             {

@@ -1,5 +1,6 @@
 """Create separately tracked publishing renditions; never replace source media."""
 
+import hashlib
 import io
 from fractions import Fraction
 
@@ -7,14 +8,26 @@ import av
 import numpy as np
 from PIL import Image, ImageOps
 
+from .image_provenance import TYPES, declaration_xmp, inspect_xmp, read_image_provenance
 
-def image_rendition(data, width, height):
+
+def image_rendition(data, width, height, *, source=None, generator=None):
     with Image.open(io.BytesIO(data)) as image:
+        inherited = inspect_xmp(image.info)
+        if source == "company" and inherited["ai_declared"]:
+            raise ValueError("An embedded AI declaration cannot be removed by choosing company media")
+        if source is None and inherited["ai_declared"]:
+            source = next(k for k, v in TYPES.items() if v == inherited["digital_source_type"])
+            generator = inherited.get("ai_system") or "Unspecified AI system (source IPTC declaration)"
+        xmp = declaration_xmp(source, generator, hashlib.sha256(data).hexdigest()) if source in TYPES else None
         image = ImageOps.exif_transpose(image).convert("RGB")
         image = ImageOps.pad(image, (width, height), color="#f4f2ed")
         output = io.BytesIO()
-        image.save(output, "JPEG", quality=92, optimize=True)
-        return output.getvalue()
+        image.save(output, "JPEG", quality=92, optimize=True, **({"xmp": xmp} if xmp else {}))
+        result = output.getvalue()
+        if xmp and read_image_provenance(result)["digital_source_type"] != TYPES[source]:
+            raise ValueError("The image encoder did not retain the required IPTC AI declaration")
+        return result
 
 
 def audio_samples(data, start=0, duration=None):

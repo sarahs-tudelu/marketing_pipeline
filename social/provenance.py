@@ -9,6 +9,7 @@ def requires_ai_review(asset):
         or (asset.generator or "").strip()
         or (asset.prompt or "").strip()
         or (asset.tags or {}).get("asset_type") == "ai_concept"
+        or (asset.media or {}).get("embedded_provenance", {}).get("ai_declared", False)
     )
 
 
@@ -23,6 +24,8 @@ def source_error(source, generator, prompt, tags):
 
 
 def asset_source_error(asset):
+    if asset.source == "company" and (asset.media or {}).get("embedded_provenance", {}).get("ai_declared"):
+        return "Embedded IPTC metadata declares AI media; correct its Source and creation record"
     return source_error(
         asset.source, (asset.generator or "").strip(), (asset.prompt or "").strip(), asset.tags or {}
     )

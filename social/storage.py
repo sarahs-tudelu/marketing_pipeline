@@ -11,6 +11,7 @@ import boto3
 from botocore.config import Config
 from PIL import Image
 
+from .image_provenance import inspect_xmp
 from .models import Asset
 from .provenance import source_error
 from .rights import owner_value, usage_rights
@@ -135,6 +136,7 @@ def _inspect_media(data, filename, settings):
                 "duration": 0,
                 "frames": getattr(im, "n_frames", 1),
                 "metadata_keys": sorted(im.info.keys()),
+                "embedded_provenance": inspect_xmp(im.info),
                 "mode": im.mode,
             }
     except (OSError, SyntaxError):
@@ -235,6 +237,8 @@ def ingest(
 
         rights_expire_at = rights_expire_at.astimezone(timezone.utc).replace(tzinfo=None)
     media = inspect_media(data, filename, settings)
+    if source == "company" and media.get("embedded_provenance", {}).get("ai_declared"):
+        raise ValueError("This file contains an IPTC AI declaration. Choose Source: AI-generated or AI-edited and supply its creation details.")
     checksum = hashlib.sha256(data).hexdigest()
     extension = {
         "image/jpeg": ".jpg",

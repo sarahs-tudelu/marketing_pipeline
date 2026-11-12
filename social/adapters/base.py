@@ -125,7 +125,7 @@ class BaseAdapter:
         errors = media_errors(self.assets(), profile, self.platform)
         if not post.caption or weighted_length(post.caption, self.platform) > profile.max_length:
             errors.append("Invalid caption")
-        disclosure_ok, disclosure = check_disclosure(post, self.assets(), live=not self.dry)
+        disclosure_ok, disclosure = check_disclosure(post, self.assets(), live=not self.dry, settings=self.s)
         if not disclosure_ok:
             errors.extend(disclosure["reasons"])
         if errors:

@@ -465,8 +465,11 @@ def _finish(db, settings, job):
     else:
         profile = profiles(settings)[job.platform]
         data = storage(settings).read(first.storage_key)
+        if hashlib.sha256(data).hexdigest() != first.checksum:
+            raise ValueError("Source integrity failed before creating the publishing rendition")
         if brief["operation"] == "image":
-            data = image_rendition(data, profile.image_width, profile.image_height)
+            data = image_rendition(data, profile.image_width, profile.image_height,
+                                   source=first.source, generator=first.generator)
             name = f"{job.platform}-{job.id}.jpg"
         else:
             sound_asset = next((a for a in originals if a.media["mime"].startswith("audio/")), None)
