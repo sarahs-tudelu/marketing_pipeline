@@ -74,6 +74,7 @@
     approve: ["Rechecking post…", "Running the approval checks."],
     edit: ["Saving and checking…", "Reviewing your changes."],
     delete: ["Deleting draft…", "Removing this draft from your workspace."],
+    retry: ["Preparing retry…", "Reusing the saved caption and media, then queuing fresh checks and scheduling."],
     assets: ["Uploading media…", "Saving the original file and its details."],
     posts: ["Creating draft…", "Preparing your post."],
   };

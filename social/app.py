@@ -35,6 +35,7 @@ from .models import (
     MediaCampaign,
     MediaJob,
     Post,
+    PostRetry,
     RequestRecord,
     Transition,
 )
@@ -42,6 +43,8 @@ from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, delete_draft, draft, generate
 from .provider_errors import ProviderError
 from .providers import Providers
+from .retries import block_reason as retry_block_reason
+from .retries import original_post, retry_post
 from .rights import RIGHTS, owner_value, rights_label, usage_rights
 from .scheduler import schedule
 from .storage import ingest
@@ -224,6 +227,7 @@ def create_app(settings=None):
                 }
             )
         post = db.get(Post, post_id) if post_id else None
+        retry_existing = db.get(PostRetry, post.id) if post and post.status == "failed" else None
         posts = db.scalars(
             select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(200)
         ).all()
@@ -248,6 +252,9 @@ def create_app(settings=None):
                 "csrf": request.session["csrf"],
                 "posts": posts,
                 "post": post,
+                "retry_existing": retry_existing,
+                "retry_original": original_post(db, post) if post else None,
+                "retry_block_reason": retry_block_reason(db, settings, post) if post and post.status == "failed" and not retry_existing else "",
                 "post_busy": ((post.status == "publishing" or post_processing(engine, post.id)) if post_busy is None else post_busy) if post else False,
                 "post_revision": db.scalar(select(func.max(Transition.id)).where(Transition.post_id == post.id)) if post else 0,
                 "connections": state,
@@ -466,6 +473,8 @@ def create_app(settings=None):
             lock_post(db, post)
         if action == "generate":
             generate(db, settings, post)
+        elif action == "retry":
+            post = retry_post(db, settings, post, actor)
         elif action == "delete":
             delete_draft(db, post, actor)
         elif action in {"check", "approve"}:
@@ -556,7 +565,7 @@ def create_app(settings=None):
         try:
             if post_processing(engine, post_id):
                 raise PostBusy("This post is being processed")
-            await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts)
+            result = await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts)
         except PostBusy:
             db.rollback()
             return page(request, db, "post", post_id, post_busy=True, status_code=202)
@@ -566,7 +575,12 @@ def create_app(settings=None):
                 return RedirectResponse("/", status_code=303)
             # Another tab or the worker completed the action; display its saved result.
             return RedirectResponse(f"/posts/{post_id}", status_code=303)
-        return RedirectResponse("/" if post.status == "deleted" else f"/posts/{post.id}", status_code=303)
+        except ValueError as exc:
+            if action != "retry":
+                raise
+            db.rollback()
+            return page(request, db, "post", post.id, error_message=str(exc), status_code=400)
+        return RedirectResponse("/" if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)
 
     @app.post("/forms/live-platform", dependencies=mutation)
     async def live_platform(request: Request, db: DB):

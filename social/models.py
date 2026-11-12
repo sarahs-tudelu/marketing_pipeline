@@ -78,6 +78,14 @@ class Post(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class PostRetry(Base):
+    __tablename__ = "post_retries"
+    original_post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"), primary_key=True)
+    retry_post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"), unique=True)
+    actor: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class Transition(Base):
     __tablename__ = "transitions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

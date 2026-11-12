@@ -10,7 +10,7 @@ from .config import get_settings
 from .connections import import_meta_from_env, refresh_all
 from .db import make_engine, now, sessions
 from .lifecycle import PostConflict
-from .models import MediaJob, Post
+from .models import MediaJob, Post, PostRetry
 from .monitoring import alert, deliver_alerts, event, setup_logging
 from .pipeline import bootstrap, generate, publish_due
 from .storage import watch_folder
@@ -30,6 +30,10 @@ def advance_queue(db, settings):
             Post.status.in_(active),
         )
     ))
+    retries = set(db.scalars(select(PostRetry.retry_post_id).join(Post, Post.id == PostRetry.retry_post_id).where(
+        Post.status.in_(active),
+    )))
+    requested.update(retries)
     query = select(Post).where(Post.status.in_(active))
     if not can_automate(db, settings):
         query = query.where(Post.id.in_(requested))
@@ -44,7 +48,7 @@ def advance_queue(db, settings):
             if post.status == "draft":
                 generate(db, settings, post)
             if post.status == "generated" and can_automate(db, settings, requested=explicit):
-                run_gate(db, settings, post)
+                run_gate(db, settings, post, **({"live": not post.dry_run} if post.id in retries else {}))
             if post.status == "approved" and can_automate(db, settings, requested=explicit):
                 schedule(db, settings, post)
         except PostConflict:

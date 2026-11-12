@@ -77,6 +77,8 @@ Only one unfinished batch per campaign is allowed. Unfinished, uncertain or fail
 
 ## Recovery
 
+For a failed **post**, open it from Needs attention and use **Retry post** once its underlying issue is corrected. The new attempt reuses the saved media and caption, runs fresh checks and schedules normally, including with routine automation off. It preserves the original error/audit and delivery mode, and the campaign follows the retry. No new Runway generation is requested. If publication may already have been accepted, retry is blocked until the result is reconciled. This post retry is separate from resuming an unfinished media job below. Apply migration `f2b6d9a51034` before updating web/worker.
+
 Runway submissions checkpoint `submitting` before the paid call, then save the returned task ID. The worker polls once per tick, downloads completed outputs immediately and resumes from stored originals if rendition/storage processing fails. It never sleeps waiting for a video inside a web request. `MEDIA_JOBS_PER_TICK` bounds work, and `RUNWAY_TASK_TIMEOUT_SECONDS` bounds polling time.
 
 Use **Resume saved task / output** after correcting a download/storage/configuration problem. Known tasks are polled again without another paid submission. An interrupted/ambiguous submission becomes **uncertain** and is never automatically retried; recover the original task ID from Runway and use **Recover original task**. Do not create another job until the first submission is reconciled. Terminal Runway failures require a corrected new brief; resuming a failed remote task only rechecks that same task. Queued or failed work can be removed from the local queue; this does not cancel or refund an already accepted Runway task.

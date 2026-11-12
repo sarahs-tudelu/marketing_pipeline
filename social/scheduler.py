@@ -76,7 +76,13 @@ def schedule(db, settings, post, earliest=None):
     from .adapters import adapter
 
     selected = adapter(settings, db, post)
-    post.dry_run = selected.dry
+    from .retries import original_post
+
+    original = original_post(db, post)
+    if original and not original.dry_run:
+        if original.account_id != account.external_id or selected.dry:
+            raise ValueError("Retry requires the original live account with live posting enabled")
+    post.dry_run = original.dry_run if original else selected.dry
     post.account_id = account.external_id or "dry-" + post.platform
     profile = profiles(settings)[post.platform]
     candidate = max(earliest or now(), now()).replace(second=0, microsecond=0) + timedelta(minutes=1)

@@ -1,0 +1,21 @@
+{% if post.status == 'failed' %}
+<section id="post-retry"><h2>Retry this post</h2>
+  {% if retry_existing %}
+    <p>A retry has already been created. Follow its progress below.</p>
+    <a class="button primary" href="/posts/{{ retry_existing.retry_post_id }}">Open retry</a>
+  {% else %}
+    <p>Reuse this caption and media, run fresh checks, and schedule a new {{ 'simulated' if post.dry_run else 'live' }} attempt. The original error and history stay here.</p>
+    {% if retry_block_reason %}<p class="error">{{ retry_block_reason }}</p>{% endif %}
+    <form method="post" action="/forms/posts/{{ post.id }}/retry">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="primary" {{ 'disabled' if retry_block_reason else '' }}>Retry post</button>
+    </form>
+    <small>After you correct the original issue, retry runs even when Automatic posts is off. Publication follows the normal checks, pauses and schedule.</small>
+  {% endif %}
+</section>
+{% elif retry_original %}
+<section id="post-retry"><h2>Retry attempt</h2>
+  <p>This attempt uses the saved caption and media from <a href="/posts/{{ retry_original.id }}">the original failed post</a>.</p>
+  {% if post.status in ['generated','approved'] %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Waiting for checks and scheduling. Progress updates automatically.</span></div>{% endif %}
+</section>
+{% endif %}
