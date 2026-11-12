@@ -50,6 +50,7 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
     with av.open(output, "w", format="mp4") as target:
         video = target.add_stream("libx264", rate=30)
         video.width, video.height, video.pix_fmt = width, height, "yuv420p"
+        video.gop_size = 60  # Two-second keyframe spacing also fits Facebook Reels' 2-5 second GOP limit.
         video.options = {"crf": "21", "preset": "veryfast"}
         next_index = 0
         # Add the audio stream before writing the MP4 header; absent clips get timed silence.

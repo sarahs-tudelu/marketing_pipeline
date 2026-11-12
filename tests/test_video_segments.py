@@ -74,6 +74,8 @@ def test_90_second_join_preserves_order_audio_and_exact_duration():
         assert media.duration / av.time_base == 90
         frames = list(media.decode(video=0))
         assert len(frames) == 2700 and frames[-1].time == pytest.approx(89 + 29/30)
+        keyframes = [i for i, frame in enumerate(frames) if frame.key_frame]
+        assert max(b - a for a, b in zip(keyframes, keyframes[1:] + [len(frames)])) <= 60
         for position, channel in ((0, 0), (899, 0), (900, 1), (1799, 1), (1800, 2), (2699, 2)):
             assert frames[position].to_ndarray(format='rgb24').mean(axis=(0, 1)).argmax() == channel
     samples = audio_samples(output)
