@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     runway_video_model: Literal["gen4.5"] = "gen4.5"
     runway_edit_model: Literal["aleph2"] = "aleph2"
     runway_audio_model: Literal["seed_audio"] = "seed_audio"
+    runway_music_model: Literal["eleven_music_v2_5"] = "eleven_music_v2_5"
     runway_task_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
     media_jobs_per_tick: int = Field(default=4, ge=1, le=20)
     video_provider_url: str = ""

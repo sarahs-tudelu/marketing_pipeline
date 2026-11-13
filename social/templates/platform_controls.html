@@ -4,6 +4,7 @@
   <form method="post" action="/forms/automation">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="enabled" value="{{ 'false' if automation_enabled else 'true' }}">
+    <input type="hidden" name="return_to" value="/admin/automation">
     <button role="switch" aria-checked="{{ 'true' if automation_enabled else 'false' }}" class="primary">
       {{ 'Turn off automatic posts' if automation_enabled else 'Enable automatic posts' }}
     </button>
@@ -11,16 +12,16 @@
   <p class="muted">When off, you can prepare and schedule posts manually. Create now requests, work already in progress and queued media jobs can finish. Already scheduled posts can still publish; use <b>Stop all publishing</b> to stop delivery too.</p>
   {% if control.killed %}<p class="muted">The global stop is active. Enabling automatic posts does not resume the pipeline.</p>{% endif %}
 </section>
-{% include 'next_post_idea.html' %}
 <section><h2>Platform controls</h2>
   <p>Live posting applies when posts are scheduled. Posts already scheduled as simulated stay simulated. Turning live posting off stops further live requests; a request already sent may finish.</p>
   <div class="platform-grid">{% for c in connections %}<article class="card">
     <h3>{{ c.account.platform|title }}</h3>
     <p>{{ 'Paused' if c.account.paused else 'Ready' }} · {{ 'Simulated delivery' if c.dry else 'Live delivery' }}</p>
-    {% include 'live_toggle.html' %}
+    {% with return_to='/admin/automation' %}{% include 'live_toggle.html' %}{% endwith %}
     <form method="post" action="/forms/control">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="platform" value="{{ c.account.platform }}">
+      <input type="hidden" name="return_to" value="/admin/automation">
       <input type="hidden" name="enabled" value="{{ 'false' if c.account.paused else 'true' }}">
       <button>{{ 'Resume' if c.account.paused else 'Pause' }}</button>
     </form>

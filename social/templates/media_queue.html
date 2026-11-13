@@ -1,0 +1,33 @@
+<section id="media-queue"><div class="section-head"><h2>Generation queue</h2><div class="actions inline-actions"><a class="button" href="/admin/media-queue">Refresh status</a><a class="button primary" href="/admin/create">New post from an idea</a></div></div>
+  <p class="muted">Progress updates automatically while your media is prepared. You can leave this page; progress is saved.</p>
+  {% for j in media_jobs %}<article class="card" data-job-id="{{ j.id }}" data-job-state="{{ j.state }}" data-job-stage="{{ j.stage }}" data-job-error="{{ j.error }}" data-job-output="{{ j.output_asset_id or '' }}" data-job-post="{{ j.post_id or '' }}" data-job-post-status="{{ media_job_posts.get(j.post_id, '') }}"><h3>{{ j.brief.campaign }} · {{ j.platform|platform }}</h3>
+    {% if j.state == 'planned' %}<p role="status">Saved for the next automatic post. Waiting for automation and an available platform queue.</p>{% endif %}
+    {% if j.state in ['queued','submitting','running','rendering'] %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>{{ {'queued':'Waiting to start…', 'submitting':'Starting generation…', 'running':'Generating media…', 'rendering':'Preparing media and visual summary…'}[j.state] }}</strong><small>You can leave this page; progress is saved.</small></span></div>{% endif %}
+    <p><span class="status">{{ j.state }}</span> · {{ {'image': 'Image', 'video': 'Video', 'video_edit': 'Video edit', 'audio': 'Audio'}.get(j.brief.operation, j.brief.operation) }}{% if j.brief.operation in ['video', 'video_edit'] %} · {{ j.brief.duration }} seconds{% endif %}{% if j.brief.get('end_card') %} · logo end card{% endif %}{% if j.brief.get('audio_prompt') %} · music{% endif %} · {{ j.stage }}</p>
+    {% if j.error %}<p class="error">{{ j.error }}</p>{% endif %}
+    {% if j.task_id %}<small>Runway task: {{ j.task_id }}</small>{% endif %}
+    {% if j.state == 'uncertain' and not j.task_id %}<form method="post" action="/forms/media-jobs/{{ j.id }}/reconcile"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Original Runway task ID<input name="task_id" required pattern="[A-Za-z0-9_-]{1,100}"></label><button>Recover original task</button></form>{% endif %}
+    {% if j.brief.get('video_segments') %}
+      {% set completed_clips = j.brief.video_segments|selectattr('output_asset_id', 'defined')|list|length %}
+      <p data-completed-clips="{{ completed_clips }}">Video clips saved: {{ completed_clips }} / {{ j.brief.video_segments|length }} · Finished duration: {{ j.brief.duration }} seconds</p>
+      {% if j.brief.video_segments[0].get('shot') %}<ol class="clip-summary">{% for s in j.brief.video_segments %}<li>{{ s.duration }} s · {{ s.shot.setting or 'Setting chosen by the writer' }}{% if s.get('system') or s.shot.system %} · {{ s.get('system') or s.shot.system }}{% endif %}{{ ' ✓' if s.get('output_asset_id') else '' }}</li>{% endfor %}{% if j.brief.get('end_card') %}<li>{{ j.brief.end_card.seconds }} s · Tudelu logo end card</li>{% endif %}</ol>{% endif %}
+    {% endif %}
+    {% if j.post_id %}
+      {% set post_state = media_job_posts.get(j.post_id, '') %}
+      <p>Post: <b>{{ post_state|replace('_', ' ') }}</b></p>
+      {% if post_state in ['draft','generated','approved'] and (j.brief.get('workflow') == 'immediate' or automation_enabled) %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Preparing caption, checks and schedule…</span></div>{% endif %}
+      <a class="button primary" href="/posts/{{ j.post_id }}">Open post</a>
+    {% endif %}
+    {% if j.output_asset_id %}<a class="button" href="/admin/assets">View in asset library</a>{% endif %}
+    {% if j.state in ['failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resume"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume saved task / output</button></form>{% endif %}
+    {% if j.state in ['planned','queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
+    {% if j.brief.get('prompt_writer') %}{% set sources = j.brief.prompt_writer.sources %}
+    <details><summary>Prompt{{ 's' if j.brief.get('video_segments') and j.brief.video_segments[0].get('shot') else '' }} sent to Runway{{ ' · ' ~ j.brief.depicted_system if j.brief.get('depicted_system') else '' }}</summary>
+      {% if j.brief.get('video_segments') and j.brief.video_segments[0].get('shot') %}{% for s in j.brief.video_segments %}<p><b>Clip {{ s.index + 1 }}{{ ' · ' ~ s.system if s.get('system') else '' }}</b><br>{{ s.get('prompt', '') }}</p>{% endfor %}{% else %}<p>{{ j.brief.generation_prompt }}</p>{% endif %}
+      {% if j.brief.get('audio_prompt') %}<p><b>Music</b><br>{{ j.brief.audio_prompt }}</p>{% endif %}
+      <small>Written by {{ j.brief.prompt_writer.writer }} from {{ 'tudelu.com, ' if sources.website else '' }}facts {{ sources.facts_version }}, {{ sources.uploaded_asset_ids|length }} uploaded, {{ sources.reference_ids|length }} selected and {{ sources.previous_asset_ids|length }} previously generated media · {{ rights_label(j.brief.rights) }}{{ ' · ' ~ j.brief.owner if j.brief.get('owner') else '' }}</small>
+    </details>
+    {% elif j.brief.operation != 'audio' and j.stage == 'visual' %}<small>The Runway prompt is written when this job starts.</small>{% endif %}
+    <details><summary>Full brief and provenance</summary><pre>{{ json.dumps(j.brief, indent=2) }}</pre></details>
+  </article>{% else %}<p>No media jobs yet. <a href="/admin/create">Start with an idea</a>.</p>{% endfor %}
+</section>

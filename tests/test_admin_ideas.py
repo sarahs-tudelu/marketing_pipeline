@@ -28,7 +28,8 @@ def test_next_post_idea_waits_for_automation_and_is_consumed_once(db, settings):
     brief = brief_for(db, settings)
     db.commit()
     with TestClient(create_app(settings)) as client:
-        assert 'id="next-post-idea"' in client.get("/").text
+        assert 'href="/admin/create"' in client.get("/").text
+        assert 'id="new-idea"' in client.get("/admin/create").text
         response = submit_idea(client, brief, "next")
         assert response.status_code == 200 and "Saved for the next automatic post" in response.text
         job = db.scalar(select(MediaJob))

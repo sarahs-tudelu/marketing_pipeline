@@ -1,0 +1,63 @@
+<form method="post" action="/forms/ideas/create" id="idea-plan">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% for key in ['prompt', 'format', 'kind', 'facts_id', 'product', 'rights', 'owner', 'website'] %}<input type="hidden" name="{{ key }}" value="{{ idea_form.get(key, '') }}">{% endfor %}
+  {% for value in idea_form.get('platforms', []) %}<input type="hidden" name="platforms" value="{{ value }}">{% endfor %}
+  {% for value in idea_form.get('reference_ids', []) %}<input type="hidden" name="reference_ids" value="{{ value }}">{% endfor %}
+  {% for value in plan.available_systems %}<input type="hidden" name="available_systems" value="{{ value }}">{% endfor %}
+  {% for value in plan.notes %}<input type="hidden" name="notes" value="{{ value }}">{% endfor %}
+  <input type="hidden" name="planner" value="{{ plan.planner }}">
+  <section>
+    <div class="section-head"><h2>Here's the plan</h2><small>{{ 'Planned by ' ~ plan.planner if plan.planner and plan.planner != 'rules' else 'Planned from the words in your idea' }}</small></div>
+    <p class="plan-summary">{{ plan_summary }}</p>
+    <blockquote class="idea-quote">{{ idea_form.get('prompt', '') }}</blockquote>
+    {% if plan.notes %}<h3>How your idea was read</h3><ul class="plan-notes">{% for note in plan.notes %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
+  </section>
+  <section>
+    <h2>Adjust anything before generating</h2>
+    <div class="two">
+      <label>Post name<input name="campaign" required maxlength="200" value="{{ plan.title }}"></label>
+      <label>Format<select name="operation" data-format-switch>{% for value, label in formats.items() if value != 'auto' %}<option value="{{ value }}" {{ 'selected' if plan.operation == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="two">
+      <label data-show-for="video video_edit">Length (seconds)<input type="number" name="duration" min="3" max="90" value="{{ plan.duration }}"></label>
+      <label>Content style<select name="plan_kind"><option value="promotional" {{ 'selected' if plan.kind == 'promotional' else '' }}>Promotional</option><option value="non_promotional" {{ 'selected' if plan.kind == 'non_promotional' else '' }}>Editorial / non-promotional</option></select></label>
+    </div>
+    <fieldset data-show-for="video image"><legend>{{ 'Clips, in viewing order' if plan.operation != 'image' else 'Scene' }}</legend>
+      <p class="muted" data-show-for="video">Each clip shows one setting and one Tudelu system. Leave the system blank to let the prompt writer choose from tudelu.com. Clear both fields to remove a clip. Up to {{ max_clips }} clips, at least 2 seconds each.</p>
+      <p class="muted" data-show-for="image">An image uses the first row only.</p>
+      <ol class="clip-list">
+        {% set rows = plan.shots + [{'setting': '', 'system': ''}] if plan.shots|length < max_clips else plan.shots %}
+        {% for shot in rows %}
+        <li>
+          {% set extra_row = plan.shots and loop.index0 >= plan.shots|length %}
+          <span class="clip-length" data-show-for="video">{% if extra_row %}New{% elif loop.index0 < clip_seconds|length %}{{ clip_seconds[loop.index0] }} s{% endif %}</span>
+          <label>Setting<input name="shot_setting" maxlength="160" value="{{ shot.setting }}" placeholder="{{ 'Add a clip: a place, time of day and mood' if extra_row else 'Let the writer choose' }}"></label>
+          <label>Tudelu system<input name="shot_system" maxlength="120" list="known-systems" value="{{ shot.system }}" placeholder="Let the writer choose"></label>
+        </li>
+        {% endfor %}
+      </ol>
+      <datalist id="known-systems">{% for name in plan.available_systems %}<option value="{{ name }}">{% endfor %}</datalist>
+    </fieldset>
+    <div data-show-for="video video_edit">
+      <label>Music<textarea name="soundtrack" rows="2" maxlength="1800" placeholder="Leave blank for no music">{{ plan.soundtrack }}</textarea></label>
+      <small>Runway composes an instrumental track for the full length of the video. Mention vocals if you want them.</small>
+      <fieldset><legend>Ending</legend>
+        <label class="checkbox"><input type="checkbox" name="end_card" {{ 'checked' if plan.end_card and logos else '' }} {{ 'disabled' if not logos else '' }}>End with the Tudelu logo ({{ end_card_seconds }} seconds)</label>
+        {% if logos %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>
+        {% elif plan.end_card %}<p class="error" role="status">Your idea asks for the logo at the end, but no logo is in the asset library yet. <a href="/admin/upload">Upload the logo</a> as a PNG and tick <i>This is the Tudelu logo</i>, then plan the idea again. Without it, the video ends on the last clip.</p>
+        {% else %}<p class="muted">To end videos with the logo, <a href="/admin/upload">upload it</a> and tick <i>This is the Tudelu logo</i>.</p>{% endif %}
+      </fieldset>
+    </div>
+  </section>
+  <section>
+    <h2>What will be generated</h2>
+    <p>{{ work_summary }}</p>
+    <p class="muted">Nothing is generated until you choose below. Each Runway prompt is written from your idea, tudelu.com, the approved facts and your Public uploads just before it is sent.</p>
+    <div class="actions">
+      <button class="primary" name="mode" value="once">Create now</button>
+      <button name="mode" value="next">Use for next automatic post</button>
+      <button name="mode" value="back" formnovalidate>Change the idea</button>
+    </div>
+    <small>Create now generates the media, writes the caption, runs checks and schedules the post, even when automatic posts are off. Next automatic post waits until automatic posts are on. Global and platform pauses still apply.</small>
+  </section>
+</form>

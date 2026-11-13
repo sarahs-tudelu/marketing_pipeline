@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
@@ -23,8 +23,21 @@ from .config import PLATFORMS, get_settings, profiles
 from .db import make_engine, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
+from .idea_plan import (
+    END_CARD_SECONDS,
+    FORMATS,
+    MAX_CLIPS,
+    STYLES,
+    IdeaPlan,
+    Shot,
+    logo_assets,
+    plan_idea,
+    plan_summary,
+    shot_seconds,
+    work_summary,
+)
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
-from .media_studio import CreativeBrief, queue_jobs, resume_job, validate_sources
+from .media_studio import CreativeBrief, queue_jobs, resume_job, validate_sources, website_snapshot
 from .models import (
     Account,
     Alert,
@@ -66,6 +79,9 @@ def create_app(settings=None):
     engine = make_engine(settings.database_dsn)
     factory = sessions(engine)
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    templates.env.filters["platform"] = lambda name: {"linkedin": "LinkedIn", "x": "X", "tiktok": "TikTok"}.get(
+        name, str(name).title()
+    )
     static_dir = Path(__file__).parent / "static"
     static_version = hashlib.sha256(
         (static_dir / "studio.js").read_bytes() + (static_dir / "studio.css").read_bytes()
@@ -206,6 +222,8 @@ def create_app(settings=None):
         asset_form=None,
         upload_form=None,
         bucket_form=None,
+        idea_form=None,
+        plan=None,
         post_busy=None,
         status_code=200,
     ):
@@ -236,8 +254,17 @@ def create_app(settings=None):
             posts = [p for p in posts if p.status in {"held", "awaiting_manual", "failed"}]
         from .analytics import report
 
-        media_jobs = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-studio" else []
+        media_jobs = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-queue" else []
         media_job_posts = dict(db.execute(select(Post.id, Post.status).where(Post.id.in_([j.post_id for j in media_jobs if j.post_id]))).all())
+        active_jobs = db.scalar(
+            select(func.count(MediaJob.id)).where(
+                MediaJob.state.in_(["planned", "queued", "submitting", "running", "rendering"])
+            )
+        )
+        assets = db.scalars(select(Asset).order_by(Asset.created_at.desc())).all()
+        facts = db.scalars(select(FactSheet).order_by(FactSheet.created_at.desc())).all()
+        idea_form = idea_form or {}
+        default_facts = next((f.id for f in facts if not f.document.get("demo_only")), facts[0].id if facts else "")
         return templates.TemplateResponse(
             request=request,
             name="studio.html",
@@ -263,8 +290,20 @@ def create_app(settings=None):
                 "control": db.get(Control, 1),
                 "automation_enabled": settings.automates_posts(db.get(Control, 1)),
                 "platforms": PLATFORMS,
-                "assets": db.scalars(select(Asset).order_by(Asset.created_at.desc())).all(),
-                "facts": db.scalars(select(FactSheet).order_by(FactSheet.created_at.desc())).all(),
+                "assets": assets,
+                "facts": facts,
+                "default_facts_id": default_facts,
+                "active_jobs": active_jobs,
+                "idea_form": idea_form,
+                "plan": plan,
+                "plan_summary": plan_summary(plan, idea_form.get("platforms", [])) if plan else "",
+                "work_summary": work_summary(plan, idea_form.get("platforms", [])) if plan else "",
+                "clip_seconds": shot_seconds(plan) if plan else [],
+                "formats": FORMATS,
+                "styles": STYLES,
+                "max_clips": MAX_CLIPS,
+                "end_card_seconds": END_CARD_SECONDS,
+                "logos": logo_assets(assets) if view in {"create", "plan"} else [],
                 "alerts": db.scalars(select(Alert).order_by(Alert.created_at.desc()).limit(15)).all(),
                 "checks": db.scalars(
                     select(CheckResult).where(CheckResult.post_id == post_id).order_by(CheckResult.id.desc())
@@ -301,7 +340,19 @@ def create_app(settings=None):
 
     @app.get("/admin/{view}", response_class=HTMLResponse)
     def admin(view: str, request: Request, db: DB):
-        if view not in {"connections", "queues", "assets", "facts", "compose", "analytics", "media-studio"}:
+        if view not in {
+            "connections",
+            "queues",
+            "assets",
+            "upload",
+            "facts",
+            "compose",
+            "analytics",
+            "create",
+            "media-queue",
+            "media-studio",
+            "automation",
+        }:
             raise HTTPException(404)
         return page(request, db, view)
 
@@ -423,7 +474,139 @@ def create_app(settings=None):
                 },
                 status_code=400,
             )
-        return RedirectResponse("/admin/media-studio", status_code=303)
+        return RedirectResponse(
+            "/admin/media-studio" if form.get("mode") == "recurring" else "/admin/media-queue", status_code=303
+        )
+
+    def idea_values(form):
+        values = {key: str(form.get(key, "")) for key in ("prompt", "format", "kind", "facts_id", "product", "rights", "owner")}
+        values["product"] = "" if values["product"].strip() == "company" else values["product"].strip()
+        values["website"] = "on" if form.get("website") == "on" else ""
+        values["platforms"] = form.getlist("platforms")
+        values["reference_ids"] = form.getlist("reference_ids")
+        return values
+
+    def friendly(exc):
+        if isinstance(exc, ValidationError):
+            return " ".join(
+                str(e["msg"]).removeprefix("Value error, ").rstrip(".") + "." for e in exc.errors()[:3]
+            )
+        return str(exc)
+
+    @app.post("/forms/ideas/plan", dependencies=mutation)
+    async def plan_from_idea(request: Request, db: DB):
+        form = await request.form()
+        values = idea_values(form)
+        try:
+            idea = " ".join(values["prompt"].split())
+            if not idea:
+                raise ValueError("Describe your idea first")
+            if len(idea) > 1000:
+                raise ValueError("Keep the idea under 1,000 characters")
+            if not values["platforms"] or set(values["platforms"]) - set(PLATFORMS):
+                raise ValueError("Choose at least one platform")
+            usage_rights(values["rights"])
+            owner_value(values["owner"])
+            values["facts_id"] = values["facts_id"] or (
+                db.scalar(select(FactSheet.id).order_by(FactSheet.created_at.desc()).limit(1)) or ""
+            )
+            if not db.get(FactSheet, values["facts_id"]):
+                raise ValueError("Save an approved facts version first")
+            references = [db.get(Asset, i) for i in values["reference_ids"]]
+            if any(a is None for a in references):
+                raise ValueError("A selected reference is no longer in the asset library")
+            snapshot = await run_in_threadpool(website_snapshot, settings) if values["website"] else {}
+            assets = db.scalars(select(Asset).order_by(Asset.created_at.desc())).all()
+            plan = await run_in_threadpool(
+                plan_idea,
+                db,
+                settings,
+                idea=idea,
+                requested_format=values["format"] or "auto",
+                requested_style=values["kind"] or "auto",
+                product=values["product"] or "company",
+                facts_id=values["facts_id"],
+                snapshot=snapshot,
+                has_video_reference=any(a.media["mime"].startswith("video/") for a in references),
+                has_logo=bool(logo_assets(assets)),
+                platforms=values["platforms"],
+            )
+        except ValueError as exc:
+            db.rollback()
+            return page(request, db, "create", error_message=friendly(exc), idea_form=values, status_code=400)
+        return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
+
+    def plan_from_form(form):
+        shots = [
+            Shot(setting=setting, system=system)
+            for setting, system in zip(form.getlist("shot_setting"), form.getlist("shot_system"), strict=False)
+            if str(setting).strip() or str(system).strip()
+        ]
+        operation = str(form.get("operation", ""))
+        try:
+            duration = int(str(form.get("duration", "10")))
+        except ValueError:
+            duration = 10
+        return IdeaPlan(
+            title=str(form.get("campaign", "")),
+            operation=operation if operation in {"image", "video", "video_edit"} else "image",
+            duration=max(3, min(90, duration)),
+            kind="non_promotional" if form.get("plan_kind") == "non_promotional" else "promotional",
+            shots=shots[:MAX_CLIPS],
+            soundtrack=str(form.get("soundtrack", ""))[:1800],
+            end_card=form.get("end_card") == "on",
+            available_systems=[str(s) for s in form.getlist("available_systems")][:40],
+            notes=[str(n) for n in form.getlist("notes")][:8],
+            planner=str(form.get("planner", ""))[:100],
+        )
+
+    @app.post("/forms/ideas/create", dependencies=mutation)
+    async def create_from_plan(request: Request, db: DB):
+        form = await request.form()
+        values = idea_values(form)
+        mode = str(form.get("mode", "once"))
+        if mode == "back":
+            return page(request, db, "create", idea_form=values)
+        try:
+            plan = plan_from_form(form)
+            if mode not in {"once", "next"}:
+                raise ValueError("Choose Create now or Use for next automatic post")
+            if plan.end_card and plan.operation != "image" and not form.get("logo_id"):
+                raise ValueError("Choose the logo for the end card, or untick End with the Tudelu logo")
+            video = plan.operation != "image"
+            brief = CreativeBrief(
+                campaign=plan.title,
+                prompt=values["prompt"],
+                operation=plan.operation,
+                platforms=values["platforms"],
+                facts_id=values["facts_id"],
+                product=values["product"] or "company",
+                kind=plan.kind,
+                rights=values["rights"],
+                owner=values["owner"],
+                reference_ids=values["reference_ids"],
+                audio_prompt=plan.soundtrack.strip() if video else "",
+                duration=plan.duration if video else 5,
+                website=values["website"] == "on",
+                create_posts=True,
+                workflow={"once": "immediate", "next": "next"}[mode],
+                shots=plan.shots if plan.operation == "video" else plan.shots[:1] if not video else [],
+                end_card_asset_id=str(form.get("logo_id", "")) if video and plan.end_card else "",
+            )
+            await run_in_threadpool(queue_jobs, db, settings, brief)
+            db.commit()
+        except ValueError as exc:
+            db.rollback()
+            return page(
+                request,
+                db,
+                "plan",
+                error_message=friendly(exc),
+                idea_form=values,
+                plan=plan_from_form(form),
+                status_code=400,
+            )
+        return RedirectResponse("/admin/media-queue", status_code=303)
 
     @app.post("/forms/media-campaigns/{campaign_id}", dependencies=mutation)
     async def toggle_campaign(campaign_id: str, request: Request, db: DB):
@@ -463,7 +646,7 @@ def create_app(settings=None):
         else:
             raise ValueError("This job cannot perform that action")
         db.commit()
-        return RedirectResponse("/admin/media-studio", status_code=303)
+        return RedirectResponse("/admin/media-queue", status_code=303)
 
     @app.post("/api/posts", dependencies=mutation)
     def new_post(payload: DraftInput, db: DB):
@@ -584,6 +767,11 @@ def create_app(settings=None):
             return page(request, db, "post", post.id, error_message=str(exc), status_code=400)
         return RedirectResponse("/" if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)
 
+    def return_to(form, default):
+        # Only fixed in-app pages; never an arbitrary redirect target.
+        target = str(form.get("return_to", ""))
+        return target if target in {"/", "/admin/automation", "/admin/connections", "/admin/queues"} else default
+
     @app.post("/forms/live-platform", dependencies=mutation)
     async def live_platform(request: Request, db: DB):
         from .adapters import ADAPTERS
@@ -603,7 +791,7 @@ def create_app(settings=None):
         account.live_enabled = enabled
         db.commit()
         event("platform_live_changed", platform=platform, enabled=enabled, actor=request.state.actor)
-        return RedirectResponse("/admin/connections", status_code=303)
+        return RedirectResponse(return_to(form, "/admin/connections"), status_code=303)
 
     @app.post("/forms/automation", dependencies=mutation)
     async def automation_control(request: Request, db: DB):
@@ -615,7 +803,7 @@ def create_app(settings=None):
         control.automation_enabled = value == "true"
         db.commit()
         event("automation_changed", enabled=control.automation_enabled, actor=request.state.actor)
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(return_to(form, "/admin/automation"), status_code=303)
 
     @app.post("/forms/control", dependencies=mutation)
     async def control(request: Request, db: DB):
@@ -628,7 +816,7 @@ def create_app(settings=None):
             db.commit()
         else:
             set_kill(db, form["enabled"] == "true", request.state.actor)
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(return_to(form, "/admin/automation" if form.get("platform") else "/"), status_code=303)
 
     @app.post("/forms/facts", dependencies=mutation)
     async def facts_editor(request: Request, db: DB):
@@ -675,6 +863,7 @@ def create_app(settings=None):
                 "customer_permission",
                 "permission_reference",
                 "key",
+                "brand_logo",
             )
         }
 
@@ -687,6 +876,9 @@ def create_app(settings=None):
             raise ValueError('Tags must be a JSON object, for example {"product": "company"}.') from None
         if not isinstance(tags, dict):
             raise ValueError("Tags must be a JSON object")
+        if values.get("brand_logo") == "on":
+            # Marks the official logo used for video end cards.
+            tags = tags | {"brand_logo": True}
         try:
             expiry = (
                 datetime.fromisoformat(values["rights_expire_at"]) if values["rights_expire_at"] else None
@@ -713,7 +905,7 @@ def create_app(settings=None):
             return page(
                 request,
                 db,
-                "assets",
+                "upload",
                 error_message=message,
                 upload_form=upload_form,
                 bucket_form=bucket_form,
@@ -789,7 +981,7 @@ def create_app(settings=None):
             return page(
                 request,
                 db,
-                "assets",
+                "upload",
                 error_message=str(exc),
                 asset_form=values,
                 status_code=exc.status if isinstance(exc, ProviderError) else 400,

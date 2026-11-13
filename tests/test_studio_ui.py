@@ -162,7 +162,7 @@ def test_generation_progress_and_completion_in_browser(db, settings, assets, mon
     if kind == "checks":
         from social.pipeline import generate
         generate(db, settings, post)
-    route_path = "/admin/assets" if kind == "image" else f"/posts/{post.id}"
+    route_path = "/admin/upload" if kind == "image" else f"/posts/{post.id}"
     action = f"/forms/posts/{post.id}/{'check' if kind == 'checks' else 'generate'}" if kind != "image" else "/forms/generate-asset"
     label = {"caption": "Generate caption", "checks": "Run automated checks", "image": "Generate image"}[kind]
     status = {"caption": "Writing caption", "checks": "Checking post", "image": "Generating media"}[kind]
@@ -335,7 +335,7 @@ def test_background_post_progress_disables_actions_and_updates_result(db, settin
         asyncio.run(exercise(client))
 
 
-def test_media_queue_updates_without_discarding_creative_brief(db, settings):
+def test_media_queue_page_updates_in_place(db, settings):
     from test_runway_media import brief_for
 
     from social.media_studio import process_jobs, queue_jobs
@@ -350,26 +350,24 @@ def test_media_queue_updates_without_discarding_creative_brief(db, settings):
             browser = await driver.chromium.launch(executable_path=os.environ["BROWSER_BINARY"], headless=True)
             page = await browser.new_page()
             await page.route("**/*", lambda route: serve_studio_request(route, client))
-            await page.goto("http://studio.test/admin/media-studio")
-            await page.get_by_label("Your prompt", exact=True).fill("Keep my next creative idea")
+            await page.goto("http://studio.test/admin/media-queue")
+            await playwright.expect(page.get_by_role("link", name="In progress 1")).to_have_attribute("aria-current", "page")
             await playwright.expect(page.locator("#media-queue .loading-spinner")).to_be_visible()
             for _ in range(3):
                 process_jobs(db, settings)
             assert job.state == "complete"
             await playwright.expect(page.locator("#media-queue .status")).to_have_text("complete", timeout=8000)
-            await playwright.expect(page.get_by_label("Your prompt", exact=True)).to_have_value("Keep my next creative idea")
             await playwright.expect(page.locator("#media-queue .loading-spinner")).to_be_visible()
             advance_queue(db, settings)
             await playwright.expect(page.locator("#media-queue")).to_contain_text("scheduled", timeout=8000)
             await playwright.expect(page.locator("#media-queue .loading-spinner")).to_have_count(0)
-            await playwright.expect(page.get_by_label("Your prompt", exact=True)).to_have_value("Keep my next creative idea")
             await browser.close()
 
     with TestClient(create_app(settings), base_url="http://studio.test") as client:
         asyncio.run(exercise(client))
 
 
-def test_long_video_progress_refreshes_between_clips_and_preserves_form(db, settings, assets):
+def test_long_video_progress_refreshes_between_clips(db, settings, assets):
     from test_runway_media import brief_for
 
     from social.audio_review import observe_audio
@@ -391,13 +389,12 @@ def test_long_video_progress_refreshes_between_clips_and_preserves_form(db, sett
             await page.goto("http://studio.test/admin/media-studio")
             duration = page.get_by_label("Finished video duration (seconds)")
             await playwright.expect(duration).to_have_attribute("max", "90")
-            await duration.fill("90")
+            await page.goto("http://studio.test/admin/media-queue")
             await playwright.expect(page.locator("#media-queue")).to_contain_text("Video clips saved: 0 / 9")
             job.brief = job.brief | {"video_segments": [s | {"output_asset_id": assets[0].id} if s["index"] == 0 else s
                                                      for s in job.brief["video_segments"]]}
             db.commit()
             await playwright.expect(page.locator("#media-queue")).to_contain_text("Video clips saved: 1 / 9", timeout=8000)
-            await playwright.expect(duration).to_have_value("90")
             await page.set_viewport_size({"width": 390, "height": 844})
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             await page.goto("http://studio.test/admin/assets")
@@ -453,7 +450,7 @@ def test_stale_upload_refreshes_session_before_one_submission(
                     requests.append((route.request, response.status_code))
 
             await page.route("**/*", serve)
-            await page.goto("http://studio.test/admin/assets")
+            await page.goto("http://studio.test/admin/upload")
             form = page.locator('form[action="/forms/assets"]')
             old_token = await form.locator('[name="csrf"]').input_value()
             await form.locator('[name="rights"]').select_option("public")
@@ -523,7 +520,7 @@ def test_storage_upload_failure_is_visible_and_form_can_retry(db, settings, asse
             page = await browser.new_page(viewport={"width": 1440, "height": 1000})
             page.set_default_timeout(5000)
             await page.route("**/*", lambda route: serve_studio_request(route, client))
-            await page.goto("http://studio.test/admin/assets")
+            await page.goto("http://studio.test/admin/upload")
             form = page.locator('form[action="/forms/assets"]')
             await form.locator('[name="rights"]').select_option("public")
             await form.locator('[name="owner"]').fill("Company-owned original")

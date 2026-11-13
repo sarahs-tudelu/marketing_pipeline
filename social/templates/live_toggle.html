@@ -2,6 +2,7 @@
 <form method="post" action="/forms/live-platform">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="platform" value="{{ c.account.platform }}">
+  <input type="hidden" name="return_to" value="{{ return_to|default('/admin/connections') }}">
   <input type="hidden" name="enabled" value="{{ 'false' if c.live_enabled else 'true' }}">
   <button role="switch" aria-checked="{{ 'true' if c.live_enabled else 'false' }}"
     {{ 'disabled' if not c.live_enabled and (not c.connected or not c.live_available) else '' }}>
@@ -9,4 +10,4 @@
   </button>
 </form>
 {% if not c.connected %}<small>Connect this platform to publish live.</small>{% elif not c.live_available %}<small>Authenticated app access is required to enable live posting.</small>{% endif %}
-{% if c.account.paused %}<small>This platform is paused. Resume it in Platform controls when ready.</small>{% endif %}
+{% if c.account.paused %}<small>This platform is paused. Resume it in <a href="/admin/automation">Automation</a> when ready.</small>{% endif %}

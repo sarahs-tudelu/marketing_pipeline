@@ -66,6 +66,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `RUNWAY_VIDEO_MODEL` | `"gen4.5"` | Related configuration in the group above. |
 | `RUNWAY_EDIT_MODEL` | `"aleph2"` | Related configuration in the group above. |
 | `RUNWAY_AUDIO_MODEL` | `"seed_audio"` | Related configuration in the group above. |
+| `RUNWAY_MUSIC_MODEL` | `"eleven_music_v2_5"` | Full-length instrumental soundtracks for videos (Runway text_to_music, billed per requested second). |
 | `RUNWAY_TASK_TIMEOUT_SECONDS` | `3600` | Maximum saved-task wait and number of background jobs advanced per worker tick. |
 | `MEDIA_JOBS_PER_TICK` | `4` | Related configuration in the group above. |
 | `VIDEO_PROVIDER_URL` | `(unset)` | Related configuration in the group above. |

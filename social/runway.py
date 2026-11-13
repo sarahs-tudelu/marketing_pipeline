@@ -127,6 +127,16 @@ def payload_for(settings, brief, platform, references, *, audio=False):
 
     p = profiles(settings)[platform]
     prompt = brief["audio_prompt"] if audio else brief["generation_prompt"]
+    if audio and brief.get("soundtrack_model") == "music":
+        # text_to_music bills and returns exactly the requested whole-second length (3-600).
+        result = {
+            "model": settings.runway_music_model,
+            "promptText": prompt[:4100],
+            "duration": max(3, min(600, int(brief["duration"]))),
+        }
+        if not re.search(r"\b(vocals?|singing|sung|lyrics|choir|voice)\b", prompt, re.I):
+            result["instrumental"] = True
+        return "text_to_music", result
     if audio or brief["operation"] == "audio":
         result = {"model": settings.runway_audio_model, "promptText": prompt, "outputFormat": "mp3"}
         if references:

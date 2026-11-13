@@ -12,11 +12,12 @@ from sqlalchemy import case, select, update
 
 from .config import PLATFORMS, profiles
 from .db import now, uid
+from .idea_plan import END_CARD_SECONDS, MAX_CLIPS, MIN_CLIP_SECONDS, Shot
 from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob, Post
 from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
 from .provider_errors import ProviderError
-from .renditions import image_rendition, video_rendition, video_sequence
+from .renditions import image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, payload_for
 from .storage import ingest, storage
@@ -37,7 +38,7 @@ CONCEPTS = (
 
 class CreativeBrief(BaseModel):
     campaign: str = Field(min_length=1, max_length=200)
-    prompt: str = Field(min_length=1, max_length=450)
+    prompt: str = Field(min_length=1, max_length=1000)
     operation: Literal["image", "video", "video_edit", "audio", "mixed"] = "image"
     platforms: list[str] = Field(min_length=1, max_length=5)
     facts_id: str
@@ -53,6 +54,10 @@ class CreativeBrief(BaseModel):
     create_posts: bool = True
     interval_hours: int = Field(default=24, ge=24, le=720)
     workflow: Literal["automatic", "immediate", "next"] = "automatic"
+    # Clips in viewing order (setting and Tudelu system each), from the reviewed idea plan.
+    shots: list[Shot] = Field(default_factory=list, max_length=MAX_CLIPS)
+    # Company logo image appended as a short end card after the generated clips.
+    end_card_asset_id: str = Field(default="", max_length=64)
 
     @field_validator("rights")
     @classmethod
@@ -83,6 +88,21 @@ class CreativeBrief(BaseModel):
             raise ValueError("Describe how to use or edit the audio references")
         if self.operation == "image" and (self.audio_prompt or self.audio_reference_ids):
             raise ValueError("Soundtracks require a video operation")
+        if self.end_card_asset_id and self.operation not in {"video", "video_edit"}:
+            raise ValueError("A logo end card requires a video")
+        if self.end_card_asset_id and self.duration < END_CARD_SECONDS + MIN_CLIP_SECONDS:
+            raise ValueError(
+                f"A logo end card needs a video of at least {END_CARD_SECONDS + MIN_CLIP_SECONDS} seconds"
+            )
+        if len(self.shots) > 1 and self.operation != "video":
+            raise ValueError("Several clips require a generated video")
+        if self.operation == "video" and len(self.shots) > 1:
+            footage = self.duration - (END_CARD_SECONDS if self.end_card_asset_id else 0)
+            if footage < MIN_CLIP_SECONDS * len(self.shots):
+                raise ValueError(
+                    f"{len(self.shots)} clips need at least {MIN_CLIP_SECONDS * len(self.shots)} seconds of "
+                    "footage. Lengthen the video or remove clips."
+                )
         return self
 
 
@@ -181,6 +201,19 @@ def validate_sources(db, brief, *, live=False):
                 "Choose Not public, or use a reference cleared for public use."
             )
         sources.append(asset)
+    if brief.end_card_asset_id:
+        logo = db.get(Asset, brief.end_card_asset_id)
+        if not logo or not logo.media["mime"].startswith("image/"):
+            raise ValueError("Choose an uploaded logo image for the end card")
+        if logo.rights_expire_at and logo.rights_expire_at <= now():
+            raise ValueError("The logo's usage rights have expired")
+        if live and logo.demo_only:
+            raise ValueError("Live campaigns cannot use a demo logo")
+        if brief.rights == "public" and logo.rights == "not_public":
+            raise ValueError(
+                f"{logo.original_name} is marked Not public, so it cannot close a Public video. "
+                "Upload the logo as Public, or choose Not public."
+            )
     visual = [a for a in sources if a.id in brief.reference_ids]
     expected = {"image": "image/", "video": "image/", "video_edit": "video/", "audio": "audio/"}
     if brief.operation in expected and any(
@@ -194,7 +227,8 @@ def validate_sources(db, brief, *, live=False):
         raise ValueError("Video editing requires one uploaded video")
     if brief.operation == "mixed" and any(a.media["mime"].startswith("audio/") for a in visual):
         raise ValueError("Put audio in the soundtrack reference selection")
-    if brief.operation == "video_edit" and brief.duration > 10 and visual[0].media["duration"] + 0.1 < brief.duration:
+    footage = brief.duration - (END_CARD_SECONDS if brief.end_card_asset_id else 0)
+    if brief.operation == "video_edit" and footage > 10 and visual[0].media["duration"] + 0.1 < footage:
         raise ValueError("The requested edit is longer than the uploaded video. Choose a shorter duration or generate a new video.")
     return sources
 
@@ -280,15 +314,37 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         if operation in {"video", "video_edit"}:
             if brief.duration > profile.max_duration:
                 raise ValueError(f"{platform}: choose a duration of at most {profile.max_duration:g} seconds")
+            end_card = (
+                {"asset_id": brief.end_card_asset_id, "seconds": END_CARD_SECONDS}
+                if brief.end_card_asset_id
+                else None
+            )
+            # Generated or edited footage; the logo end card is rendered locally after it.
+            footage = brief.duration - (END_CARD_SECONDS if end_card else 0)
+            maximum = 30 if operation == "video_edit" else 10
+            shots = brief.shots if operation == "video" else []
             edit_source = db.get(Asset, refs[0]) if operation == "video_edit" and refs else None
-            if edit_source and brief.duration > 10 and edit_source.media["duration"] + 0.1 < brief.duration:
+            if edit_source and footage > 10 and edit_source.media["duration"] + 0.1 < footage:
                 raise ValueError("The requested edit is longer than the selected source video")
-            if brief.duration > (30 if operation == "video_edit" else 10) or (
-                edit_source and edit_source.media["duration"] > 30
+            if (
+                footage > maximum
+                or end_card
+                or len(shots) > 1
+                or (edit_source and edit_source.media["duration"] > 30)
             ):
-                values["video_segments"] = plan_segments(brief.duration, 30 if operation == "video_edit" else 10)
+                segments = plan_segments(footage, maximum, len(shots) if len(shots) > 1 else None)
+                if len(shots) > 1:
+                    # Each clip shows its planned setting and system; extra clips continue the nearest shot.
+                    for segment in segments:
+                        segment["shot"] = shots[segment["index"] * len(shots) // len(segments)].model_dump()
+                values["video_segments"] = segments
+            values["end_card"] = end_card
+            # A full-length music track for a plain soundtrack direction; seed_audio reworks uploaded bites.
+            values["soundtrack_model"] = (
+                "music" if brief.audio_prompt.strip() and not brief.audio_reference_ids else "seed_audio"
+            )
         if operation == "image":
-            values.update(audio_prompt="", audio_reference_ids=[])
+            values.update(audio_prompt="", audio_reference_ids=[], end_card_asset_id="")
         job = MediaJob(
             campaign_id=campaign.id if campaign else None,
             batch_key=batch + ":" + platform,
@@ -381,7 +437,7 @@ def _save_output(db, settings, job, data):
     segment = current_segment(job) if job.stage == "visual" else None
     is_audio = job.stage == "audio" or brief["operation"] == "audio"
     model = (
-        settings.runway_audio_model
+        (settings.runway_music_model if brief.get("soundtrack_model") == "music" else settings.runway_audio_model)
         if is_audio
         else (
             settings.runway_image_model
@@ -422,7 +478,7 @@ def _save_output(db, settings, job, data):
             "media_job_id": job.id,
             "website_snapshot": brief["website_snapshot"],
             "creative_brief": {k: brief[k] for k in ("prompt", "concept", "kind")}
-            | {"system": brief.get("depicted_system", "")},
+            | {"system": (segment or {}).get("system") or brief.get("depicted_system", "")},
             "generated_audio": is_audio,
             "audio_prompt": brief["audio_prompt"],
             **({"video_segment": {"index": segment["index"], "start": segment["start"],
@@ -467,6 +523,10 @@ def _finish(db, settings, job):
         data = storage(settings).read(first.storage_key)
         if hashlib.sha256(data).hexdigest() != first.checksum:
             raise ValueError("Source integrity failed before creating the publishing rendition")
+        end_card = brief.get("end_card") if brief["operation"] != "image" else None
+        logo = db.get(Asset, end_card["asset_id"]) if end_card else None
+        if end_card and not logo:
+            raise ValueError("The end-card logo is missing from the asset library; upload it and create the post again")
         if brief["operation"] == "image":
             data = image_rendition(data, profile.image_width, profile.image_height,
                                    source=first.source, generator=first.generator)
@@ -484,6 +544,12 @@ def _finish(db, settings, job):
                     if hashlib.sha256(clip_data).hexdigest() != asset.checksum:
                         raise ValueError("Video clip integrity failed before assembly")
                     clips.append((clip_data, 0, segment["duration"]))
+                if logo:
+                    logo_data = storage(settings).read(logo.storage_key)
+                    if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
+                        raise ValueError("Logo integrity failed before creating the end card")
+                    card = logo_card(logo_data, profile.video_width, profile.video_height, end_card["seconds"])
+                    clips.append((card, 0, end_card["seconds"]))
                 data = video_sequence(clips, profile.video_width, profile.video_height, soundtrack,
                                       require_full_duration=True)
             else:
@@ -499,19 +565,29 @@ def _finish(db, settings, job):
             source=first.source,
             generator=first.generator,
             prompt=first.prompt,
-            rights=first.rights,
+            rights=combined_rights(first.rights, [logo] if logo else []),
             owner=first.owner,
-            rights_expire_at=first.rights_expire_at,
-            demo_only=first.demo_only,
+            rights_expire_at=min(
+                [e for e in (first.rights_expire_at, logo.rights_expire_at if logo else None) if e], default=None
+            ),
+            demo_only=first.demo_only or bool(logo and logo.demo_only),
             tags=first.tags
             | {
                 "source_asset_ids": brief["reference_ids"]
                 + brief["audio_reference_ids"]
-                + job.source_asset_ids,
+                + job.source_asset_ids
+                + ([logo.id] if logo else []),
                 "rendition": {"platform": job.platform, "original_asset_id": first.id},
                 "generated_audio": any(a.media["mime"].startswith("audio/") for a in originals),
                 **({"video_sequence": brief["video_segments"], "requested_duration": brief["duration"]}
                    if brief.get("video_segments") else {}),
+                **({"end_card": {
+                    "asset_id": logo.id,
+                    "checksum": logo.checksum,
+                    "seconds": end_card["seconds"],
+                    "note": "The final seconds show Tudelu's official logo, supplied as company media and "
+                    "added by the app after generation.",
+                }} if logo else {}),
             },
         )
         from .gate import media_errors
@@ -637,6 +713,12 @@ def process_jobs(db, settings, provider=None):
                 if not settings.runway_api_key.get_secret_value():
                     raise ValueError("RUNWAY_API_KEY is missing")
                 ids = brief.audio_reference_ids if job.stage == "audio" else brief.reference_ids
+                segment = current_segment(job) if job.stage == "visual" else None
+                if segment and segment.get("shot") and segment["index"] > 0 and brief.operation == "video":
+                    # A start image belongs to the first planned clip; later clips show other settings.
+                    ids = []
+                if job.stage == "audio" and job.brief.get("soundtrack_model") == "music":
+                    ids = []
                 if brief.operation == "audio":
                     ids = list(dict.fromkeys(ids + brief.audio_reference_ids))[:3]
                 if job.stage == "visual" and brief.operation == "video_edit" and current_segment(job):

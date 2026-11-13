@@ -21,8 +21,9 @@ SHOT_DIRECTIONS = (
 )
 
 
-def plan_segments(duration, maximum):
-    count = math.ceil(duration / maximum)
+def plan_segments(duration, maximum, count=None):
+    """Split duration into near-equal whole-second clips of at most maximum seconds."""
+    count = max(count or 0, math.ceil(duration / maximum))
     base, extra = divmod(duration, count)
     result, start = [], 0
     for index in range(count):

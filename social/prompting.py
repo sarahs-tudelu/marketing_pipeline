@@ -60,13 +60,29 @@ WRITER_INSTRUCTIONS = (
     "For video with a starting image (has_start_image), describe the motion and camera only, preserving the image. "
     "For video_edit, describe the change to apply to the supplied video while preserving the system's geometry. "
     "Keep prompt under 900 characters. sources_used lists which sources informed it, such as "
-    "'website', 'rules', 'uploaded:<asset_id>', 'reference:<asset_id>', 'previous:<asset_id>'."
+    "'website', 'rules', 'uploaded:<asset_id>', 'reference:<asset_id>', 'previous:<asset_id>'. "
+    "When requested_shot is present, depict that setting and, if named, that system. "
+    "When storyboard is present, the video is a series of separate clips joined in order: also return "
+    '"shots":[{"system":"...","prompt":"..."}] with exactly one entry per storyboard clip, in order. Each '
+    "clip prompt describes one continuous shot of its own setting and one Tudelu system (the clip's named "
+    "system when given, otherwise one you choose; give clips different systems when the idea asks for several "
+    "products), with a specific camera move for its seconds. Keep one consistent cinematic look across clips "
+    "(time of day, light, color grade, lens). Each clip prompt stays under 700 characters and repeats any "
+    "detail it needs, because Runway sees each clip prompt alone. has_start_image applies to clip 1 only. "
+    "Set the top-level system and prompt to clip 1's. When end_card is true, the app appends the official logo "
+    "afterwards, so never show logos or brand names in any clip."
 )
+
+
+class WrittenShot(BaseModel):
+    system: str = Field(default="", max_length=200)
+    prompt: str = Field(default="", max_length=6000)
 
 
 class WrittenPrompt(BaseModel):
     system: str = Field(default="", max_length=200)
     prompt: str = Field(default="", max_length=6000)
+    shots: list[WrittenShot] = Field(default_factory=list, max_length=12)
     sources_used: list[str] = Field(default_factory=list, max_length=40)
     problem: str = Field(default="", max_length=2000)
 
@@ -223,6 +239,8 @@ def gather_sources(db, settings, job):
         "platform_tone": profile.tone,
         "orientation": orientation,
         "visual_rules": VISUAL_RULES,
+        "end_card": bool(brief.get("end_card")),
+        **storyboard_context(brief),
         "rules": rules,
         "website": {k: website.get(k) for k in ("url", "text", "image_descriptions") if website.get(k)},
         "uploaded_media": uploaded,
@@ -238,6 +256,24 @@ def gather_sources(db, settings, job):
         "previous_asset_ids": [p["asset_id"] for p in previous],
     }
     return context, provenance
+
+
+def storyboard_segments(brief):
+    """Planned clips that each show their own setting and system (from a reviewed idea plan)."""
+    if brief["operation"] != "video":
+        return []
+    segments = brief.get("video_segments") or []
+    return segments if segments and all(s.get("shot") for s in segments) else []
+
+
+def storyboard_context(brief):
+    segments = storyboard_segments(brief)
+    if segments:
+        return {
+            "storyboard": [{"clip": s["index"] + 1, "seconds": s["duration"]} | s["shot"] for s in segments]
+        }
+    shots = brief.get("shots") or []
+    return {"requested_shot": shots[0]} if len(shots) == 1 else {}
 
 
 def grounding_text(context):
@@ -263,19 +299,45 @@ def grounded(name, text):
 
 def _fixture_prompt(context):
     products = [p.get("name") for p in context["rules"]["products"] if isinstance(p, dict) and p.get("name")]
-    system = (
+    default = (
         context["product"] if context["product"] != "company" else (products or ["architectural system"])[0]
     )
-    prompt = (
-        f"{context['admin_idea'].rstrip('. ')}. Subject: Tudelu {system}. {context['direction']} "
+    requested = context.get("requested_shot") or {}
+    system = requested.get("system") or default
+    setting = f" in {requested['setting']}" if requested.get("setting") else ""
+    framing = (
         f"{context['orientation'].capitalize()} framing, an unoccupied setting with plain, unmarked surfaces."
     )
-    return WrittenPrompt(system=system, prompt=prompt, sources_used=["rules"])
+    prompt = f"{context['admin_idea'].rstrip('. ')}. Subject: Tudelu {system}{setting}. {context['direction']} {framing}"
+    shots = []
+    for index, clip in enumerate(context.get("storyboard", [])):
+        clip_system = clip.get("system") or (products[index % len(products)] if products else default)
+        shots.append(
+            WrittenShot(
+                system=clip_system,
+                prompt=f"Clip {clip['clip']}: Tudelu {clip_system} in {clip.get('setting') or 'a calm setting'}. "
+                f"{context['direction']} Slow cinematic camera move. {framing}",
+            )
+        )
+    if shots:
+        system, prompt = shots[0].system, shots[0].prompt
+    return WrittenPrompt(system=system, prompt=prompt, shots=shots, sources_used=["rules"])
+
+
+def _checked_system(name, context):
+    name = re.sub(r"\s+", " ", name).strip()
+    if not grounded(name, grounding_text(context)):
+        raise ValueError(
+            f"The prompt writer chose '{name[:80]}', which is not named on tudelu.com, in the approved "
+            "facts or in uploaded media. Nothing was sent to Runway. Resume to try again, or edit the idea."
+        )
+    return name
 
 
 def write_prompt(db, settings, job):
-    """Return brief fields for the composed Runway prompt and its provenance."""
+    """Return brief fields for the composed Runway prompt(s) and their provenance."""
     context, provenance = gather_sources(db, settings, job)
+    storyboard = storyboard_segments(job.brief)
     if job.brief["execution_mode"] == "fixture":
         written, writer = _fixture_prompt(context), "fixture/deterministic"
     else:
@@ -297,15 +359,21 @@ def write_prompt(db, settings, job):
                 "facts or in uploaded media. Nothing was sent to Runway. "
                 + (written.problem.strip()[:400] or "Edit the idea to name a Tudelu system.")
             )
-        name = re.sub(r"\s+", " ", written.system).strip()
-        if not grounded(name, grounding_text(context)):
-            raise ValueError(
-                f"The prompt writer chose '{name[:80]}', which is not named on tudelu.com, in the approved "
-                "facts or in uploaded media. Nothing was sent to Runway. Resume to try again, or edit the idea."
-            )
-    prompt = utf16_trim(written.prompt)
-    return {
-        "generation_prompt": prompt,
+        _checked_system(written.system, context)
+        if storyboard:
+            if len(written.shots) != len(storyboard) or not all(
+                s.system.strip() and s.prompt.strip() for s in written.shots
+            ):
+                raise ProviderError(
+                    f"The Runway prompt writer did not return one prompt for each of the {len(storyboard)} "
+                    "planned clips. Resume the job to try again; nothing was sent to Runway.",
+                    provider="Claude",
+                    category="response",
+                )
+            for shot in written.shots:
+                _checked_system(shot.system, context)
+    result = {
+        "generation_prompt": utf16_trim(written.prompt),
         "depicted_system": written.system.strip(),
         "prompt_writer": {
             "writer": writer,
@@ -315,3 +383,19 @@ def write_prompt(db, settings, job):
             "visual_rules": VISUAL_RULES,
         },
     }
+    if storyboard:
+        clips = [
+            segment
+            | {
+                "prompt": utf16_trim(shot.prompt),
+                "system": " ".join(shot.system.split()),
+                "seed": (job.brief["seed"] + segment["index"]) % (2**32),
+            }
+            for segment, shot in zip(storyboard, written.shots, strict=True)
+        ]
+        result |= {
+            "video_segments": clips,
+            "generation_prompt": clips[0]["prompt"],
+            "depicted_system": ", ".join(dict.fromkeys(c["system"] for c in clips)),
+        }
+    return result

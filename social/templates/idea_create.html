@@ -1,0 +1,33 @@
+<section id="new-idea" class="narrow">
+  <h2>What should this post show?</h2>
+  <p class="muted">Write it the way you would brief a designer. Mention a length, music or the logo at the end and the plan will include them. You review the plan before anything is generated.</p>
+  <form method="post" action="/forms/ideas/plan">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Your idea<textarea name="prompt" rows="6" maxlength="1000" required placeholder="A 30-second reel of our pergolas, canopies and sunshades in a backyard, along a walkway and at a storefront. Soft ambient music, with the Tudelu logo at the end.">{{ idea_form.get('prompt', '') }}</textarea></label>
+    <fieldset class="choice-row"><legend>Format</legend>
+      {% for value, label in formats.items() %}<label class="choice"><input type="radio" name="format" value="{{ value }}" {{ 'checked' if idea_form.get('format', 'auto') == value or (value == 'auto' and idea_form.get('format') not in formats) else '' }}>{{ label }}{{ ' (recommended)' if value == 'auto' else '' }}</label>{% endfor %}
+    </fieldset>
+    <fieldset><legend>Platforms — each gets its own framing and caption</legend>
+      {% for c in connections %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ c.account.platform }}" {{ 'checked' if c.account.platform in idea_form.get('platforms', ['instagram']) else '' }}>{{ c.account.platform|platform }}<span class="tag">{{ 'Simulated' if c.dry else 'Live' }}</span></label>{% endfor %}
+    </fieldset>
+    {% set needs_options = not idea_form.get('rights', 'public') %}
+    <details {{ 'open' if needs_options else '' }}><summary>More options</summary>
+      <div class="two">
+        <label>Content style<select name="kind">{% for value, label in styles.items() %}<option value="{{ value }}" {{ 'selected' if idea_form.get('kind', 'auto') == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+        <label>Focus on one product (optional)<input name="product" maxlength="200" list="facts-products" value="{{ idea_form.get('product', '') }}" placeholder="Any Tudelu system"></label>
+      </div>
+      <datalist id="facts-products">{% for f in facts[:1] %}{% for p in f.document.get('products', []) if p is mapping and p.get('name') %}<option value="{{ p.name }}">{% endfor %}{% endfor %}</datalist>
+      <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}" {{ 'selected' if idea_form.get('facts_id', default_facts_id) == f.id else '' }}>{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
+      {% with values=idea_form if idea_form else {'rights': 'public'}, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
+      <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if idea_form.get('website', 'on') == 'on' else '' }}>Use tudelu.com to choose and describe the systems shown</label>
+      <fieldset><legend>Reference media (optional)</legend>
+        <p class="muted">Pick an image to start a video from, or one uploaded video to edit. Videos are only used when the format is Edit an uploaded video.</p>
+        <div class="reference-list">
+        {% for a in assets if not a.media.mime.startswith('audio/') and 'rendition' not in a.tags %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in idea_form.get('reference_ids', []) else '' }}>{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span>{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<p><a href="/admin/upload">Upload reference media</a></p>{% endfor %}
+        </div>
+      </fieldset>
+    </details>
+    <p class="muted">{% if logos %}End cards use <b>{{ logos[0].original_name }}</b>.{% else %}No logo is in the library yet. To end videos with the Tudelu logo, <a href="/admin/upload">upload it</a> and tick <i>This is the Tudelu logo</i>.{% endif %}</p>
+    <div class="actions"><button class="primary">Plan this idea</button></div>
+  </form>
+</section>

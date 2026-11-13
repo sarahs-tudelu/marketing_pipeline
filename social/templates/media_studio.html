@@ -1,13 +1,13 @@
-<p class="intro">Turn an idea into a platform-ready image or video with Runway. Use your original media as references, add a soundtrack, or save a reusable campaign.</p>
+<p class="intro">For recurring campaigns, audio-only library media and full control of every option. For a single post, <a href="/admin/create">New post from an idea</a> is quicker: it reads length, music and a logo end card from your words and shows a plan first.</p>
 <section>
-  <h2>Your creative brief</h2>
+  <h2>Advanced brief</h2>
   <form method="post" action="/forms/media-studio">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="two">
       <label>Workflow<select name="mode"><option value="once">Create now — full workflow</option><option value="next" {{ 'selected' if asset_form.get('mode') == 'next' else '' }}>Next automatic post</option><option value="recurring" {{ 'selected' if asset_form.get('mode') == 'recurring' else '' }}>Recurring campaign</option></select></label>
       <label>Campaign name<input name="campaign" required maxlength="200" value="{{ asset_form.get('campaign', '') }}" placeholder="A fresh perspective on flexible spaces"></label>
     </div>
-    <label>Your prompt<textarea name="prompt" rows="4" maxlength="450" required placeholder="Describe the scene, mood, movement or edit you have in mind.">{{ asset_form.get('prompt', '') }}</textarea></label>
+    <label>Your prompt<textarea name="prompt" rows="4" maxlength="1000" required placeholder="Describe the scene, mood, movement or edit you have in mind.">{{ asset_form.get('prompt', '') }}</textarea></label>
     <div class="two">
       <label>Make<select name="operation">
         {% for value, label in [('image','Image'),('video','Video from text or an image'),('video_edit','Edit an uploaded video'),('audio','Audio from a prompt or audio bite'),('mixed','Varied images and videos (recurring)')] %}
@@ -54,35 +54,4 @@
     {% if c.error %}<p class="error">{{ c.error }}</p>{% endif %}
     <form method="post" action="/forms/media-campaigns/{{ c.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if c.enabled else 'true' }}"><button>{{ 'Pause campaign' if c.enabled else 'Enable campaign' }}</button></form>
   </article>{% else %}<p>No recurring campaigns yet.</p>{% endfor %}
-</section>
-<section id="media-queue"><div class="section-head"><h2>Generation queue</h2><a class="button" href="/admin/media-studio">Refresh status</a></div>
-  <p class="muted">Progress updates automatically while your media is prepared.</p>
-  {% for j in media_jobs %}<article class="card" data-job-id="{{ j.id }}" data-job-state="{{ j.state }}" data-job-stage="{{ j.stage }}" data-job-error="{{ j.error }}" data-job-output="{{ j.output_asset_id or '' }}" data-job-post="{{ j.post_id or '' }}" data-job-post-status="{{ media_job_posts.get(j.post_id, '') }}"><h3>{{ j.brief.campaign }} · {{ j.platform|title }}</h3>
-    {% if j.state == 'planned' %}<p role="status">Saved for the next automatic post. Waiting for automation and an available platform queue.</p>{% endif %}
-    {% if j.state in ['queued','submitting','running','rendering'] %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>{{ {'queued':'Waiting to start…', 'submitting':'Starting generation…', 'running':'Generating media…', 'rendering':'Preparing media and visual summary…'}[j.state] }}</strong><small>You can leave this page; progress is saved.</small></span></div>{% endif %}
-    <p><span class="status">{{ j.state }}</span> · {{ j.brief.operation }} · {{ j.brief.concept }} · {{ j.stage }}</p>
-    {% if j.error %}<p class="error">{{ j.error }}</p>{% endif %}
-    {% if j.task_id %}<small>Runway task: {{ j.task_id }}</small>{% endif %}
-    {% if j.state == 'uncertain' and not j.task_id %}<form method="post" action="/forms/media-jobs/{{ j.id }}/reconcile"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Original Runway task ID<input name="task_id" required pattern="[A-Za-z0-9_-]{1,100}"></label><button>Recover original task</button></form>{% endif %}
-    {% if j.brief.get('video_segments') %}
-      {% set completed_clips = j.brief.video_segments|selectattr('output_asset_id', 'defined')|list|length %}
-      <p data-completed-clips="{{ completed_clips }}">Video clips saved: {{ completed_clips }} / {{ j.brief.video_segments|length }} · Finished duration: {{ j.brief.duration }} seconds</p>
-    {% endif %}
-    {% if j.post_id %}
-      {% set post_state = media_job_posts.get(j.post_id, '') %}
-      <p>Post: <b>{{ post_state|replace('_', ' ') }}</b></p>
-      {% if post_state in ['draft','generated','approved'] and (j.brief.get('workflow') == 'immediate' or automation_enabled) %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Preparing caption, checks and schedule…</span></div>{% endif %}
-      <a class="button primary" href="/posts/{{ j.post_id }}">Open post</a>
-    {% endif %}
-    {% if j.output_asset_id %}<a class="button" href="/admin/assets">View in asset library</a>{% endif %}
-    {% if j.state in ['failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resume"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume saved task / output</button></form>{% endif %}
-    {% if j.state in ['planned','queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
-    {% if j.brief.get('prompt_writer') %}{% set sources = j.brief.prompt_writer.sources %}
-    <details><summary>Prompt sent to Runway{{ ' · ' ~ j.brief.depicted_system if j.brief.get('depicted_system') else '' }}</summary>
-      <p>{{ j.brief.generation_prompt }}</p>
-      <small>Written by {{ j.brief.prompt_writer.writer }} from {{ 'tudelu.com, ' if sources.website else '' }}facts {{ sources.facts_version }}, {{ sources.uploaded_asset_ids|length }} uploaded, {{ sources.reference_ids|length }} selected and {{ sources.previous_asset_ids|length }} previously generated media · {{ rights_label(j.brief.rights) }}{{ ' · ' ~ j.brief.owner if j.brief.get('owner') else '' }}</small>
-    </details>
-    {% elif j.brief.operation != 'audio' and j.stage == 'visual' %}<small>The Runway prompt is written when this job starts.</small>{% endif %}
-    <details><summary>Prompt and provenance</summary><pre>{{ json.dumps(j.brief, indent=2) }}</pre></details>
-  </article>{% else %}<p>No media jobs yet.</p>{% endfor %}
 </section>

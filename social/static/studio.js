@@ -66,6 +66,8 @@
   const labels = {
     automation: ["Updating automation…", "Saving your automatic-post preference."],
     "media-studio": ["Saving creative brief…", "Preparing your media queue or recurring campaign."],
+    plan: ["Planning your idea…", "Reading your idea, tudelu.com and the approved facts. This can take up to a minute."],
+    create: ["Saving your plan…", "Adding it to the generation queue."],
     "import-bucket-asset": ["Importing bucket asset…", "Preserving the original media and its provenance."],
     connect: ["Opening authorization…", "Preparing your account connection."],
     generate: ["Writing caption…", "Finding the right words. This can take a minute."],
@@ -183,6 +185,17 @@
     window.addEventListener("focus", pollPost);
   }
 
+  // Show only the plan fields that apply to the chosen format (image, video or video edit).
+  document.querySelectorAll("select[data-format-switch]").forEach((select) => {
+    const update = () => {
+      select.form.querySelectorAll("[data-show-for]").forEach((element) => {
+        element.hidden = !element.dataset.showFor.split(" ").includes(select.value);
+      });
+    };
+    select.addEventListener("change", update);
+    update();
+  });
+
   if (document.getElementById("media-queue")) {
     let polling = false;
     const pollMedia = async () => {
@@ -198,7 +211,7 @@
         ]);
         const updated = jobs.map((job) => [job.id, job.state, job.stage, job.error, job.asset_id || "", job.post_id || "", job.post_status || "", job.completed_clips || 0]);
         if (JSON.stringify(current) === JSON.stringify(updated)) return;
-        const html = await fetch("/admin/media-studio", {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
+        const html = await fetch("/admin/media-queue", {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
         if (!html.ok) return;
         const replacement = new DOMParser().parseFromString(await html.text(), "text/html").getElementById("media-queue");
         if (replacement && !pending.size && !queue.contains(document.activeElement)) queue.replaceWith(replacement);

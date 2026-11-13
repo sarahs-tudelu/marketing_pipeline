@@ -14,6 +14,7 @@
   </div>
   <label>Product/campaign tags (JSON)<input name="tags" value="{{ upload_form.get('tags', '{}') }}"></label>
   <p>Identify the depicted product families, for example <code>{"product_family": ["canopies", "pergolas"]}</code>. AI assets are recorded as concepts automatically.</p>
+  <label class="checkbox"><input type="checkbox" name="brand_logo" {{ 'checked' if upload_form.get('brand_logo') == 'on' else '' }}>This is the Tudelu logo (used for video end cards; upload a PNG, ideally on a transparent background)</label>
   <label class="checkbox"><input type="checkbox" name="customer_permission" {{ 'checked' if upload_form.get('customer_permission') == 'on' else '' }}>Customer content permission is documented</label>
   <label>Permission evidence reference<input name="permission_reference" value="{{ upload_form.get('permission_reference', '') }}"></label>
   <button class="primary">Ingest asset</button>

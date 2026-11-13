@@ -22,7 +22,8 @@ def test_automation_switch_persists_and_overrides_environment(db, settings, capl
     control = db.get(Control, 1)
     assert control.automation_enabled is None and settings.automates_posts(control)
     with TestClient(create_app(settings)) as client:
-        assert 'id="automation-controls"' in client.get("/").text
+        assert 'id="automation-controls"' in client.get("/admin/automation").text
+        assert 'href="/admin/automation">Manage</a>' in client.get("/").text
         assert client.post("/forms/automation", data={"enabled": "false"}).status_code == 403
         token = client.get("/api/session").json()["csrf"]
         assert client.post("/forms/automation", data={"csrf": token, "enabled": "invalid"}).status_code == 400
@@ -31,7 +32,7 @@ def test_automation_switch_persists_and_overrides_environment(db, settings, capl
         db.refresh(control)
         assert control.automation_enabled is False and not settings.automates_posts(control)
     with TestClient(create_app(settings)) as client:
-        assert "Enable automatic posts" in client.get("/").text
+        assert "Enable automatic posts" in client.get("/admin/automation").text
         settings.auto_advance = False
         token = client.get("/api/session").json()["csrf"]
         assert client.post("/forms/automation", data={"csrf": token, "enabled": "true"}).status_code == 200

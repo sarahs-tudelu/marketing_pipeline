@@ -131,3 +131,35 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
             for packet in audio.encode():
                 target.mux(packet)
     return output.getvalue()
+
+
+def logo_card(logo, width, height, seconds, *, fade=0.6):
+    """A silent end card: the uploaded logo, unaltered, centered on a plain background with a fade-in."""
+    with Image.open(io.BytesIO(logo)) as source:
+        mark = ImageOps.exif_transpose(source).convert("RGBA")
+    mark.thumbnail((round(width * 0.56), round(height * 0.3)), Image.Resampling.LANCZOS)
+    alpha = np.asarray(mark.getchannel("A"), dtype=np.float32) / 255
+    rgb = np.asarray(mark.convert("RGB"), dtype=np.float32)
+    weight = alpha.sum()
+    luminance = float((rgb @ [0.299, 0.587, 0.114] * alpha).sum() / weight) if weight else 0
+    # Light logos (for example white on transparent) need a dark background to stay visible.
+    background = (17, 17, 17) if luminance > 200 else (255, 255, 255)
+    still = Image.new("RGB", (width, height), background)
+    still.paste(mark, ((width - mark.width) // 2, (height - mark.height) // 2), mark)
+    blank = Image.new("RGB", (width, height), background)
+    output = io.BytesIO()
+    frames = round(seconds * 30)
+    with av.open(output, "w", format="mp4") as target:
+        video = target.add_stream("libx264", rate=30)
+        video.width, video.height, video.pix_fmt = width, height, "yuv420p"
+        video.gop_size = 60
+        video.options = {"crf": "18", "preset": "veryfast"}
+        for index in range(frames):
+            level = min(1, index / max(1, round(fade * 30)))
+            frame = av.VideoFrame.from_image(Image.blend(blank, still, level) if level < 1 else still)
+            frame.pts, frame.time_base = index, Fraction(1, 30)
+            for packet in video.encode(frame):
+                target.mux(packet)
+        for packet in video.encode():
+            target.mux(packet)
+    return output.getvalue()

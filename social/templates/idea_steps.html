@@ -1,0 +1,8 @@
+{% set step = {'create': 1, 'plan': 2, 'media-queue': 3}[view] %}
+<ol class="steps" aria-label="Steps">
+  {% for label, href in [('Describe your idea', '/admin/create'), ('Review the plan', ''), ('Generate and publish', '/admin/media-queue')] %}
+  <li class="{{ 'current' if loop.index == step else 'done' if loop.index < step else '' }}" {{ 'aria-current=step' if loop.index == step else '' }}>
+    <span class="step-number">{{ loop.index }}</span>{% if href and loop.index != step %}<a href="{{ href }}">{{ label }}</a>{% else %}<span>{{ label }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
