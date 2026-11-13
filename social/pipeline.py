@@ -6,13 +6,14 @@ from sqlalchemy import select, update
 from .config import PLATFORMS, profiles
 from .db import now
 from .facts import Facts, active, caption_fact_ids, content_digest, render
-from .gate import evaluate
+from .gate import evaluate, run_gate
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Account, Asset, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import alert, event
 from .provenance import requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
+from .recovery import CAPTION_FAILED, caption_error
 
 
 def bootstrap(db):
@@ -146,18 +147,38 @@ def generate(db, settings, post, providers=None):
     except PostConflict:
         raise
     except Exception as exc:
-        if isinstance(exc, ProviderError):
-            event(
-                "caption_generation_failed",
-                post_id=post.id,
-                provider=exc.provider,
-                category=exc.category,
-                upstream_status=exc.upstream_status,
-                request_id=exc.request_id,
-            )
-        reason = str(exc) if isinstance(exc, ProviderError) else type(exc).__name__
-        transition(db, post, "held", f"Caption generation rejected: {reason}")
+        event(
+            "caption_generation_failed",
+            post_id=post.id,
+            error_type=type(exc).__name__,
+            **(
+                {
+                    "provider": exc.provider,
+                    "category": exc.category,
+                    "upstream_status": exc.upstream_status,
+                    "request_id": exc.request_id,
+                }
+                if isinstance(exc, ProviderError)
+                else {}
+            ),
+        )
+        transition(db, post, "held", CAPTION_FAILED + caption_error(exc))
     db.commit()
+    return post
+
+
+def rewrite_caption(db, settings, post, actor):
+    """Write a fresh caption for a held post, keeping its media, then run the checks again."""
+    lock_post(db, post)
+    if post.status != "held":
+        db.rollback()
+        raise PostConflict("Only a held post can get a new caption. Refresh its page to see its status.")
+    post.approved_digest = ""
+    transition(db, post, "draft", "New caption requested", actor)
+    db.commit()
+    generate(db, settings, post)
+    if post.status == "generated":
+        run_gate(db, settings, post)
     return post
 
 

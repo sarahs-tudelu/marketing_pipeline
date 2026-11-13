@@ -18,6 +18,7 @@ from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob,
 from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
 from .provider_errors import ProviderError
+from .recovery import runway_failure
 from .renditions import image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, payload_for
@@ -511,7 +512,8 @@ def _finish(db, settings, job):
 
     brief = job.brief
     originals = [db.get(Asset, i) for i in job.source_asset_ids]
-    first = originals[0]
+    # A redone single take is saved after the reused music, so pick the first picture, not the first source.
+    first = next((a for a in originals if not a.media["mime"].startswith("audio/")), originals[0])
     summary_settings = settings.model_copy(update={"ai_mode": brief["execution_mode"]})
     for original in originals:
         ensure_visual_summary(db, summary_settings, original)
@@ -627,7 +629,8 @@ def _finish(db, settings, job):
                 db,
                 held,
                 "failed",
-                f"Replaced by post {post.id} after clip {replaced['clip_index'] + 1} was regenerated",
+                f"Replaced by post {post.id} after {replaced.get('label') or 'clip ' + str(replaced['clip_index'] + 1)} "
+                "was regenerated",
                 replaced.get("requested_by") or "admin",
             )
     job.state, job.error = "complete", ""
@@ -691,9 +694,8 @@ def process_jobs(db, settings, provider=None):
                     if task.get("status") in {"PENDING", "THROTTLED", "RUNNING"}:
                         continue
                     if task.get("status") in {"FAILED", "CANCELED", "CANCELLED"}:
-                        raise ValueError(
-                            "Runway task failed or was cancelled. Review it in Runway; no automatic resubmission."
-                        )
+                        # Kept as failed with its task ID; the In progress page offers a new submission.
+                        raise ValueError(runway_failure(job, task))
                     if task.get("status") != "SUCCEEDED" or not task.get("output"):
                         raise ValueError("Runway returned an invalid task result")
                     _save_output(db, settings, job, runway.download(task["output"][0]))

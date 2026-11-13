@@ -1,0 +1,21 @@
+{% if held %}
+<section id="post-held"><h2>Why this post is held</h2>
+  {% if held.caption_error %}
+    <p><b>The caption couldn't be written.</b> {{ held.caption_error }}</p>
+    <p class="muted">The {{ clip_fix.noun if clip_fix else 'media' }} is ready; only the caption step stopped. Writing it again usually works.</p>
+  {% elif held.problems %}
+    <ul class="held-problems">{% for p in held.problems %}
+      <li><b>{{ p.title }}</b>{% for d in p.details %}<span>{{ d }}</span>{% endfor %}<small>{{ p.fix }}</small></li>
+    {% endfor %}</ul>
+  {% elif held.reason %}<p>{{ held.reason }}</p>{% endif %}
+  <div class="actions">
+    <form method="post" action="/forms/posts/{{ post.id }}/rewrite"{% if post.caption %} data-confirm="Replace the current caption with a newly written one and run the checks again?"{% endif %}>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="{{ 'primary' if 'caption' in held.fixes else '' }}">{{ 'Write a new caption' if post.caption else 'Write the caption again' }}</button>
+    </form>
+    {% if ('visual' in held.fixes or 'music' in held.fixes) and clip_fix and clip_fix.parts and not clip_fix.pending %}<a class="button primary" href="#fix-clip">Regenerate part of the {{ clip_fix.noun }}</a>{% endif %}
+    {% for a in held.assets %}<a class="button" href="/admin/assets/{{ a }}/edit">Edit media details</a>{% endfor %}
+  </div>
+  <small class="muted">{{ 'Recheck & approve runs the checks again without changing anything.' if post.caption else 'This post has no caption yet, so it can\'t be rechecked until one is written.' }}</small>
+</section>
+{% endif %}

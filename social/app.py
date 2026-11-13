@@ -19,7 +19,7 @@ from starlette.datastructures import UploadFile
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import connections
-from .clip_replace import clip_options, replace_clip
+from .clip_replace import clip_options, replace_part
 from .config import PLATFORMS, get_settings, profiles
 from .db import make_engine, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
@@ -54,10 +54,11 @@ from .models import (
     Transition,
 )
 from .monitoring import event, set_kill, setup_logging
-from .pipeline import bootstrap, delete_draft, draft, generate
+from .pipeline import bootstrap, delete_draft, draft, generate, rewrite_caption
 from .provenance import requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
+from .recovery import held_reason, retry_option, retry_step, task_failed
 from .retries import block_reason as retry_block_reason
 from .retries import original_post, retry_post
 from .rights import RIGHTS, owner_value, rights_label, usage_rights
@@ -296,6 +297,9 @@ def create_app(settings=None):
                 "post": post,
                 "retry_existing": retry_existing,
                 "clip_fix": clip_options(db, post) if post else None,
+                "held": held_reason(db, post) if post else None,
+                "retry_steps": {j.id: step for j in media_jobs if (step := retry_option(j))},
+                "task_failed": {j.id for j in media_jobs if task_failed(j)},
                 "retry_original": original_post(db, post) if post else None,
                 "retry_block_reason": retry_block_reason(db, settings, post) if post and post.status == "failed" and not retry_existing else "",
                 "post_busy": ((post.status == "publishing" or post_processing(engine, post.id)) if post_busy is None else post_busy) if post else False,
@@ -669,29 +673,38 @@ def create_app(settings=None):
         job = db.scalar(select(MediaJob).where(MediaJob.id == job_id).with_for_update())
         if not job:
             raise HTTPException(404)
-        if action == "resume":
-            resume_job(job)
-        elif action == "reconcile" and job.state == "uncertain" and not job.task_id:
-            import re
+        form = await request.form()
+        try:
+            if action == "resume":
+                if task_failed(job):
+                    raise ValueError("Runway already reported this task as failed. Use Generate again instead.")
+                resume_job(job)
+            elif action == "resubmit":
+                retry_step(db, job, form.get("prompt", ""))
+            elif action == "reconcile" and job.state == "uncertain" and not job.task_id:
+                import re
 
-            from .db import now
+                from .db import now
 
-            task_id = str((await request.form()).get("task_id", ""))
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
-                raise ValueError("Enter the task ID returned by the original Runway submission")
-            job.task_id, job.state, job.submitted_at, job.error = task_id, "running", now(), ""
-        elif action == "cancel" and job.state in {"planned", "queued", "failed", "uncertain"}:
-            # Conditional write prevents a late UI cancellation racing a provider submission.
-            changed = db.execute(
-                update(MediaJob)
-                .where(MediaJob.id == job.id, MediaJob.state == job.state)
-                .values(state="cancelled")
-            )
-            if not changed.rowcount:
-                raise PostConflict("This media job has changed. Refresh before cancelling.")
-        else:
-            raise ValueError("This job cannot perform that action")
-        db.commit()
+                task_id = str(form.get("task_id", ""))
+                if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
+                    raise ValueError("Enter the task ID returned by the original Runway submission")
+                job.task_id, job.state, job.submitted_at, job.error = task_id, "running", now(), ""
+            elif action == "cancel" and job.state in {"planned", "queued", "failed", "uncertain"}:
+                # Conditional write prevents a late UI cancellation racing a provider submission.
+                changed = db.execute(
+                    update(MediaJob)
+                    .where(MediaJob.id == job.id, MediaJob.state == job.state)
+                    .values(state="cancelled")
+                )
+                if not changed.rowcount:
+                    raise PostConflict("This media job has changed. Refresh before cancelling.")
+            else:
+                raise ValueError("This job can't do that now. Refresh the page to see its current state.")
+            db.commit()
+        except (ValueError, PostConflict) as exc:
+            db.rollback()
+            return page(request, db, "media-queue", error_message=str(exc), status_code=400)
         return RedirectResponse("/admin/media-queue", status_code=303)
 
     @app.post("/api/posts", dependencies=mutation)
@@ -702,8 +715,13 @@ def create_app(settings=None):
     def action_impl(db, post, action, actor, parts=None):
         if action in {"check", "approve", "reject", "edit", "tiktok_status"}:
             lock_post(db, post)
+        if action in {"check", "approve"} and not post.caption:
+            db.rollback()
+            raise ValueError("This post has no caption yet. Write a new caption first.")
         if action == "generate":
             generate(db, settings, post)
+        elif action == "rewrite":
+            rewrite_caption(db, settings, post, actor)
         elif action == "retry":
             post = retry_post(db, settings, post, actor)
         elif action == "delete":
@@ -786,8 +804,9 @@ def create_app(settings=None):
         )
         return RedirectResponse(f"/posts/{post.id}", status_code=303)
 
-    @app.post("/forms/posts/{post_id}/clips/{index}/regenerate", dependencies=mutation)
-    async def regenerate_clip(post_id: str, index: int, request: Request, db: DB):
+    @app.post("/forms/posts/{post_id}/clips/{part}/regenerate", dependencies=mutation)
+    @app.post("/forms/posts/{post_id}/parts/{part}/regenerate", dependencies=mutation)
+    async def regenerate_part(post_id: str, part: str, request: Request, db: DB):
         post = db.get(Post, post_id)
         if not post or post.status == "deleted":
             raise HTTPException(404)
@@ -795,7 +814,7 @@ def create_app(settings=None):
         try:
             if post_processing(engine, post_id):
                 raise PostBusy("This post is being processed")
-            await run_in_threadpool(replace_clip, db, post, index, str(form.get("prompt", "")), request.state.actor)
+            await run_in_threadpool(replace_part, db, post, part, str(form.get("prompt", "")), request.state.actor)
         except PostBusy:
             db.rollback()
             return page(request, db, "post", post_id, post_busy=True, status_code=202)
@@ -828,8 +847,6 @@ def create_app(settings=None):
             # Another tab or the worker completed the action; display its saved result.
             return RedirectResponse(f"/posts/{post_id}", status_code=303)
         except ValueError as exc:
-            if action != "retry":
-                raise
             db.rollback()
             return page(request, db, "post", post.id, error_message=str(exc), status_code=400)
         return RedirectResponse("/" if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)

@@ -113,7 +113,9 @@ def test_held_video_regenerates_only_the_flagged_clip(db, settings, facts, logo,
         assert "one new 7-second simulated clip" in page
 
         too_far = client.post(f"/forms/posts/{post.id}/clips/9/regenerate", data={"csrf": token})
-        assert too_far.status_code == 400 and "Choose one of the video&#39;s clips" in too_far.text
+        assert (
+            too_far.status_code == 400 and "Choose one of the parts listed on the post page" in too_far.text
+        )
         queued = client.post(f"/forms/posts/{post.id}/clips/2/regenerate", data={"csrf": token, "prompt": ""})
         assert queued.status_code == 200 and str(queued.url).endswith("/admin/media-queue")
         assert (
@@ -132,6 +134,8 @@ def test_held_video_regenerates_only_the_flagged_clip(db, settings, facts, logo,
     assert redo.brief["replaces"] == {
         "post_id": post.id,
         "media_job_id": job.id,
+        "part": "2",
+        "label": "clip 3",
         "clip_index": 2,
         "requested_by": "local-developer",
     }
@@ -174,7 +178,10 @@ def test_clip_regeneration_needs_a_held_multi_clip_post(db, settings, facts, log
         db.commit()
         assert 'id="fix-clip"' not in client.get(f"/posts/{post.id}").text
         refused = client.post(f"/forms/posts/{post.id}/clips/0/regenerate", data={"csrf": token})
-        assert refused.status_code == 400 and "Only a held post can have a clip regenerated" in refused.text
+        assert (
+            refused.status_code == 400
+            and "Only a held post can have part of its media made again" in refused.text
+        )
         long = client.post(
             f"/forms/posts/{post.id}/clips/0/regenerate", data={"csrf": token, "prompt": "x" * 1001}
         )

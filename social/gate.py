@@ -15,6 +15,7 @@ from .image_provenance import verify_asset_metadata
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
 from .provenance import asset_source_error, asset_type, requires_ai_review
+from .provider_errors import ProviderError
 from .providers import Providers
 from .security import public_url
 from .storage import storage
@@ -151,7 +152,9 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         try:
             passed, details = fn()
         except Exception as exc:
-            passed, details = False, {"error_type": type(exc).__name__, "reason": "Check could not complete"}
+            # Provider errors are written to be shown; anything else stays a type name.
+            reason = str(exc) if isinstance(exc, ProviderError) else "Check could not complete"
+            passed, details = False, {"error_type": type(exc).__name__, "reason": reason}
         result = CheckResult(post_id=post.id, run_id=run_id, name=name, passed=bool(passed), details=details)
         db.add(result)
         results.append(result)

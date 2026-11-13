@@ -1,19 +1,24 @@
 {% if clip_fix %}
-<section id="fix-clip"><h2>Fix one clip</h2>
-  {% if clip_fix.pending %}{% set p = clip_fix.pending %}
-    {% if p.state == 'failed' or p.state == 'uncertain' %}<p class="error">Regenerating clip {{ p.brief.replaces.clip_index + 1 }} stopped: {{ p.error }}</p>
-    {% else %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>Regenerating clip {{ p.brief.replaces.clip_index + 1 }}…</strong><small>The other clips, the music and the logo end card are reused. A new post replaces this one when the video is ready.</small></span></div>{% endif %}
+<section id="fix-clip"><h2>Regenerate part of the {{ clip_fix.noun }}</h2>
+  {% if clip_fix.pending %}{% set p = clip_fix.pending %}{% set part = p.brief.replaces.get('label') or 'clip ' ~ (p.brief.replaces.clip_index + 1) %}
+    {% if p.state == 'failed' or p.state == 'uncertain' %}<p class="error">Regenerating {{ part }} stopped: {{ p.error }}</p><p class="muted">Open In progress to generate it again or remove it from the queue.</p>
+    {% else %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>Regenerating {{ part }}…</strong><small>Everything else is reused. A new post replaces this one when the {{ clip_fix.noun }} is ready.</small></span></div>{% endif %}
     <a class="button" href="/admin/media-queue">Open In progress</a>
+  {% elif clip_fix.unavailable %}
+    <p>{{ clip_fix.unavailable }}</p>
+    <a class="button" href="/admin/create">New post from an idea</a>
   {% else %}
-    <p>Regenerate only the clip with the problem. The other clips, the music and the logo end card are reused, and the new video goes through the checks again as a new post. This post is marked replaced when the new one is ready.</p>
+    <p>Regenerate only the part with the problem. Everything else is reused, and the new {{ clip_fix.noun }} goes through the checks again as a new post. This post is marked replaced when the new one is ready.</p>
     {% if clip_fix.reasons %}<div class="idea-quote"><b>What the visual check found</b>{% for r in clip_fix.reasons %}<br>{{ r }}{% endfor %}</div>{% endif %}
     <ol class="fix-clips">
-    {% for c in clip_fix.clips %}<li><details {{ 'open' if c.flagged else '' }}><summary><b>Clip {{ c.index + 1 }}</b> · {{ c.start }}–{{ c.end }} s{% if c.setting %} · {{ c.setting }}{% endif %}{% if c.system %} · {{ c.system }}{% endif %}{% if c.flagged %} <span class="tag">Flagged by the check</span>{% endif %}</summary>
-      <form method="post" action="/forms/posts/{{ post.id }}/clips/{{ c.index }}/regenerate" data-confirm="Regenerate clip {{ c.index + 1 }}? This makes one new {{ c.duration }}-second {{ 'Runway clip' if clip_fix.live else 'simulated clip' }}.">
+    {% for c in clip_fix.parts %}<li><details {{ 'open' if c.flagged else '' }}><summary><b>{{ c.title }}</b>{% if c.kind == 'clip' %} · {{ c.start }}–{{ c.end }} s{% if c.setting %} · {{ c.setting }}{% endif %}{% if c.system %} · {{ c.system }}{% endif %}{% elif c.duration %} · {{ c.duration }} s{% endif %}{% if c.flagged %} <span class="tag">Flagged by the check</span>{% endif %}</summary>
+      {% set what = {'clip': 'one new ' ~ c.duration ~ '-second ', 'visual': 'a new ' ~ (c.duration ~ '-second ' if c.duration else ''), 'music': 'a new ' ~ c.duration ~ '-second '}[c.kind] %}
+      {% set thing = {'clip': 'clip', 'visual': clip_fix.noun, 'music': 'music track'}[c.kind] %}
+      <form method="post" action="/forms/posts/{{ post.id }}/parts/{{ c.key }}/regenerate" data-confirm="Regenerate {{ c.label }}? This makes {{ what }}{{ 'Runway ' if clip_fix.live else 'simulated ' }}{{ thing }}.">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label>Prompt for this clip<textarea name="prompt" rows="6" maxlength="1000">{{ c.prompt }}</textarea></label>
-        <small class="muted">Edit it if you like. Wording that keeps signs, lettering and people out of frame is added when the check found them. A new take is generated even if you leave it unchanged.</small>
-        <div class="actions"><button class="primary">Regenerate clip {{ c.index + 1 }}</button></div>
+        <label>{{ 'Music prompt' if c.kind == 'music' else 'Prompt for this ' ~ thing }}<textarea name="prompt" rows="6" maxlength="{{ c.limit }}">{{ c.prompt }}</textarea></label>
+        <small class="muted">{% if c.kind == 'music' %}Edit it if you like. A new track is composed even if you leave it unchanged.{% else %}Edit it if you like. Wording that keeps signs, lettering and people out of frame is added when the check found them. A new take is generated even if you leave it unchanged.{% endif %}</small>
+        <div class="actions"><button class="primary">Regenerate {{ c.label }}</button></div>
       </form>
     </details></li>{% endfor %}
     </ol>
