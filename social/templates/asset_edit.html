@@ -1,0 +1,47 @@
+{% set a = editing_asset %}
+{% set values = media_edit_values %}
+{% set asset_url = media_base_url ~ '/' ~ (a.storage_key|urlencode) %}
+<div class="page-actions"><p class="intro">Update this media's permissions and details. Changes are recorded below.</p><a class="button" href="/admin/assets">Back to asset library</a></div>
+{% if request.query_params.get('saved') == '1' and not error_message %}<div class="banner" role="status">Media details saved.</div>{% endif %}
+<section>
+  <h2>{{ a.original_name }}</h2>
+  {% if a.media.mime.startswith('image/') %}<a href="{{ asset_url }}" target="_blank" rel="noopener noreferrer"><img class="asset-preview" src="{{ asset_url }}" alt="{{ a.original_name }}"></a>
+  {% elif a.media.mime.startswith('video/') %}<video class="asset-preview" src="{{ asset_url }}" controls preload="metadata"></video>
+  {% elif a.media.mime.startswith('audio/') %}<audio src="{{ asset_url }}" controls preload="metadata"></audio>{% endif %}
+  <form method="post" action="/forms/assets/{{ a.id }}/save-media">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="revision" value="{{ values.revision }}">
+    <label>File name<input name="original_name" maxlength="255" required value="{{ values.original_name }}"></label>
+    {% include "rights_fields.html" %}
+    {% if a.rights not in rights_choices %}<p class="muted">Current rights: {{ rights_label(a.rights) }}. Choose Public or Not public to save.</p>{% endif %}
+    <label>Rights expiry (UTC, optional)<input type="datetime-local" name="rights_expire_at" step="1" value="{{ values.get('rights_expire_at', '') }}"></label>
+    <label>Media source<select name="source" aria-label="Media source" required>
+      {% for key, label in [('company','Company media (no AI generation or editing)'),('ai_generated','AI-generated'),('ai_edited','AI-edited real media')] %}<option value="{{ key }}" {{ 'selected' if values.get('source') == key else '' }}>{{ label }}</option>{% endfor %}
+    </select></label>
+    <div class="two">
+      <label>AI model / generator<input name="generator" maxlength="200" value="{{ values.get('generator', '') }}"></label>
+      <label>Generation/edit prompt<textarea name="prompt" rows="3">{{ values.get('prompt', '') }}</textarea></label>
+    </div>
+    <label>Product/campaign tags (JSON)<textarea name="tags" rows="4">{{ values.get('tags', '{}') }}</textarea></label>
+    <label class="checkbox"><input type="checkbox" name="brand_logo" {{ 'checked' if values.get('brand_logo') == 'on' else '' }}>This is the Tudelu logo</label>
+    <label class="checkbox"><input type="checkbox" name="real_customer_content" {{ 'checked' if values.get('real_customer_content') == 'on' else '' }}>This depicts real customer content</label>
+    <label class="checkbox"><input type="checkbox" name="customer_permission" {{ 'checked' if values.get('customer_permission') == 'on' else '' }}>Customer content permission is documented</label>
+    <label>Permission evidence reference<input name="permission_reference" value="{{ values.get('permission_reference', '') }}"></label>
+    <p class="muted">Permission or source changes return pending posts that use this media to review, including posts using media made from it. Published posts stay as they are.</p>
+    {% if a.tags.get('google_drive_file_id') %}<p class="muted">These edits stay in the library when Drive checks an unchanged file. A changed Drive file or import setting may create a new asset.</p>{% endif %}
+    <div class="actions"><button class="primary">Save changes</button><a class="button" href="/admin/assets">Cancel</a></div>
+  </form>
+</section>
+<section><h2>Change history</h2>
+  {% macro history_value(key, value) %}
+    {% if key == 'rights' %}<p>{{ rights_label(value) }}</p>
+    {% elif value is mapping or (value is sequence and value is not string) %}<pre>{{ json.dumps(value, indent=2) }}</pre>
+    {% elif value is boolean %}<p>{{ 'Yes' if value else 'No' }}</p>
+    {% else %}<p>{{ value if value is not none and value != '' else 'Not set' }}</p>{% endif %}
+  {% endmacro %}
+  {% for edit in asset_history %}<details><summary>{{ edit.created_at }} UTC &middot; {{ edit.actor }}</summary>
+    {% for key, value in edit.after.items() %}{% if edit.before.get(key) != value %}<article><h3>{{ key|replace('_', ' ')|title }}</h3>
+      <div class="two"><div><small>Before</small>{{ history_value(key, edit.before.get(key)) }}</div><div><small>After</small>{{ history_value(key, value) }}</div></div>
+    </article>{% endif %}{% endfor %}
+  </details>{% else %}<p class="muted">No edits yet.</p>{% endfor %}
+</section>

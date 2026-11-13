@@ -24,6 +24,10 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `STORAGE_BACKEND` | `"local"` | local or s3. Original bytes, including C2PA/IPTC, are kept unchanged. |
 | `MEDIA_DIR` | `data/media` | Related configuration in the group above. |
 | `WATCH_DIR` | `data/inbox` | Drop media then a JSON manifest here; see README for the manifest format. |
+| `GOOGLE_DRIVE_CREDENTIALS_FILE` | `(unset)` | Optional Drive credentials file; defaults to GOOGLE_APPLICATION_CREDENTIALS / ADC. |
+| `GOOGLE_DRIVE_CREDENTIALS_JSON` | `(unset secret)` | Optional service-account JSON, preferably a gsm:// Secret Manager reference; takes precedence over the file. |
+| `GOOGLE_DRIVE_POLL_SECONDS` | `300` | Delay after a completed Drive scan. Configure the folder and rights in Asset library. |
+| `GOOGLE_DRIVE_BATCH_SIZE` | `10` | Maximum Drive entries processed per background batch; pagination resumes automatically. |
 | `S3_BUCKET` | `(unset)` | S3-compatible bucket name. Droplet deployment can serve a private Spaces bucket through MEDIA_BASE_URL. |
 | `S3_ENDPOINT_URL` | `(unset)` | Regional S3 API origin, e.g. https://nyc3.digitaloceanspaces.com (not a bucket/CDN URL). |
 | `S3_REGION` | `"us-east-1"` | Bucket region, e.g. nyc3 for Spaces. |

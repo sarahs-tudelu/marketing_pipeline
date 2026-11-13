@@ -19,6 +19,7 @@ from starlette.datastructures import UploadFile
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import connections
+from .clip_replace import clip_options, replace_clip
 from .config import PLATFORMS, get_settings, profiles
 from .db import make_engine, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
@@ -222,6 +223,9 @@ def create_app(settings=None):
         asset_form=None,
         upload_form=None,
         bucket_form=None,
+        drive_form=None,
+        editing_asset_id=None,
+        media_edit_values=None,
         idea_form=None,
         plan=None,
         post_busy=None,
@@ -230,6 +234,11 @@ def create_app(settings=None):
         request.session.setdefault("csrf", secrets.token_urlsafe(32))
         request.session.setdefault("browser_nonce", secrets.token_urlsafe(32))
         from .adapters import ADAPTERS
+        from .asset_edit import form_values as asset_edit_values
+        from .drive_import import panel as drive_panel
+        from .models import AssetEdit
+
+        editing_asset = db.get(Asset, editing_asset_id) if editing_asset_id else None
 
         accounts = db.scalars(select(Account)).all()
         state = []
@@ -276,11 +285,17 @@ def create_app(settings=None):
                 "asset_form": asset_form or {},
                 "upload_form": upload_form or {},
                 "bucket_form": bucket_form or {},
+                "drive": drive_panel(db, settings) if view == "assets" else None,
+                "drive_form": drive_form,
+                "editing_asset": editing_asset,
+                "media_edit_values": media_edit_values if media_edit_values is not None else (asset_edit_values(editing_asset) if editing_asset else {}),
+                "asset_history": db.scalars(select(AssetEdit).where(AssetEdit.asset_id == editing_asset_id).order_by(AssetEdit.created_at.desc(), AssetEdit.id.desc()).limit(30)).all() if editing_asset else [],
                 "media_base_url": (settings.media_base_url or "/media").rstrip("/"),
                 "csrf": request.session["csrf"],
                 "posts": posts,
                 "post": post,
                 "retry_existing": retry_existing,
+                "clip_fix": clip_options(db, post) if post else None,
                 "retry_original": original_post(db, post) if post else None,
                 "retry_block_reason": retry_block_reason(db, settings, post) if post and post.status == "failed" and not retry_existing else "",
                 "post_busy": ((post.status == "publishing" or post_processing(engine, post.id)) if post_busy is None else post_busy) if post else False,
@@ -355,6 +370,37 @@ def create_app(settings=None):
         }:
             raise HTTPException(404)
         return page(request, db, view)
+
+    @app.get("/admin/assets/{asset_id}/edit", response_class=HTMLResponse)
+    def edit_media(asset_id: str, request: Request, db: DB):
+        if not db.get(Asset, asset_id):
+            raise HTTPException(404, "Media not found")
+        return page(request, db, "asset-edit", editing_asset_id=asset_id)
+
+    @app.post("/forms/assets/{asset_id}/save-media", dependencies=mutation)
+    async def save_media(asset_id: str, request: Request, db: DB):
+        from .asset_edit import AssetEditConflict, edit_asset
+
+        asset = db.get(Asset, asset_id)
+        if not asset:
+            raise HTTPException(404, "Media not found")
+        form = await request.form()
+        values = media_form_values(form) | {key: str(form.get(key, "")) for key in ("original_name", "revision", "real_customer_content")}
+        try:
+            arguments = media_form_arguments(values)
+            # These two tags have dedicated controls in the editor.
+            for key in ("brand_logo", "real_customer_content"):
+                arguments["tags"].pop(key, None)
+                if values[key] == "on":
+                    arguments["tags"][key] = True
+            await run_in_threadpool(edit_asset, db, asset, arguments, original_name=values["original_name"], expected_revision=values["revision"], actor=request.state.actor)
+            db.commit()
+        except (ValueError, SQLAlchemyError) as exc:
+            db.rollback()
+            status = 409 if isinstance(exc, AssetEditConflict) else 503 if isinstance(exc, SQLAlchemyError) else 400
+            message = "The media details could not be saved. Try again shortly." if isinstance(exc, SQLAlchemyError) else str(exc)
+            return page(request, db, "asset-edit", editing_asset_id=asset_id, media_edit_values=values, error_message=message, status_code=status)
+        return RedirectResponse(f"/admin/assets/{asset_id}/edit?saved=1", status_code=303)
 
     @app.get("/posts/{post_id}", response_class=HTMLResponse)
     def detail(post_id: str, request: Request, db: DB):
@@ -740,6 +786,27 @@ def create_app(settings=None):
         )
         return RedirectResponse(f"/posts/{post.id}", status_code=303)
 
+    @app.post("/forms/posts/{post_id}/clips/{index}/regenerate", dependencies=mutation)
+    async def regenerate_clip(post_id: str, index: int, request: Request, db: DB):
+        post = db.get(Post, post_id)
+        if not post or post.status == "deleted":
+            raise HTTPException(404)
+        form = await request.form()
+        try:
+            if post_processing(engine, post_id):
+                raise PostBusy("This post is being processed")
+            await run_in_threadpool(replace_clip, db, post, index, str(form.get("prompt", "")), request.state.actor)
+        except PostBusy:
+            db.rollback()
+            return page(request, db, "post", post_id, post_busy=True, status_code=202)
+        except PostConflict:
+            db.rollback()
+            return RedirectResponse(f"/posts/{post_id}", status_code=303)
+        except ValueError as exc:
+            db.rollback()
+            return page(request, db, "post", post_id, error_message=str(exc), status_code=400)
+        return RedirectResponse("/admin/media-queue", status_code=303)
+
     @app.post("/forms/posts/{post_id}/{action}", dependencies=mutation)
     async def form_action(post_id: str, action: str, request: Request, db: DB):
         post = db.get(Post, post_id)
@@ -948,6 +1015,43 @@ def create_app(settings=None):
             await run_in_threadpool(import_existing)
         except Exception as exc:
             return upload_failed(request, db, exc, bucket_form=values)
+        return RedirectResponse("/admin/assets", status_code=303)
+
+    @app.post("/forms/google-drive", dependencies=mutation)
+    async def configure_google_drive(request: Request, db: DB):
+        from .drive_import import DriveError, save_source
+
+        form = dict(await request.form())
+        try:
+            save_source(db, form)
+        except DriveError as exc:
+            db.rollback()
+            return page(request, db, "assets", error_message=str(exc), drive_form=form, status_code=400)
+        return RedirectResponse("/admin/assets", status_code=303)
+
+    @app.post("/forms/google-drive/{action}", dependencies=mutation)
+    def control_google_drive(action: str, db: DB):
+        from sqlalchemy.orm.exc import StaleDataError
+
+        from .db import now
+        from .models import DriveSource
+
+        source = db.get(DriveSource, 1)
+        if not source or action not in {"pause", "resume", "scan"}:
+            raise HTTPException(404, "Drive connection or action not found")
+        if action == "pause":
+            source.enabled = False
+        else:
+            source.enabled = True
+            source.next_poll_at = now()
+            source.error = ""
+        # Even an already-paused action invalidates an in-flight worker snapshot.
+        source.revision += 1
+        try:
+            db.commit()
+        except StaleDataError:
+            db.rollback()
+            raise HTTPException(409, "Import progress changed; retry this action") from None
         return RedirectResponse("/admin/assets", status_code=303)
 
     @app.post("/forms/generate-asset", dependencies=mutation)

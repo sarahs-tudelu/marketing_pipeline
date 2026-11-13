@@ -235,10 +235,21 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     check("disclosure", lambda: check_disclosure(post, assets, live, settings=settings))
 
     def rights():
+        from .asset_edit import ancestry
+
+        sources, missing = ancestry(db, assets)
         # Not public media supports dry runs only; legacy unclassified text keeps its prior behavior.
-        private = [a.id for a in assets if a.rights == "not_public"] if live else []
-        current = all(a.rights and (not a.rights_expire_at or at < a.rights_expire_at) for a in assets)
-        return current and not private, {"not_public_for_live": private} if private else {}
+        private = [a.id for a in sources if a.rights == "not_public"] if live else []
+        current = all(a.rights and (not a.rights_expire_at or at < a.rights_expire_at) for a in sources)
+        unpermitted = [a.id for a in sources if a.tags.get("real_customer_content") and not (a.customer_permission and a.permission_reference)] if live else []
+        details = {}
+        if private:
+            details["not_public_for_live"] = private
+        if missing:
+            details["missing_source_assets"] = missing
+        if unpermitted:
+            details["missing_customer_permission"] = unpermitted
+        return current and not private and not missing and not unpermitted, details
 
     check("rights", rights)
     check("media", lambda: (not (errors := media_errors(assets, profile, post.platform)), {"errors": errors}))

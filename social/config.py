@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     storage_backend: Literal["local", "s3"] = "local"
     media_dir: Path = Path("data/media")
     watch_dir: Path = Path("data/inbox")
+    google_drive_credentials_file: str = ""
+    google_drive_credentials_json: SecretStr = SecretStr("")
+    google_drive_poll_seconds: int = Field(default=300, ge=60, le=86400)
+    google_drive_batch_size: int = Field(default=10, ge=1, le=100)
     s3_bucket: str = ""
     s3_endpoint_url: str = ""
     s3_region: str = "us-east-1"

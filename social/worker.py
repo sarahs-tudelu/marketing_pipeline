@@ -112,6 +112,17 @@ def run():
             bootstrap(db)
             import_meta_from_env(db, settings)
         scheduler = BlockingScheduler(timezone="UTC")
+        from .drive_import import tick as drive_tick
+
+        scheduler.add_job(
+            drive_tick,
+            "interval",
+            seconds=settings.worker_interval_seconds,
+            args=[factory, settings],
+            max_instances=1,
+            coalesce=True,
+            next_run_time=now(),
+        )
         scheduler.add_job(
             tick,
             "interval",

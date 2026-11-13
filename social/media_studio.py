@@ -13,6 +13,7 @@ from sqlalchemy import case, select, update
 from .config import PLATFORMS, profiles
 from .db import now, uid
 from .idea_plan import END_CARD_SECONDS, MAX_CLIPS, MIN_CLIP_SECONDS, Shot
+from .lifecycle import transition
 from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob, Post
 from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
@@ -498,7 +499,8 @@ def _save_output(db, settings, job, data):
         job.state = "queued"
         db.commit()
         return
-    job.state = "queued" if not is_audio and brief["audio_prompt"] else "rendering"
+    # A clip regeneration reuses the finished video's soundtrack instead of composing another.
+    job.state = "queued" if not is_audio and brief["audio_prompt"] and not brief.get("soundtrack_asset_id") else "rendering"
     if job.state == "queued":
         job.stage = "audio"
     db.commit()
@@ -557,6 +559,8 @@ def _finish(db, settings, job):
                     data, profile.video_width, profile.video_height, brief["duration"], soundtrack
                 )
             name = f"{job.platform}-{job.id}.mp4"
+        # A multi-clip video records every clip's prompt, not only the first clip's.
+        clip_prompts = list(dict.fromkeys(s["prompt"] for s in brief.get("video_segments", []) if s.get("prompt")))
         result = ingest(
             db,
             settings,
@@ -564,7 +568,9 @@ def _finish(db, settings, job):
             name,
             source=first.source,
             generator=first.generator,
-            prompt=first.prompt,
+            prompt=" ".join(f"Clip {n}: {p}" for n, p in enumerate(clip_prompts, 1))
+            if len(clip_prompts) > 1
+            else first.prompt,
             rights=combined_rights(first.rights, [logo] if logo else []),
             owner=first.owner,
             rights_expire_at=min(
@@ -578,6 +584,8 @@ def _finish(db, settings, job):
                 + job.source_asset_ids
                 + ([logo.id] if logo else []),
                 "rendition": {"platform": job.platform, "original_asset_id": first.id},
+                "media_job_id": job.id,
+                **({"replaces": brief["replaces"]} if brief.get("replaces") else {}),
                 "generated_audio": any(a.media["mime"].startswith("audio/") for a in originals),
                 **({"video_sequence": brief["video_segments"], "requested_duration": brief["duration"]}
                    if brief.get("video_segments") else {}),
@@ -612,6 +620,16 @@ def _finish(db, settings, job):
             commit=False,
         )
         job.post_id = post.id
+        replaced = brief.get("replaces")
+        held = db.get(Post, replaced["post_id"]) if replaced else None
+        if held and held.status == "held":
+            transition(
+                db,
+                held,
+                "failed",
+                f"Replaced by post {post.id} after clip {replaced['clip_index'] + 1} was regenerated",
+                replaced.get("requested_by") or "admin",
+            )
     job.state, job.error = "complete", ""
     db.commit()
 

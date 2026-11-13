@@ -1,3 +1,4 @@
+{% include "drive_import.html" %}
 <section>
   <h2>Library</h2>
   <table>
@@ -17,7 +18,7 @@
           <audio src="{{ asset_url }}" controls preload="none" aria-label="Preview {{ a.original_name }}"></audio>
           {% endif %}
         </td>
-        <td>{{ a.original_name }}<small>{{ a.id }}</small><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a>
+        <td>{{ a.original_name }}<small>{{ a.id }}</small><div class="actions"><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a><a class="button" href="/admin/assets/{{ a.id }}/edit">Edit details</a></div>
           {% if a.media.get('visual_summary') %}{% set description = a.media.visual_summary %}
           <details><summary>Visual summary</summary><p>{{ description.summary }}</p>
             {% if description.visible_text %}<p>Visible text: {{ description.visible_text|join(' · ') }}</p>{% endif %}

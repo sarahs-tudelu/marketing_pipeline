@@ -1,0 +1,22 @@
+{% if clip_fix %}
+<section id="fix-clip"><h2>Fix one clip</h2>
+  {% if clip_fix.pending %}{% set p = clip_fix.pending %}
+    {% if p.state == 'failed' or p.state == 'uncertain' %}<p class="error">Regenerating clip {{ p.brief.replaces.clip_index + 1 }} stopped: {{ p.error }}</p>
+    {% else %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>Regenerating clip {{ p.brief.replaces.clip_index + 1 }}…</strong><small>The other clips, the music and the logo end card are reused. A new post replaces this one when the video is ready.</small></span></div>{% endif %}
+    <a class="button" href="/admin/media-queue">Open In progress</a>
+  {% else %}
+    <p>Regenerate only the clip with the problem. The other clips, the music and the logo end card are reused, and the new video goes through the checks again as a new post. This post is marked replaced when the new one is ready.</p>
+    {% if clip_fix.reasons %}<div class="idea-quote"><b>What the visual check found</b>{% for r in clip_fix.reasons %}<br>{{ r }}{% endfor %}</div>{% endif %}
+    <ol class="fix-clips">
+    {% for c in clip_fix.clips %}<li><details {{ 'open' if c.flagged else '' }}><summary><b>Clip {{ c.index + 1 }}</b> · {{ c.start }}–{{ c.end }} s{% if c.setting %} · {{ c.setting }}{% endif %}{% if c.system %} · {{ c.system }}{% endif %}{% if c.flagged %} <span class="tag">Flagged by the check</span>{% endif %}</summary>
+      <form method="post" action="/forms/posts/{{ post.id }}/clips/{{ c.index }}/regenerate" data-confirm="Regenerate clip {{ c.index + 1 }}? This makes one new {{ c.duration }}-second {{ 'Runway clip' if clip_fix.live else 'simulated clip' }}.">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>Prompt for this clip<textarea name="prompt" rows="6" maxlength="1000">{{ c.prompt }}</textarea></label>
+        <small class="muted">Edit it if you like. Wording that keeps signs, lettering and people out of frame is added when the check found them. A new take is generated even if you leave it unchanged.</small>
+        <div class="actions"><button class="primary">Regenerate clip {{ c.index + 1 }}</button></div>
+      </form>
+    </details></li>{% endfor %}
+    </ol>
+  {% endif %}
+</section>
+{% endif %}

@@ -64,6 +64,7 @@
     pending.delete(form);
   }
   const labels = {
+    "save-media": ["Saving media details…", "Updating permissions and source information."],
     automation: ["Updating automation…", "Saving your automatic-post preference."],
     "media-studio": ["Saving creative brief…", "Preparing your media queue or recurring campaign."],
     plan: ["Planning your idea…", "Reading your idea, tudelu.com and the approved facts. This can take up to a minute."],
@@ -76,6 +77,7 @@
     approve: ["Rechecking post…", "Running the approval checks."],
     edit: ["Saving and checking…", "Reviewing your changes."],
     delete: ["Deleting draft…", "Removing this draft from your workspace."],
+    regenerate: ["Queuing the clip…", "Reusing the other clips, music and logo card."],
     retry: ["Preparing retry…", "Reusing the saved caption and media, then queuing fresh checks and scheduling."],
     assets: ["Uploading media…", "Saving the original file and its details."],
     posts: ["Creating draft…", "Preparing your post."],

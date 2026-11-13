@@ -26,6 +26,46 @@ class Asset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class AssetEdit(Base):
+    __tablename__ = "asset_edits"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.id"), index=True)
+    actor: Mapped[str] = mapped_column(String(200))
+    before: Mapped[dict] = mapped_column(JSON)
+    after: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class DriveSource(Base):
+    __tablename__ = "drive_sources"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    folder_id: Mapped[str] = mapped_column(String(200))
+    folder_name: Mapped[str] = mapped_column(String(255), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    recursive: Mapped[bool] = mapped_column(Boolean, default=True)
+    defaults: Mapped[dict] = mapped_column(JSON, default=dict)
+    scan_state: Mapped[dict] = mapped_column(JSON, default=dict)
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    error: Mapped[str] = mapped_column(Text, default="")
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    __mapper_args__ = {"version_id_col": revision}
+
+
+class DriveImport(Base):
+    __tablename__ = "drive_imports"
+    file_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    folder_id: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(255))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20))
+    error: Mapped[str] = mapped_column(Text, default="")
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class FactSheet(Base):
     __tablename__ = "fact_sheets"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

@@ -38,6 +38,9 @@ VISUAL_RULES = [
     "Do not depict systems marked 'Coming soon' unless the admin idea names that system.",
     "Unoccupied scenes: the vision gate rejects unexpected people.",
     "Plain, unmarked surfaces: the vision gate rejects readable text, signage, logos and watermarks.",
+    "Storefronts, streets, parking and other commercial settings invite generated lettering: frame them so the "
+    "system and one plain, unbranded facade fill the shot, with any neighboring buildings described as blank "
+    "rendered walls and greenery, windows as clear glass reflecting the sky and awnings as plain solid fabric.",
     "Photorealistic architectural photography with believable scale, physics and daylight.",
 ]
 

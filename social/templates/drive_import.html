@@ -1,0 +1,63 @@
+{% if drive %}
+<section>
+  <h2>Automatic Google Drive imports</h2>
+  <p>New photos, videos and audio from your chosen folder are copied into this library automatically. Existing imports stay available if a file is removed from Drive.</p>
+  {% if drive.email %}
+  <p>Share your Drive folder with <strong>{% for character in drive.email %}{{ character }}{% if character in '@.-_' %}<wbr>{% endif %}{% endfor %}</strong> as a <strong>Viewer</strong>, then paste its link below.</p>
+  {% else %}
+  <p class="muted">A server administrator must configure Google Drive credentials with read access to your folder. Once configured, the service account's sharing address appears here.</p>
+  {% endif %}
+  {% set source = drive.source %}
+  {% if source %}
+  <p><strong>{{ 'Importing enabled' if source.enabled else 'Paused' }}</strong> &middot;
+    <a href="https://drive.google.com/drive/folders/{{ source.folder_id }}" target="_blank" rel="noopener noreferrer">{{ source.folder_name or 'Open source folder' }}</a>
+  </p>
+  <p>{{ drive.counts.get('imported', 0) }} files imported &middot; {{ drive.counts.get('error', 0) }} need attention.
+    {% if source.last_completed_at %}Last scan completed {{ source.last_completed_at }} UTC.{% else %}Waiting for the worker to complete the first scan.{% endif %}
+  </p>
+  {% if source.error %}<p class="error" role="alert">{{ source.error }}</p>{% endif %}
+  <div class="actions">
+    <form method="post" action="/forms/google-drive/{{ 'pause' if source.enabled else 'resume' }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button>{{ 'Pause imports' if source.enabled else 'Resume imports' }}</button>
+    </form>
+    {% if source.enabled %}<form method="post" action="/forms/google-drive/scan">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><button>Check for files</button>
+    </form>{% endif %}
+  </div>
+  {% endif %}
+  {% set values = drive_form if drive_form is not none else (source.defaults if source else {'rights': 'not_public'}) %}
+  <details {{ 'open' if not source or drive_form is not none else '' }}>
+    <summary>{{ 'Change import settings' if source else 'Set up folder importing' }}</summary>
+    <form method="post" action="/forms/google-drive">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Google Drive folder link<input name="folder" required value="{{ values.get('folder', source.folder_id if source else '') }}" placeholder="https://drive.google.com/drive/folders/..."></label>
+      <label class="checkbox"><input type="checkbox" name="recursive" {{ 'checked' if (values.get('recursive') == 'on' if drive_form is not none else (source.recursive if source else true)) else '' }}>Include subfolders</label>
+      <label>Media source<select name="source" aria-label="Media source" required>
+        <option value="">Choose...</option>
+        {% for key, label in [('company', 'Company media (no AI generation or editing)'), ('ai_generated', 'AI-generated'), ('ai_edited', 'AI-edited real media'), ('manifest', 'Mixed sources (per-file source records)')] %}
+        <option value="{{ key }}" {{ 'selected' if values.get('source') == key else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select></label>
+      {% include "rights_fields.html" %}
+      <div class="two">
+        <label>AI model / generator<input name="generator" maxlength="200" value="{{ values.get('generator', '') }}"></label>
+        <label>Generation/edit prompt<textarea name="prompt" rows="2">{{ values.get('prompt', '') }}</textarea></label>
+      </div>
+      <label>Product/campaign tags (JSON)<input name="tags" value="{{ values.get('tags', '{}') if drive_form is not none else json.dumps(values.get('tags', {})) }}"></label>
+      <p class="muted">These source details apply to every imported file. For mixed sources or different AI prompts, choose Mixed sources and add a matching <code>photo.jpg.json</code> next to each file with its source details. Customer media also needs documented permission in its source record.</p>
+      <details><summary>Example source record for a mixed folder</summary><pre>{"source": "company", "rights": "not_public", "owner": "Tudelu"}</pre><p>AI records also need <code>generator</code> and <code>prompt</code>. Customer records need <code>tags.real_customer_content</code>, <code>customer_permission</code> and <code>permission_reference</code>.</p></details>
+      <button class="primary">Save and start importing</button>
+      <small>Checks every {{ (drive.interval / 60)|round(1) }} minutes after each completed scan. The background worker must be running. Updated files or source details create a new asset version; existing posts keep their original assets.</small>
+    </form>
+  </details>
+  {% if drive.recent %}<details><summary>Recent import activity</summary>
+    <table><thead><tr><th>Drive file</th><th>Status</th><th>Details</th></tr></thead><tbody>
+    {% for item in drive.recent %}<tr>
+      <td><a href="https://drive.google.com/file/d/{{ item.file_id }}/view" target="_blank" rel="noopener noreferrer">{{ item.name }}</a></td>
+      <td>{{ item.status|title }}</td><td>{{ item.error or 'Available in the library' }}<small>{{ item.checked_at }} UTC</small></td>
+    </tr>{% endfor %}
+    </tbody></table>
+  </details>{% endif %}
+</section>
+{% endif %}
