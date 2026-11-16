@@ -24,7 +24,7 @@ tudelu = "social.cli:main"
 [tool.setuptools.packages.find]
 include = ["social*"]
 [tool.setuptools.package-data]
-social = ["templates/*.html", "static/*"]
+social = ["templates/*.html", "static/*", "resources/*.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -23,7 +24,17 @@ from .storage import storage
 from .video_segments import current_segment
 from .visual_context import visual_inputs
 
-ROOT = Path(__file__).resolve().parent.parent
+
+def reference_config(name):
+    """Read release-owned reference data from both source checkouts and installed wheels."""
+    try:
+        document = files("social").joinpath("resources", name).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ValueError(
+            f"Required product-reference configuration ({name}) is missing from this application build. "
+            "Rebuild web and worker from the current source, then resume the job."
+        ) from None
+    return yaml.safe_load(document)
 
 
 class Selection(BaseModel):
@@ -40,7 +51,7 @@ def builder_guidance(db, job):
     facts = Facts.model_validate(db.get(FactSheet, job.brief["facts_id"]).document)
     # Older immutable caption sheets still get the reviewed Builder drawing rules.
     return facts.visual_guidance or VisualGuidance.model_validate(
-        yaml.safe_load((ROOT / "config/visual-guidance.builder.yaml").read_text(encoding="utf-8"))
+        reference_config("visual-guidance.builder.yaml")
     )
 
 
@@ -107,7 +118,7 @@ def website_references(db, settings, job, family, client=None):
     Raw bytes are retained in the media store and referenced by the job's checksum records.
     Their creation model is unknown, so they are not registered as verified company photos.
     """
-    catalog = yaml.safe_load((ROOT / "config/website-product-references.yaml").read_text(encoding="utf-8"))
+    catalog = reference_config("website-product-references.yaml")
     source = catalog.get(family, {})
     saved = dict(job.brief.get("website_reference_cache", {}))
     found = []

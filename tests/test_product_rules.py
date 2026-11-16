@@ -29,7 +29,7 @@ from social.providers import Claude, OpenAI, Providers, VisionReview
 from social.security import digest
 from social.video_segments import segment_brief
 
-GUIDE_PATH = Path("config/visual-guidance.builder.yaml")
+GUIDE_PATH = Path("social/resources/visual-guidance.builder.yaml")
 SHEET_PATH = Path("config/facts.tudelu-2026-11-16-builder-v1.yaml")
 
 

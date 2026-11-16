@@ -34,7 +34,7 @@ acoustic-rating or structural claims were imported into the caption facts.
 
 ## Configuration and behavior
 
-`config/visual-guidance.builder.yaml` contains the curated rules and immutable source
+`social/resources/visual-guidance.builder.yaml` contains the curated rules and immutable source
 paths, commit IDs and SHA-256 hashes. The same section is appended to
 `config/facts.tudelu-2026-11-16-builder-v1.yaml`. Every rule cites its source IDs.
 

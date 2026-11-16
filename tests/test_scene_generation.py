@@ -69,6 +69,31 @@ class Provider:
         return self.still if endpoint == "text_to_image" else seed_media(duration=6)[1]
 
 
+def test_missing_bundled_catalog_can_resume_without_duplicate_submission(
+    db, settings, video_job, tmp_path, monkeypatch
+):
+    def catalog(*args):
+        refs.reference_config("website-product-references.yaml")
+        return []  # Use the fixture's library photo, with no website request.
+
+    monkeypatch.setattr(refs, "website_references", catalog)
+    provider = Provider(db, video_job, settings)
+    with monkeypatch.context() as missing:
+        missing.setattr(refs, "files", lambda _: tmp_path)
+        process_jobs(db, settings, provider)
+    assert video_job.state == "failed"
+    assert "missing from this application build" in video_job.error
+    assert not video_job.task_id and not video_job.task_history and not provider.submitted
+
+    resume_job(video_job)
+    db.commit()
+    process_jobs(db, settings, provider)
+    assert video_job.state == "running", video_job.error
+    assert len(provider.submitted) == 1
+    assert provider.submitted[0][0] == "text_to_image"
+    assert video_job.brief["active_generation"] == "scene"
+
+
 def test_prompt_led_scene_is_saved_checked_then_animated(db, settings, video_job, photo):
     from fastapi.testclient import TestClient
 
