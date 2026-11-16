@@ -164,6 +164,7 @@ sudo chmod 600 .env
 sudo docker compose -f compose.droplet.yaml --env-file .env config --quiet
 sudo docker compose -f compose.droplet.yaml --env-file .env build
 sudo docker compose -f compose.droplet.yaml --env-file .env run --rm --no-deps web python scripts/check_droplet_config.py --environment --check-adc-file --check-ca-files
+sudo docker compose -f compose.droplet.yaml --env-file .env run --rm --no-deps migrate
 sudo docker compose -f compose.droplet.yaml --env-file .env up -d
 sudo docker compose -f compose.droplet.yaml --env-file .env ps
 sudo docker compose -f compose.droplet.yaml --env-file .env logs --tail=100 web worker
@@ -178,7 +179,24 @@ sudo docker compose -f compose.droplet.yaml exec web tudelu seed
 sudo docker compose -f compose.droplet.yaml exec web tudelu demo
 ```
 
-The `restart: unless-stopped` services return when Docker restarts. Enable Docker at boot. A new application release still needs the migration job: run the Compose `up -d --build` workflow and confirm successful migrations. Do not scale the worker beyond one process. Maintain managed-database backups/recovery separately from the Droplet's runtime media volume and Fernet key; none of these are source-controlled files.
+The `restart: unless-stopped` services return when Docker restarts. Enable Docker at boot. Do not scale the worker beyond one process. Maintain managed-database backups/recovery separately from the Droplet's runtime media volume and Fernet key; none of these are source-controlled files.
+
+### Updating an existing installation
+
+Run each step only if the previous one succeeded:
+
+```sh
+cd /opt/tudelu
+git pull --ff-only origin main
+docker compose -f compose.droplet.yaml --env-file .env build
+docker compose -f compose.droplet.yaml --env-file .env run --rm --no-deps migrate
+docker compose -f compose.droplet.yaml --env-file .env up -d web worker proxy
+docker compose -f compose.droplet.yaml --env-file .env ps
+```
+
+Run the migration command on every release, even when the old `migrate` container already shows `Exited (0)`. That container records an earlier run, and restarting or recreating only web/worker does not apply new database migrations. `run --rm --no-deps migrate` uses the newly built image in a fresh migration container. If it fails, stop the update and inspect its output before starting the new services.
+
+If pages and workers fail with `ProgrammingError` after an update, check for an unapplied migration. For example, revision `d8e4b2c61709` adds `availability_checks`, `post_availability` and `post_reposts`; running its application code against revision `c6f3a7b95247` causes these failures. With the current image already built, the migration command above applies the missing revision. It does not change live-posting settings. `/health` now checks required database tables and columns and returns HTTP 503 with a migration message when they are missing, instead of reporting a healthy application.
 
 ## Rotation and live activation
 

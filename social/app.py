@@ -21,7 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import connections
 from .clip_replace import clip_options, needs_runway_music, replace_part
 from .config import PLATFORMS, REAL_MEDIA_ONLY, get_settings, profiles
-from .db import make_engine, sessions
+from .db import make_engine, schema_gaps, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
 from .idea_plan import (
@@ -227,6 +227,23 @@ def create_app(settings=None):
 
     @app.get("/health")
     def health():
+        try:
+            gaps = schema_gaps(engine)
+        except SQLAlchemyError as exc:
+            event("database_health_failed", error_type=type(exc).__name__)
+            return JSONResponse(
+                {"status": "not_ready", "detail": "Database unavailable."},
+                status_code=503,
+            )
+        if gaps["missing_tables"] or gaps["missing_columns"]:
+            event("database_schema_incomplete", **gaps)
+            return JSONResponse(
+                {
+                    "status": "not_ready",
+                    "detail": "Database migration required. Run alembic upgrade head with the current image.",
+                },
+                status_code=503,
+            )
         return {"status": "ok"}
 
     def post_revision(db, post_id):
