@@ -118,7 +118,14 @@ def test_full_pipeline_joins_saved_clips_and_soundtrack_once(db, settings, monke
         assert hashlib.sha256(storage(settings).read(source.storage_key)).hexdigest() == source.checksum
 
 
-def test_failure_on_later_clip_resumes_without_buying_completed_clips_again(db, settings, monkeypatch):
+def test_failure_on_later_clip_resumes_without_buying_completed_clips_again(db, settings, assets, monkeypatch):
+    from social import reference_grounding as refs
+
+    assets[0].rights, assets[0].tags = "public", {"product": "pergolas"}
+    monkeypatch.setattr(refs, "website_references", lambda *args: [])
+    monkeypatch.setattr(refs, "select_reference", lambda s, records, context: refs.Selection(
+        reference_id=records[0]["id"], physical_description="Fixed aluminum pergola.",
+        prompt=context["prompt"], reason="Matching photo.", problem=""))
     monkeypatch.setattr('social.media_studio.write_prompt', lambda *a: {'generation_prompt': 'A pergola at dusk', 'prompt_writer': {}, 'depicted_system': 'Pergolas'})
     # 15 seconds: 12 seconds of footage in two 6-second clips, then the 3-second logo.
     job = queue_jobs(db, settings, brief(db, settings, duration=15, create_posts=False))[0]
@@ -129,6 +136,9 @@ def test_failure_on_later_clip_resumes_without_buying_completed_clips_again(db, 
     class Runway:
         submissions = []
         failed = False
+
+        def reference(self, asset):
+            return 'runway://reference'
 
         def submit(self, endpoint, payload):
             self.submissions.append(payload)

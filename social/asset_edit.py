@@ -31,6 +31,7 @@ PROTECTED_TAGS = frozenset(
         "source_asset_ids",
         "source_checksum",
         "reference_provenance",
+        "reference_plan",
         "google_drive_file_id",
         "google_drive_folder_id",
         "imported_bucket_key",
@@ -185,6 +186,7 @@ def edit_asset(db, asset, values, *, original_name, expected_revision, actor):
             refs = (
                 set(job.source_asset_ids or [])
                 | set(job.brief.get("reference_ids", []))
+                | set(job.brief.get("grounded_reference_ids", []))
                 | set(job.brief.get("audio_reference_ids", []))
                 | {job.brief.get("end_card_asset_id")}
             )

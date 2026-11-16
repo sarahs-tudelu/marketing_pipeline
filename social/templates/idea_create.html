@@ -30,7 +30,8 @@
       <datalist id="facts-products">{% for f in facts[:1] %}{% for p in f.document.get('products', []) if p is mapping and p.get('name') %}<option value="{{ p.name }}">{% endfor %}{% endfor %}</datalist>
       <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}" {{ 'selected' if idea_form.get('facts_id', default_facts_id) == f.id else '' }}>{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
       {% with values=idea_form if idea_form else {'rights': 'public'}, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
-      <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if idea_form.get('website', 'on') == 'on' else '' }}>Use tudelu.com to choose and describe the systems shown</label>
+      <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if idea_form.get('website', 'on') == 'on' else '' }}>Use website text for creative direction</label>
+      <small>For new AI media, matching product images come from your Public library, Google Drive imports and tudelu.com. The Builder drawing rules guide every scene.</small>
       <fieldset><legend>Reference media (optional)</legend>
         <p class="muted">Pick an image to start a video from, or one uploaded video to edit. Videos are only used when the format is Edit an uploaded video.</p>
         <div class="reference-list">

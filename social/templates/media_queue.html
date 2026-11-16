@@ -33,10 +33,12 @@
     <details><summary>Prompt{{ 's' if j.brief.get('video_segments') and j.brief.video_segments[0].get('shot') else '' }} sent to Runway{{ ' · ' ~ j.brief.depicted_system if j.brief.get('depicted_system') else '' }}</summary>
       {% if j.brief.get('video_segments') and j.brief.video_segments[0].get('shot') %}{% for s in j.brief.video_segments %}<p><b>Clip {{ s.index + 1 }}{{ ' · ' ~ s.system if s.get('system') else '' }}</b><br>{{ s.get('prompt', '') }}</p>{% endfor %}{% else %}<p>{{ j.brief.generation_prompt }}</p>{% endif %}
       {% if j.brief.get('audio_prompt') %}<p><b>Music</b><br>{{ j.brief.audio_prompt }}</p>{% endif %}
-      <small>Written by {{ j.brief.prompt_writer.writer }} from {{ 'tudelu.com, ' if sources.website else '' }}facts {{ sources.facts_version }}, {{ sources.uploaded_asset_ids|length }} uploaded, {{ sources.reference_ids|length }} selected and {{ sources.previous_asset_ids|length }} previously generated media · {{ rights_label(j.brief.rights) }}{{ ' · ' ~ j.brief.owner if j.brief.get('owner') else '' }}</small>
+      <small>Creative direction by {{ j.brief.prompt_writer.writer }} from {{ 'tudelu.com, ' if sources.website else '' }}facts {{ sources.facts_version }}, {{ sources.uploaded_asset_ids|length }} uploaded, {{ sources.reference_ids|length }} selected and {{ sources.previous_asset_ids|length }} previously generated media · {{ rights_label(j.brief.rights) }}{{ ' · ' ~ j.brief.owner if j.brief.get('owner') else '' }}</small>
     </details>
     {% elif j.brief.get('as_uploaded') %}<small>Your own {{ 'photo' if j.brief.operation == 'image' else 'video' }}, posted as it is and sized for {{ j.platform|platform }}. Nothing is sent to Runway.</small>
     {% elif j.brief.operation != 'audio' and j.stage == 'visual' %}<small>The Runway prompt is written when this job starts.</small>{% endif %}
+    {% if j.brief.get('video_segments') %}{% for clip in j.brief.video_segments %}{% set plan = clip.get('reference_plan') %}{% set reference_label = 'Clip ' ~ (clip.index + 1) ~ ' product reference' %}{% include 'reference_plan.html' %}{% endfor %}
+    {% else %}{% set plan = j.brief.get('reference_plan') %}{% set reference_label = 'Product reference' %}{% include 'reference_plan.html' %}{% endif %}
     <details><summary>Full brief and provenance</summary><pre>{{ json.dumps(j.brief, indent=2) }}</pre></details>
   </article>{% else %}<p>No media jobs yet. <a href="/admin/create">Start with an idea</a>.</p>{% endfor %}
 </section>

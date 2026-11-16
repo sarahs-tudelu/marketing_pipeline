@@ -311,7 +311,15 @@ def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, l
         write_prompt(db, settings, job)
 
 
-def test_start_image_is_used_for_the_first_planned_clip_only(db, settings, assets, house_logo, monkeypatch):
+def test_matching_start_image_is_used_for_every_planned_clip(db, settings, assets, house_logo, monkeypatch):
+    from social import reference_grounding as refs
+
+    assets[0].rights = "public"
+    assets[0].tags = {"product": "pergolas"}
+    monkeypatch.setattr(refs, "website_references", lambda *args: [])
+    monkeypatch.setattr(refs, "select_reference", lambda s, records, context: refs.Selection(
+        reference_id=records[0]["id"], physical_description="Fixed aluminum pergola.",
+        prompt=context["prompt"], reason="Matching photo.", problem=""))
     shots = [Shot(setting="backyard"), Shot(setting="walkway")]
     job = queue_jobs(
         db,
@@ -320,6 +328,7 @@ def test_start_image_is_used_for_the_first_planned_clip_only(db, settings, asset
     )[0]
     job.brief = job.brief | {
         "execution_mode": "live",
+        "depicted_system": "Pergolas",
         "prompt_writer": {},
         "video_segments": [
             s | {"prompt": f"clip {s['index']}", "seed": 1} for s in job.brief["video_segments"]
@@ -348,8 +357,8 @@ def test_start_image_is_used_for_the_first_planned_clip_only(db, settings, asset
 
     for _ in range(4):
         process_jobs(db, settings, FakeRunway())
-    assert [e for e, _ in submitted] == ["image_to_video", "text_to_video"], job.error
-    assert submitted[0][1]["promptImage"] == "runway://start" and "promptImage" not in submitted[1][1]
+    assert [e for e, _ in submitted] == ["image_to_video", "image_to_video"], job.error
+    assert all(payload["promptImage"] == "runway://start" for _, payload in submitted)
     assert clip and re.fullmatch(r"task-\d", job.task_history[-1]["task_id"])
 
 

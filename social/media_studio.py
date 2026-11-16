@@ -554,6 +554,8 @@ def replenish_campaigns(db, settings):
 
 
 def _save_output(db, settings, job, data):
+    from .reference_grounding import current_plan
+
     brief = segment_brief(job)
     segment = current_segment(job) if job.stage == "visual" else None
     is_audio = job.stage == "audio" or brief["operation"] == "audio"
@@ -568,7 +570,10 @@ def _save_output(db, settings, job, data):
             else settings.runway_video_model
         )
     )
-    refs = [db.get(Asset, i) for i in brief["reference_ids"] + brief["audio_reference_ids"]]
+    reference_plan = current_plan(job) if not is_audio else None
+    reference_ids = ([r["asset_id"] for r in reference_plan["references"] if r.get("asset_id")]
+                     if reference_plan else brief["reference_ids"])
+    refs = [db.get(Asset, i) for i in dict.fromkeys(reference_ids + brief["audio_reference_ids"])]
     expiries = [a.rights_expire_at for a in refs if a.rights_expire_at]
     prompt = brief["audio_prompt"] if job.stage == "audio" else brief["generation_prompt"]
     extension = (
@@ -596,6 +601,7 @@ def _save_output(db, settings, job, data):
             "reference_provenance": [
                 {"asset_id": a.id, "checksum": a.checksum, "tags": a.tags, "rights": a.rights} for a in refs
             ],
+            **({"reference_plan": reference_plan} if reference_plan else {}),
             "media_job_id": job.id,
             "website_snapshot": brief["website_snapshot"],
             "creative_brief": {k: brief[k] for k in ("prompt", "concept", "kind")}
@@ -810,6 +816,7 @@ def _finish(db, settings, job):
             tags=first.tags
             | {
                 "source_asset_ids": brief["reference_ids"]
+                + brief.get("grounded_reference_ids", [])
                 + brief["audio_reference_ids"]
                 + job.source_asset_ids
                 + ([logo.id] if logo else []),
@@ -1172,16 +1179,23 @@ def process_jobs(db, settings, provider=None):
                     continue
                 if not settings.runway_api_key.get_secret_value():
                     raise ValueError("RUNWAY_API_KEY is missing")
+                from types import SimpleNamespace
+
+                from .reference_grounding import prepare as prepare_references
+
+                grounded_references = prepare_references(db, settings, job)
                 ids = brief.audio_reference_ids if job.stage == "audio" else brief.reference_ids
                 segment = current_segment(job) if job.stage == "visual" else None
-                if segment and segment.get("shot") and segment["index"] > 0 and brief.operation == "video":
+                if not grounded_references and segment and segment.get("shot") and segment["index"] > 0 and brief.operation == "video":
                     # A start image belongs to the first planned clip; later clips show other settings.
                     ids = []
                 if job.stage == "audio" and job.brief.get("soundtrack_model") == "music":
                     ids = []
                 if brief.operation == "audio":
                     ids = list(dict.fromkeys(ids + brief.audio_reference_ids))[:3]
-                if job.stage == "visual" and brief.operation == "video_edit" and current_segment(job):
+                if grounded_references:
+                    references = [runway.reference(SimpleNamespace(**r)) for r in grounded_references]
+                elif job.stage == "visual" and brief.operation == "video_edit" and current_segment(job):
                     # Never send the unsplit original to Runway for a segmented edit.
                     references = [runway.reference(edit_reference(db, settings, job))]
                 else:

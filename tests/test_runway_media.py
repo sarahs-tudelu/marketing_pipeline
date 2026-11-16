@@ -162,7 +162,18 @@ def written_prompt(*args):
     return {"generation_prompt": "A pergola at dusk", "depicted_system": "Pergolas", "prompt_writer": {}}
 
 
+def reference_selection(assets, monkeypatch):
+    from social import reference_grounding as refs
+
+    assets[0].rights, assets[0].tags = "public", {"product": "pergolas"}
+    monkeypatch.setattr(refs, "website_references", lambda *args: [])
+    monkeypatch.setattr(refs, "select_reference", lambda s, records, context: refs.Selection(
+        reference_id=records[0]["id"], physical_description="Fixed aluminum pergola.",
+        prompt=context["prompt"], reason="Matching photo.", problem=""))
+
+
 def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets, monkeypatch):
+    reference_selection(assets, monkeypatch)
     monkeypatch.setattr("social.media_studio.write_prompt", written_prompt)
     monkeypatch.setattr("social.providers.OpenAI.call", lambda *args, **kwargs: {
         "status": "completed", "output": [{"type": "message", "content": [{
@@ -220,7 +231,8 @@ def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets,
     assert "secret-url" not in json.dumps(job.brief) + json.dumps(job.task_history)
 
 
-def test_ambiguous_submission_is_not_retried(db, settings, monkeypatch):
+def test_ambiguous_submission_is_not_retried(db, settings, assets, monkeypatch):
+    reference_selection(assets, monkeypatch)
     monkeypatch.setattr("social.media_studio.write_prompt", written_prompt)
     job = queue_jobs(db, settings, brief_for(db, settings))[0]
     job.brief = job.brief | {"execution_mode": "live"}
@@ -229,6 +241,9 @@ def test_ambiguous_submission_is_not_retried(db, settings, monkeypatch):
 
     class Interrupted:
         calls = 0
+
+        def reference(self, asset):
+            return "runway://reference"
 
         def submit(self, *args):
             self.calls += 1

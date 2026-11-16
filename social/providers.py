@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 from .facts import composed, part_fact_ids
 from .product_rules import PRODUCT_CONSTRAINTS_VERSION, current_constraints
 from .provider_errors import ProviderError, request_json
+from .rendering_guidelines import policy as rendering_policy
 from .storage import ingest, storage
 
 
@@ -89,6 +90,7 @@ def vision_context(context):
     return {
         "review_scope": "media_only",
         "product_constraints": current_constraints(),
+        "rendering_guidelines": rendering_policy(),
         **{key: context[key] for key in ("platform", "product", "at", "execution_mode", "public_publication")
            if key in context},
         "facts": {key: facts[key] for key in ("version", "products", "facts", "visual_guidance") if key in facts},
@@ -395,6 +397,26 @@ class OpenAI:
                 # Lets the review say where a problem is, so the post page can open that clip.
                 | ({} if still_image else {"frame_seconds": seconds})
             )
+        # These are comparison inputs, not frames of the output under review. Keep their
+        # numbering separate so an original logo/person is never attributed to a generated clip.
+        reference_inputs, reference_seen = [], set()
+        for asset in assets:
+            plans = [asset.tags.get("reference_plan")]
+            plans += [s.get("reference_plan") for s in asset.tags.get("video_sequence", [])]
+            for plan in (p for p in plans if p):
+                for record in plan.get("references", []):
+                    if record["checksum"] in reference_seen:
+                        continue
+                    if len(reference_seen) >= 12:
+                        raise ValueError("Too many product references for one visual review")
+                    data = store.read(record["storage_key"])
+                    if hashlib.sha256(data).hexdigest() != record["checksum"]:
+                        raise ValueError("Product reference integrity failed before visual review")
+                    reference_seen.add(record["checksum"])
+                    images.append((record["media"]["mime"], data))
+                    reference_inputs.append({"image_number": len(images), "system": plan["system"],
+                                             "origin": record["origin"], "source_url": record.get("source_url", ""),
+                                             "physical_description": plan["physical_description"]})
         has_video = any(item["input_kind"] == "sampled_video_frames" for item in media_inputs)
         media_guidance = (
             "The media_inputs records map each source asset to its one-based input image numbers. "
@@ -436,6 +458,11 @@ class OpenAI:
                 "matching product profile and global_rules. Those Builder rules override conflicting website "
                 "examples or generation prompts. Check materials, frame proportions, louver connections, "
                 "supports, roof type and visible operation. Reject unsupported products and configurations. "
+                "reference_inputs are original comparison photos/illustrations, not generated output frames. "
+                "Compare the output's configuration, supports, roof, materials and connections with the matching "
+                "reference image as well as rendering_guidelines. Do not attribute text, logos or people in a "
+                "comparison reference to the output. Builder rules and owner corrections still take precedence "
+                "over a reference. A selected reference or its model description is not an automatic approval. "
                 "Do not infer hidden parts or precise measurements from pixels; explain uncertainty when a "
                 "material product feature cannot be assessed. A still image cannot prove motion, and sampled "
                 "video frames cannot certify every instant. List concrete mismatches with the relevant rule "
@@ -460,7 +487,7 @@ class OpenAI:
                 "product_constraints_version, product_mismatches. "
                 + media_guidance
                 + "Context: "
-                + json.dumps(vision_context(context) | {"media_inputs": media_inputs}, default=str),
+                + json.dumps(vision_context(context) | {"media_inputs": media_inputs, "reference_inputs": reference_inputs}, default=str),
             }
         ]
         content.extend(

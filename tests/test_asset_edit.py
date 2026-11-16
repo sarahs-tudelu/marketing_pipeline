@@ -91,6 +91,7 @@ def test_old_browser_form_cannot_overwrite_new_metadata(db, assets):
         ({"rights": "made up"}, "usage rights"),
         ({"tags": []}, "JSON object"),
         ({"tags": {"source_asset_ids": ["forged"]}}, "cannot be changed"),
+        ({"tags": {"reference_plan": {"references": []}}}, "cannot be changed"),
     ],
 )
 def test_invalid_metadata_does_not_change_the_asset(db, assets, changes, message):

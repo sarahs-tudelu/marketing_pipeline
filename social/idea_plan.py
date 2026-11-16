@@ -19,6 +19,7 @@ from .facts import Facts, active
 from .models import FactSheet
 from .product_rules import context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
+from .rendering_guidelines import policy as rendering_policy
 
 END_CARD_SECONDS = 3
 MAX_CLIPS = 9
@@ -152,6 +153,9 @@ PLANNER_INSTRUCTIONS = (
     "override older catalog examples and creative requests. Hanger rods belong above the canopy roof "
     "and run up to higher wall anchors. Do not plan a bottom-supported hanger-rod canopy. Explain a "
     "conflicting request in notes and plan only a permitted configuration. "
+    "Follow catalog.rendering_guidelines: each product scene needs a compatible website or Public company "
+    "photo as its starting reference. Prefer modest camera moves showing the existing supported structure; "
+    "do not promise invented views, new attachments or configurations. "
     "available_systems: every system the catalog shows as currently offered (not 'Coming soon'). "
     "title: a short internal post name, at most 60 characters. "
     "notes: 2-6 short plain-language notes on how you read the idea, for example "
@@ -260,6 +264,7 @@ def catalog_for(db, facts_id, snapshot, product):
         "product_names": products,
         "visual_guidance": context_for(facts.visual_guidance) if facts else None,
         "product_constraints": current_constraints(),
+        "rendering_guidelines": rendering_policy(),
         "facts": [f.text for f in facts.facts if active(f, at) and f.product in {product, "company"}][:20]
         if facts
         else [],
@@ -353,7 +358,7 @@ def plan_idea(
             "end_card_seconds": END_CARD_SECONDS,
             "max_clips": MAX_CLIPS,
             "explicit_signals": signals,
-            "catalog": {k: catalog[k] for k in ("website", "products", "facts", "visual_guidance")},
+            "catalog": {k: catalog[k] for k in ("website", "products", "facts", "visual_guidance", "product_constraints", "rendering_guidelines")},
         }
         try:
             plan = IdeaPlan.model_validate(Claude(settings).call(PLANNER_INSTRUCTIONS, context))

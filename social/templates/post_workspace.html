@@ -11,6 +11,9 @@
       {% elif a.media.mime.startswith('audio/') %}<audio src="{{ asset_url }}" controls preload="metadata" aria-label="Review {{ a.original_name }}"></audio>{% endif %}
       <figcaption>{{ loop.index ~ ' / ' ~ posting_assets|length ~ ' · ' if posting_assets|length > 1 else '' }}{{ a.original_name }} <a href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">Open full media</a></figcaption>
     </figure>
+    {% if a.tags.get('video_sequence') %}
+      {% for clip in a.tags.video_sequence %}{% set plan = clip.get('reference_plan') %}{% set reference_label = 'Clip ' ~ (clip.index + 1) ~ ' product reference' %}{% include 'reference_plan.html' %}{% endfor %}
+    {% else %}{% set plan = a.tags.get('reference_plan') %}{% set reference_label = 'Product reference' %}{% include 'reference_plan.html' %}{% endif %}
     {% else %}<p>Media is not available yet.</p>{% endfor %}
   </section>
   <section class="review-caption"><h2>Caption to be posted</h2><div class="caption">{{ post.caption or 'Generate a caption to preview the post.' }}</div>

@@ -25,7 +25,8 @@
       <label>Product tag<input name="product" required value="{{ asset_form.get('product', 'company') }}"></label>
       <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}" {{ 'selected' if asset_form.get('facts_id') == f.id else '' }}>{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
     </div>
-    <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if asset_form.get('website', 'on') == 'on' else '' }}>Use tudelu.com to choose and describe the system shown</label>
+    <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if asset_form.get('website', 'on') == 'on' else '' }}>Use website text for creative direction</label>
+    <small>Product images are matched automatically from your Public library, Google Drive imports and tudelu.com, using the Builder drawing rules.</small>
     <p class="muted">Each Runway prompt is written when the job starts, from your prompt, tudelu.com, the selected approved facts, Public company uploads and previous generations. It always depicts a system Tudelu offers. Approved facts remain the only source for caption claims.</p>
     <fieldset><legend>Reference media from your library / bucket</legend>
       <p class="muted">Images: up to 3. Video generation: 1 image. Video editing: 1 video; longer edits are split into segments of up to 30 seconds. Audio: up to 3 bites. A mixed campaign rotates through the selected image/video pool.</p>

@@ -25,6 +25,7 @@ from .facts import Facts, active
 from .models import Asset, FactSheet, MediaJob, Post
 from .product_rules import VisualGuidance, constrain_prompt, context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
+from .rendering_guidelines import policy as rendering_policy
 
 # promptText limit for gen4_image, gen4.5 and aleph2, in UTF-16 code units (Runway OpenAPI).
 PROMPT_LIMIT = 1000
@@ -38,7 +39,7 @@ VISUAL_RULES = [
     "Match how tudelu.com and the uploaded media show that system: form, proportions, materials, "
     "finish and how it moves or operates. Never substitute a different kind of building or structure.",
     "Do not depict systems marked 'Coming soon' unless the admin idea names that system.",
-    "Unoccupied scenes: the vision gate rejects unexpected people.",
+    "Use unoccupied scenes unless the idea explicitly requests people. Requested visitors are expected subjects.",
     "Plain, unmarked surfaces: the vision gate rejects readable text, signage, logos and watermarks.",
     "Storefronts, streets, parking and other commercial settings invite generated lettering: frame them so the "
     "system and one plain, unbranded facade fill the shot, with any neighboring buildings described as blank "
@@ -69,7 +70,7 @@ WRITER_INSTRUCTIONS = (
     "real media), then in the website image descriptions. Use previous_generations only to keep a consistent "
     "look and to choose a different composition, viewpoint and setting from them; they may contain mistakes, "
     "and those with held, failed or deleted posts must never be copied. They are not evidence of what Tudelu sells. "
-    "Follow visual_rules, rules.brand_voice and the direction. Respect rules.banned_phrases. "
+    "Follow visual_rules, rules.rendering_guidelines, rules.brand_voice and the direction. Respect rules.banned_phrases. "
     "Runway models do not support negative prompts: describe only what should appear, using positive "
     "wording such as 'plain unmarked surfaces' or 'an empty terrace', never 'no text' or 'without people'. "
     "Write one coherent scene in plain descriptive sentences: subject, setting, composition, lighting, mood. "
@@ -85,7 +86,9 @@ WRITER_INSTRUCTIONS = (
     "system when given, otherwise one you choose; give clips different systems when the idea asks for several "
     "products), with a specific camera move for its seconds. Keep one consistent cinematic look across clips "
     "(time of day, light, color grade, lens). Each clip prompt stays under 700 characters and repeats any "
-    "detail it needs, because Runway sees each clip prompt alone. has_start_image applies to clip 1 only. "
+    "detail it needs, because Runway sees each clip prompt alone. Every product clip will receive its own "
+    "visually checked starting reference from the company website or Public library. Keep shots achievable "
+    "from real product views; avoid inventing hidden geometry or switching configurations between angles. "
     "Set the top-level system and prompt to clip 1's. When end_card is true, the app appends the official logo "
     "afterwards, so never show logos or brand names in any clip."
 )
@@ -163,6 +166,7 @@ def gather_sources(db, settings, job):
         "products": facts.products,
         "visual_guidance": context_for(facts.visual_guidance),
         "product_constraints": current_constraints(),
+        "rendering_guidelines": rendering_policy(),
         "facts": [f.text for f in facts.facts if active(f, at) and f.product in scope][:20],
     }
 
