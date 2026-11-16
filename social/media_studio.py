@@ -29,9 +29,12 @@ from .video_rules import (
     ambient_tag,
     ambient_track,
     default_logo,
+    fit_track,
     has_sound,
+    music_tracks,
     next_ambient_style,
     seed_for,
+    track_tag,
 )
 from .video_segments import current_segment, edit_reference, plan_segments, save_segment_prompt, segment_brief
 
@@ -442,6 +445,7 @@ def _queue_uploaded(db, settings, brief, snapshot, *, live=False):
     # added anyway when the video turns out to be silent.
     logo = ending_logo(db, brief, live=live) if brief.operation == "video" else None
     style = next_ambient_style(db) if brief.operation == "video" else ""
+    tracks = music_tracks(db, live=live, public=brief.rights != "not_public") if brief.operation == "video" else []
     result = []
     for platform in brief.platforms:
         profile = profiles(settings)[platform]
@@ -458,7 +462,8 @@ def _queue_uploaded(db, settings, brief, snapshot, *, live=False):
             "execution_mode": settings.ai_mode,
             "end_card": {"asset_id": logo.id, "seconds": END_CARD_SECONDS} if logo else None,
             "end_card_asset_id": logo.id if logo else "",
-            # Only recorded as used when the music is actually laid (see _uploaded_copy).
+            # The same ambient music for every platform; only recorded as used when it is laid.
+            "ambient_track_id": tracks[0].id if tracks else "",
             "fallback_ambient_style": style,
         }
         job = MediaJob(
@@ -639,9 +644,10 @@ def _uploaded_copy(db, settings, job, first, originals):
     if end_card and not logo:
         raise ValueError("The end-card logo is missing from the asset library; upload it and create the post again")
     duration = brief["duration"]
+    live = settings.wants_live(job.platform, db.get(Account, job.platform))
     if video and not logo:
         # Planned before every video ended on the logo: the card follows the planned footage.
-        logo = default_logo(db, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+        logo = default_logo(db, live=live)
         if not logo:
             raise ValueError(NO_LOGO)
         end_card = {"asset_id": logo.id, "seconds": END_CARD_SECONDS}
@@ -655,11 +661,20 @@ def _uploaded_copy(db, settings, job, first, originals):
         soundtrack=soundtrack,
         logo=logo,
         card_seconds=end_card["seconds"] if end_card else 0,
-        ambient=brief.get("fallback_ambient_style") or (next_ambient_style(db) if video else ""),
+        ambient=real_ambient(
+            db,
+            live=live,
+            public=brief["rights"] != "not_public",
+            track_id=brief.get("ambient_track_id", ""),
+            style=brief.get("fallback_ambient_style", ""),
+        )
+        if video
+        else None,
         replace_sound=bool(brief.get("ambient_music")),
         seed=seed_for(job.batch_key.rsplit(":", 1)[0]),
     )
-    used = [a for a in [first, sound, logo] if a]
+    music = music_asset(db, sound_tags)
+    used = [a for a in [first, sound, logo, music] if a]
     end_card_tag = {
         "asset_id": logo.id,
         "checksum": logo.checksum,
@@ -672,7 +687,7 @@ def _uploaded_copy(db, settings, job, first, originals):
         data,
         f"{job.platform}-{job.id}.{extension}",
         source=first.source,
-        rights=combined_rights(first.rights, [a for a in [sound, logo] if a]),
+        rights=combined_rights(first.rights, [a for a in [sound, logo, music] if a]),
         owner=first.owner,
         rights_expire_at=min([a.rights_expire_at for a in used if a.rights_expire_at], default=None),
         customer_permission=first.customer_permission,
@@ -754,11 +769,18 @@ def _finish(db, settings, job):
                 clips[-1] = clips[-1][:2] + (max(MIN_CLIP_SECONDS, clips[-1][2] - excess),)
             sound_tags = {"video_sound": "music" if sound_asset else "own"}
             if soundtrack is None and not any(has_sound(c[0]) for c in clips):
-                # Planned without music: the app's ambient track keeps the video from being silent.
-                style = brief.get("ambient_style") or next_ambient_style(db)
-                seconds = sum(c[2] for c in clips) + end_card["seconds"]
-                soundtrack = ambient_track(style, seconds, seed_for(job.batch_key.rsplit(":", 1)[0]))
-                sound_tags = {"video_sound": "ambient", "ambient_music": ambient_tag(style, seconds)}
+                # Planned before every video had sound: Runway composes calm ambient music first,
+                # then the video is assembled with it.
+                style = next_ambient_style(db)
+                job.brief = job.brief | {
+                    "audio_prompt": AMBIENT_STYLES[style][1],
+                    "ambient_style": style,
+                    "soundtrack_model": "music",
+                    "soundtrack_asset_id": "",
+                }
+                job.stage, job.state = "audio", "queued"
+                db.commit()
+                return
             logo_data = storage(settings).read(logo.storage_key)
             if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
                 raise ValueError("Logo integrity failed before creating the end card")
@@ -862,8 +884,8 @@ def fitted_copy(
     """Bytes, file extension and sound tags of a platform copy of real media, keeping its own shape.
 
     Media too small for the platform is padded to the platform's size instead. A video ends on the
-    logo card when one is given. It keeps its own sound unless a soundtrack is given; the app's
-    ambient track in the `ambient` style replaces it when `replace_sound` is set or the video is silent.
+    logo card when one is given. It keeps its own sound unless a soundtrack is given. The `ambient`
+    music (see real_ambient) replaces it when `replace_sound` is set or the video is silent.
     """
     data = storage(settings).read(asset.storage_key)
     if hashlib.sha256(data).hexdigest() != asset.checksum:
@@ -893,8 +915,7 @@ def fitted_copy(
     footage = min(total - card, media.get("duration", 0))
     sound_tags = {"video_sound": "upload" if soundtrack is not None else "own"}
     if soundtrack is None and ambient and (replace_sound or not has_sound(data)):
-        soundtrack = ambient_track(ambient, footage + card, seed)
-        sound_tags = {"video_sound": "ambient", "ambient_music": ambient_tag(ambient, footage + card)}
+        soundtrack, sound_tags = ambient_sound(settings, ambient, footage + card, seed)
     if logo is None:
         return video_rendition(data, *size, footage, soundtrack), "mp4", sound_tags
     logo_data = storage(settings).read(logo.storage_key)
@@ -902,6 +923,35 @@ def fitted_copy(
         raise ValueError("Logo integrity failed before creating the end card")
     ending = logo_card(logo_data, *size, card)
     return video_sequence([(data, 0, footage), (ending, 0, card)], *size, soundtrack), "mp4", sound_tags
+
+
+def real_ambient(db, *, live=False, public=True, track_id="", style=""):
+    """Ambient music for a real video: a library track (the chosen one if still usable, otherwise the
+    least recently used), or the app's own music in `style` when the library has none."""
+    tracks = music_tracks(db, live=live, public=public)
+    track = next((t for t in tracks if t.id == track_id), None) or (tracks[0] if tracks else None)
+    return {"track": track, "style": style or next_ambient_style(db)}
+
+
+def ambient_sound(settings, ambient, seconds, seed=0):
+    """Soundtrack bytes and copy tags for the ambient music a real video gets."""
+    track = ambient.get("track")
+    if track:
+        data = storage(settings).read(track.storage_key)
+        if hashlib.sha256(data).hexdigest() != track.checksum:
+            raise ValueError(f"{track.original_name} changed in storage; upload it again")
+        return fit_track(data, seconds), {"video_sound": "ambient", "ambient_music": track_tag(track, seconds)}
+    style = ambient["style"]
+    return ambient_track(style, seconds, seed), {
+        "video_sound": "ambient",
+        "ambient_music": ambient_tag(style, seconds),
+    }
+
+
+def music_asset(db, sound_tags):
+    """The library track a copy's ambient music came from, if any."""
+    track_id = (sound_tags.get("ambient_music") or {}).get("asset_id")
+    return db.get(Asset, track_id) if track_id else None
 
 
 def platform_copy(db, settings, asset, platform):
@@ -972,6 +1022,7 @@ def finish_video(db, settings, asset, platform):
             f"{asset.original_name} is {length:.0f} seconds long. {limit} Trim it, import it again and "
             "create the post from the shorter video."
         )
+    live = settings.wants_live(platform, db.get(Account, platform))
     data, extension, sound_tags = fitted_copy(
         settings,
         asset,
@@ -979,11 +1030,12 @@ def finish_video(db, settings, asset, platform):
         platform,
         logo=logo,
         card_seconds=card,
-        ambient=next_ambient_style(db),
+        ambient=real_ambient(db, live=live, public=asset.rights != "not_public"),
         seed=seed_for(asset.id, platform),
     )
+    music = music_asset(db, sound_tags)
     tags = (asset.tags or {}) | {
-        "source_asset_ids": [asset.id] + ([logo.id] if logo else []),
+        "source_asset_ids": [asset.id] + [a.id for a in (logo, music) if a],
         "rendition": {"platform": platform, "original_asset_id": asset.id},
         **sound_tags,
     }
@@ -994,7 +1046,7 @@ def finish_video(db, settings, asset, platform):
             "seconds": card,
             "note": "The final seconds show Tudelu's official logo, supplied as company media and added by the app.",
         }
-    used = [a for a in (asset, logo) if a]
+    used = [a for a in (asset, logo, music) if a]
     copy = ingest(
         db,
         settings,
@@ -1003,7 +1055,7 @@ def finish_video(db, settings, asset, platform):
         source=asset.source,
         generator=asset.generator,
         prompt=asset.prompt,
-        rights=combined_rights(asset.rights, [logo]) if logo else asset.rights,
+        rights=combined_rights(asset.rights, used[1:]) if used[1:] else asset.rights,
         owner=asset.owner,
         rights_expire_at=min([a.rights_expire_at for a in used if a.rights_expire_at], default=None),
         customer_permission=asset.customer_permission,

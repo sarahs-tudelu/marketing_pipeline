@@ -19,7 +19,7 @@ from starlette.datastructures import UploadFile
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import connections
-from .clip_replace import clip_options, replace_part
+from .clip_replace import clip_options, needs_runway_music, replace_part
 from .config import PLATFORMS, REAL_MEDIA_ONLY, get_settings, profiles
 from .db import make_engine, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
@@ -74,7 +74,7 @@ from .rights import RIGHTS, owner_value, rights_label, usage_rights
 from .scheduler import schedule
 from .storage import ingest, storage
 from .upload_errors import describe_upload_error, upload_error_details
-from .video_rules import has_sound
+from .video_rules import MUSIC_TAG, has_sound, music_tracks
 
 
 class DraftInput(BaseModel):
@@ -341,6 +341,7 @@ def create_app(settings=None):
                 "retry_existing": retry_existing,
                 "clip_fix": clip_options(db, post) if post else None,
                 "held": held_reason(db, post) if post else None,
+                "finish_runway": needs_runway_music(db, post) if post and post.status == "held" else False,
                 "retry_steps": {j.id: step for j in media_jobs if (step := retry_option(j))},
                 "task_failed": {j.id for j in media_jobs if task_failed(j)},
                 "retry_original": original_post(db, post) if post else None,
@@ -369,6 +370,7 @@ def create_app(settings=None):
                 "max_clips": MAX_CLIPS,
                 "end_card_seconds": END_CARD_SECONDS,
                 "logos": logo_assets(assets) if view in {"create", "plan"} else [],
+                "music_tracks": music_tracks(db) if view == "plan" else [],
                 "alerts": db.scalars(select(Alert).order_by(Alert.created_at.desc()).limit(15)).all(),
                 "checks": db.scalars(
                     select(CheckResult).where(CheckResult.post_id == post_id).order_by(CheckResult.id.desc())
@@ -435,11 +437,11 @@ def create_app(settings=None):
         if not asset:
             raise HTTPException(404, "Media not found")
         form = await request.form()
-        values = media_form_values(form) | {key: str(form.get(key, "")) for key in ("original_name", "revision", "real_customer_content")}
+        values = media_form_values(form) | {key: str(form.get(key, "")) for key in ("original_name", "revision", "real_customer_content", MUSIC_TAG)}
         try:
             arguments = media_form_arguments(values)
             # These two tags have dedicated controls in the editor.
-            for key in ("brand_logo", "real_customer_content"):
+            for key in ("brand_logo", "real_customer_content", MUSIC_TAG):
                 arguments["tags"].pop(key, None)
                 if values[key] == "on":
                     arguments["tags"][key] = True
@@ -924,6 +926,11 @@ def create_app(settings=None):
             from .human_review import require_no_replacement
 
             require_no_replacement(db, post)
+            if needs_runway_music(db, post):
+                # A generated video gets its ambient music from Runway, and the logo ending when it is
+                # assembled again; the new post replaces this one.
+                replace_part(db, post, "music", "", actor)
+                return {"id": post.id, "status": post.status}
             assets = [db.get(Asset, i) for i in post.asset_ids]
             if None in assets:
                 raise ValueError("Media this post uses is missing from the asset library")
@@ -1167,6 +1174,7 @@ def create_app(settings=None):
                 "permission_reference",
                 "key",
                 "brand_logo",
+                MUSIC_TAG,
             )
         }
 
@@ -1182,6 +1190,9 @@ def create_app(settings=None):
         if values.get("brand_logo") == "on":
             # Marks the official logo used for video end cards.
             tags = tags | {"brand_logo": True}
+        if values.get(MUSIC_TAG) == "on":
+            # Real ambient music that silent real videos can use.
+            tags = tags | {MUSIC_TAG: True}
         try:
             expiry = (
                 datetime.fromisoformat(values["rights_expire_at"]) if values["rights_expire_at"] else None

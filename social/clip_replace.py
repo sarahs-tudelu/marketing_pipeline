@@ -144,20 +144,36 @@ def parts(db, job, vision, audio):
                 "limit": PROMPT_LIMIT,
             }
         )
-    if brief["operation"] == "video" and brief.get("audio_prompt") and _soundtrack(db, job):
+    soundtrack = _soundtrack(db, job)
+    if brief["operation"] == "video" and (soundtrack or not brief.get("audio_prompt")):
+        from .video_rules import AMBIENT_STYLES, next_ambient_style
+
+        # A video made before every video had sound gets calm ambient music from Runway.
         result.append(
             {
                 "key": "music",
                 "kind": "music",
                 "label": "the music",
-                "title": "Music",
+                "title": "Music" if soundtrack else "Music (this video has none yet)",
                 "duration": brief["duration"],
-                "prompt": brief["audio_prompt"],
-                "flagged": bool(audio),
+                "prompt": brief.get("audio_prompt") or AMBIENT_STYLES[next_ambient_style(db)][1],
+                "flagged": bool(audio) or not soundtrack,
                 "limit": MUSIC_PROMPT_LIMIT,
             }
         )
     return result
+
+
+def needs_runway_music(db, post):
+    """True when a held generated video has no sound: Runway composes its music again (see replace_part)."""
+    media = [a for i in post.asset_ids if (a := db.get(Asset, i))]
+    silent = [
+        a
+        for a in media
+        if a.media["mime"].startswith("video/") and a.source in GENERATED and not a.media.get("audio_codecs")
+    ]
+    job = source_job(db, post) if silent else None
+    return bool(job and any(p["kind"] == "music" for p in parts(db, job, {}, {})))
 
 
 def clip_options(db, post):
@@ -259,7 +275,14 @@ def replace_part(db, post, key, prompt, actor):
         }
         sources = [i for i in sources if i == soundtrack]
     else:
+        from .video_rules import AMBIENT_STYLES
+
         brief |= {"audio_prompt": prompt, "soundtrack_asset_id": ""}
+        if not job.brief.get("audio_reference_ids"):
+            brief["soundtrack_model"] = "music"
+        style = next((k for k, (_, direction) in AMBIENT_STYLES.items() if direction == prompt), None)
+        if style:
+            brief["ambient_style"] = style
         sources = [i for i in sources if i != soundtrack]
         stage = "audio"
     created = MediaJob(

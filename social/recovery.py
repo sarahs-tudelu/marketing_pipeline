@@ -68,8 +68,8 @@ FIXES = {
     "recheck": "Correct the cause, then recheck the post.",
     "replace": "Reject this post, then create it again from a real photo or video imported from Google Drive.",
     "finish": (
-        "Add the logo ending and sound below. The app adds them itself, without Runway: ambient music when "
-        "the video has no sound of its own."
+        "Add them with the button below. A generated video gets calm ambient music from Runway; a real video "
+        "keeps its own sound or gets an ambient track from the asset library. The app adds the logo ending."
     ),
 }
 

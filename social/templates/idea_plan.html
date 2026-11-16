@@ -27,9 +27,11 @@
     {% if plan.operation == 'video' %}
       <label>Length (seconds)<input type="number" name="duration" min="5" max="90" value="{{ plan.duration }}"></label>
       {% for a in idea_uploads if a.media.mime.startswith('audio/') %}{% if loop.first %}<p>Sound: {{ a.original_name }} replaces the video's own sound.</p>{% endif %}
-      {% else %}{% if plan.silent_video %}<input type="hidden" name="silent_video" value="on"><p>Sound: your video has none, so it gets ambient music made by the app (not by AI), in a style your recent videos haven't used.</p>
-      {% else %}<label>Sound<select name="sound"><option value="own" {{ '' if plan.ambient_music else 'selected' }}>Keep its own sound</option><option value="ambient" {{ 'selected' if plan.ambient_music else '' }}>Ambient music made by the app instead</option></select></label>
-        <small class="muted">Every video has sound. The ambient music isn't made by AI, so your video stays real media.</small>{% endif %}{% endfor %}
+      {% else %}{% if plan.silent_video %}<input type="hidden" name="silent_video" value="on">
+        {% if music_tracks %}<p>Sound: your video has none, so it gets {{ music_tracks[0].original_name }}, an ambient track from the asset library.</p>
+        {% else %}<p>Sound: your video has none. There are no ambient tracks in the asset library yet, so the app makes simple ambient music itself. To use real music, <a href="/admin/upload">upload tracks</a> and tick <i>Ambient music for real videos</i>.</p>{% endif %}
+      {% else %}<label>Sound<select name="sound"><option value="own" {{ '' if plan.ambient_music else 'selected' }}>Keep its own sound</option><option value="ambient" {{ 'selected' if plan.ambient_music else '' }}>{{ 'Ambient track from the asset library (' ~ music_tracks[0].original_name ~ ')' if music_tracks else 'Ambient music made by the app' }} instead</option></select></label>
+        <small class="muted">Every video has sound. Ambient music for your own videos {{ 'comes from the tracks in your asset library' if music_tracks else 'is made by the app until you add tracks to the asset library' }}, never AI, so your video isn't labelled as AI.</small>{% endif %}{% endfor %}
       <fieldset><legend>Ending</legend>
         <p>Every video ends with a cut to the Tudelu logo ({{ end_card_seconds }} seconds{{ ', added after your video' if plan.as_uploaded else '' }}).</p>
         {% if logos %}{% if logos|length > 1 %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>{% else %}<input type="hidden" name="logo_id" value="{{ logos[0].id }}"><p class="muted">Logo: {{ logos[0].original_name }}</p>{% endif %}

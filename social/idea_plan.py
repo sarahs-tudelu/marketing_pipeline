@@ -458,8 +458,8 @@ def finalize(plan, signals, idea, requested_format, requested_style, has_video_r
 def uploaded_plan(idea, uploads, *, requested_style="auto", silent=False):
     """A plan for posting the admin's own photo or video as it is. Only the caption is written by AI.
 
-    A video ends on the logo and always has sound: an uploaded audio file, its own sound, or the app's
-    ambient music (when it's silent, or the idea asks for music).
+    A video ends on the logo and always has sound: an uploaded audio file, its own sound, or an ambient
+    track from the asset library (when it's silent, or the idea asks for music).
     """
     visual = [a for a in uploads if not a.media["mime"].startswith("audio/")]
     audio = [a for a in uploads if a.media["mime"].startswith("audio/")]
@@ -494,12 +494,12 @@ def uploaded_plan(idea, uploads, *, requested_style="auto", silent=False):
             notes.append(f"{audio[0].original_name} replaces the video's own sound.")
         elif silent:
             ambient = True
-            notes.append("Your video has no sound, so it gets ambient music made by the app (not by AI).")
+            notes.append("Your video has no sound, so it gets ambient music that isn't AI-made.")
         elif signals["soundtrack"]:
             ambient = True
             notes.append(
-                "Your idea asks for music, so ambient music made by the app (not by AI) replaces the video's "
-                "own sound. Choose Keep its own sound below to change that."
+                "Your idea asks for music, so ambient music that isn't AI-made replaces the video's own sound. "
+                "Choose Keep its own sound below to change that."
             )
     elif signals["soundtrack"] or signals["end_card"] or signals["video"]:
         notes.append("Your photo is posted as a photo, so it can't carry music, motion or a logo end card.")
@@ -599,7 +599,8 @@ def work_summary(plan, platforms):
     """What Runway is asked to generate, so cost is visible before anything starts."""
     if plan.as_uploaded:
         ending = (
-            " The video ends with a cut to the Tudelu logo, and any ambient music is made by the app, not by AI."
+            " The video ends with a cut to the Tudelu logo, and any ambient music comes from your asset library, "
+            "not AI."
             if plan.operation == "video"
             else ""
         )

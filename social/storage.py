@@ -237,6 +237,10 @@ def ingest(
 
         rights_expire_at = rights_expire_at.astimezone(timezone.utc).replace(tzinfo=None)
     media = inspect_media(data, filename, settings)
+    from .video_rules import background_music_error
+
+    if error := background_music_error(media.get("mime"), source, generator, prompt, tags):
+        raise ValueError(error)
     if source == "company" and media.get("embedded_provenance", {}).get("ai_declared"):
         raise ValueError("This file contains an IPTC AI declaration. Choose Source: AI-generated or AI-edited and supply its creation details.")
     checksum = hashlib.sha256(data).hexdigest()

@@ -1,10 +1,11 @@
 """House rules for every video: it has sound, and it ends with a cut to the Tudelu logo.
 
 Generated videos get Runway music. When nobody asked for any, a calm ambient direction is taken from
-AMBIENT_STYLES, choosing the style used least recently so posts don't all sound the same. Real photos
-and videos (posted as they are or from the library) keep their own sound; a silent one gets an ambient
-track the app synthesizes itself, so real media never carries AI-made sound. The logo end card is the
-uploaded logo, unaltered, added by the app.
+AMBIENT_STYLES, choosing the style used least recently so posts don't all sound the same. Real videos
+(posted as they are or from the library) keep their own sound. A silent one gets an ambient track
+from the asset library (real music tagged MUSIC_TAG, least recently used first), so real media never
+carries AI-made sound and isn't AI-labelled. Only when the library has no such track does the app
+synthesize simple ambient music itself. The logo end card is the uploaded logo, unaltered.
 """
 
 import hashlib
@@ -15,8 +16,11 @@ from datetime import datetime
 import numpy as np
 from sqlalchemy import select
 
+from .db import now
 from .models import Asset, MediaJob
 
+# Library audio tagged with this is real ambient music for real videos.
+MUSIC_TAG = "background_music"
 # key: (label, direction for Runway's music model)
 AMBIENT_STYLES = {
     "warm_pads": (
@@ -100,6 +104,85 @@ def ambient_tag(style, seconds):
         "seconds": round(seconds, 2),
         "made_by": f"{SYNTHESIZER}: synthesized by the app, not AI",
     }
+
+
+def track_tag(track, seconds):
+    return {
+        "asset_id": track.id,
+        "name": track.original_name,
+        "checksum": track.checksum,
+        "seconds": round(seconds, 2),
+        "made_by": "Ambient track from the asset library (company audio, not AI)",
+    }
+
+
+def background_music_error(mime, source, generator, prompt, tags):
+    """Why a file can't be ambient music for real videos, or "" when it can (or isn't marked as such)."""
+    if not (tags or {}).get(MUSIC_TAG):
+        return ""
+    if not (mime or "").startswith("audio/"):
+        return "Only audio files can be ambient music for real videos."
+    if source != "company" or (generator or "").strip() or (prompt or "").strip():
+        return (
+            "AI-made music can't be ambient music for real videos: it would get them labelled as AI. "
+            "Use music you own or have licensed, with Source: company media."
+        )
+    return ""
+
+
+def music_tracks(db, *, live=False, public=True):
+    """Real ambient tracks from the library that a video may use, least recently used first."""
+    from .provenance import requires_ai_review
+
+    at = now()
+    tracks = [
+        a
+        for a in db.scalars(
+            select(Asset)
+            .where(Asset.source == "company", Asset.tags[MUSIC_TAG].as_boolean().is_(True))
+            .order_by(Asset.created_at)
+        ).all()
+        if a.media.get("mime", "").startswith("audio/")
+        and not requires_ai_review(a)
+        and not (a.rights_expire_at and a.rights_expire_at <= at)
+        and not (live and a.demo_only)
+        and not (public and a.rights == "not_public")
+    ]
+    last = {}
+    for a in reversed(db.scalars(select(Asset).order_by(Asset.created_at.desc()).limit(200)).all()):
+        used = (a.tags or {}).get("ambient_music")
+        if isinstance(used, dict) and used.get("asset_id"):
+            last[used["asset_id"]] = (a.created_at or datetime.min).replace(tzinfo=None)
+    return sorted(tracks, key=lambda t: (t.id in last, last.get(t.id, datetime.min)))
+
+
+def fit_track(data, seconds, *, crossfade=2.0, fade_out=1.5):
+    """A stereo WAV of a music track fitted to `seconds`: looped with a crossfade when short, faded out."""
+    from .renditions import audio_samples
+
+    rate = 48000
+    source = audio_samples(data, duration=seconds)
+    if source is None or not source.shape[1]:
+        raise ValueError("The ambient track has no sound that can be decoded; replace it in the asset library")
+    need = max(1, round(seconds * rate))
+    track = source
+    overlap = min(round(crossfade * rate), source.shape[1] // 3)
+    while track.shape[1] < need:
+        if overlap:
+            ramp = np.linspace(0, 1, overlap, dtype=np.float32)
+            joined = track[:, -overlap:] * (1 - ramp) + source[:, :overlap] * ramp
+            track = np.concatenate([track[:, :-overlap], joined, source[:, overlap:]], axis=1)
+        else:
+            track = np.concatenate([track, source], axis=1)
+    track = track[:, :need].astype(np.float64)
+    fade = min(round(fade_out * rate), need // 3)
+    if fade:
+        track[:, need - fade :] *= np.linspace(1, 0, fade)
+    stream = io.BytesIO()
+    with wave.open(stream, "wb") as file:
+        file.setparams((2, 2, rate, need, "NONE", "not compressed"))
+        file.writeframes((np.clip(track, -1, 1) * 32767).astype("<i2").T.tobytes())
+    return stream.getvalue()
 
 
 def video_rule_errors(assets):

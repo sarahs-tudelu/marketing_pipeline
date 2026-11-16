@@ -66,13 +66,14 @@ def form_values(asset):
         {
             k: v
             for k, v in asset.tags.items()
-            if k not in PROTECTED_TAGS | {"brand_logo", "real_customer_content"}
+            if k not in PROTECTED_TAGS | {"brand_logo", "real_customer_content", "background_music"}
         },
         indent=2,
     )
     values["rights_expire_at"] = values["rights_expire_at"] or ""
     values["customer_permission"] = "on" if asset.customer_permission else ""
     values["brand_logo"] = "on" if asset.tags.get("brand_logo") else ""
+    values["background_music"] = "on" if asset.tags.get("background_music") else ""
     values["real_customer_content"] = "on" if asset.tags.get("real_customer_content") else ""
     values["generator"], values["prompt"] = asset.generator or "", asset.prompt or ""
     values["revision"] = revision(asset)
@@ -148,6 +149,12 @@ def edit_asset(db, asset, values, *, original_name, expected_revision, actor):
         k: v for k, v in asset.tags.items() if k in PROTECTED_TAGS
     }
     if error := source_error(values["source"], values["generator"], values["prompt"], values["tags"]):
+        raise ValueError(error)
+    from .video_rules import background_music_error
+
+    if error := background_music_error(
+        asset.media.get("mime"), values["source"], values["generator"], values["prompt"], values["tags"]
+    ):
         raise ValueError(error)
     if values["source"] == "company" and asset.media.get("embedded_provenance", {}).get("ai_declared"):
         raise ValueError(
