@@ -126,7 +126,8 @@ def test_video_with_own_soundtrack_and_logo(db, settings, facts, logo, offline):
             in page
         )
         assert "guitar.wav replaces the video&#39;s own sound." in page
-        assert 'name="end_card" checked' in page
+        assert "Every video ends with a cut to the Tudelu logo (3 seconds, added after your video)." in page
+        assert "Sound: guitar.wav replaces the video's own sound." in page and 'name="sound"' not in page
         created = create(
             client,
             facts,
@@ -153,7 +154,7 @@ def test_video_with_own_soundtrack_and_logo(db, settings, facts, logo, offline):
         assert (copy.media["width"], copy.media["height"]) == expected
 
 
-def test_reference_use_starts_new_ai_media_from_the_upload(db, settings, facts, offline):  # noqa: F811
+def test_reference_use_starts_new_ai_media_from_the_upload(db, settings, facts, house_logo, offline):  # noqa: F811
     with TestClient(create_app(settings)) as client:
         planned = plan(
             client,

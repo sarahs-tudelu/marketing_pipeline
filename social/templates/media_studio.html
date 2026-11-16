@@ -31,16 +31,16 @@
       <p class="muted">Images: up to 3. Video generation: 1 image. Video editing: 1 video; longer edits are split into segments of up to 30 seconds. Audio: up to 3 bites. A mixed campaign rotates through the selected image/video pool.</p>
       {% for a in assets %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in asset_form.get('reference_ids', []) else '' }}>{{ a.original_name }} · {{ a.media.mime }}{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<a href="/admin/assets">Upload references in the asset library</a>{% endfor %}
     </fieldset>
-    <details><summary>Video soundtrack (optional)</summary>
-      <label>Audio direction<textarea name="audio_prompt" rows="3" maxlength="1800" placeholder="Quiet, warm ambient music with subtle texture; no vocals. Or describe how to rework an uploaded audio bite.">{{ asset_form.get('audio_prompt', '') }}</textarea></label>
-      <p class="muted">Runway generates the soundtrack and the app fits it to the video, replacing the original audio. Leave blank to retain the generated video's own audio. Short soundtracks are padded with silence.</p>
+    <details><summary>Video soundtrack</summary>
+      <label>Audio direction<textarea name="audio_prompt" rows="3" maxlength="1800" placeholder="Leave blank for calm ambient music. Or describe other music, or how to rework an uploaded audio bite.">{{ asset_form.get('audio_prompt', '') }}</textarea></label>
+      <p class="muted">Every video has sound and ends with a cut to the Tudelu logo (the newest logo in the asset library). Runway generates the soundtrack and the app fits it to the video. Left blank, it's calm ambient music in a style your recent videos haven't used. Short soundtracks are padded with silence.</p>
       {% for a in assets if a.media.mime.startswith('audio/') %}<label class="checkbox"><input type="checkbox" name="audio_reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in asset_form.get('audio_reference_ids', []) else '' }}>{{ a.original_name }}</label>{% endfor %}
     </details>
     <div class="two">
-      <label>Finished video duration (seconds)<input type="number" name="duration" min="3" max="90" value="{{ asset_form.get('duration', '5') }}"></label>
+      <label>Finished video duration (seconds)<input type="number" name="duration" min="5" max="90" value="{{ asset_form.get('duration', '5') }}"></label>
       <label>Recurring interval (hours)<input type="number" name="interval_hours" min="24" max="720" value="{{ asset_form.get('interval_hours', '24') }}"></label>
     </div>
-    <p class="muted">Up to 90 seconds. Generated clips are at most 10 seconds; edit segments are at most 30 seconds. Each clip uses a separate Runway task and incurs its own generation cost.</p>
+    <p class="muted">5 to 90 seconds, including the 3-second logo ending. Generated clips are at most 10 seconds; edit segments are at most 30 seconds. Each clip uses a separate Runway task and incurs its own generation cost.</p>
     {% with values=asset_form, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
     <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
     <p class="muted">Create now runs media, captions, checks and scheduling even when routine automation is off. Next automatic post waits for Automatic posts to be on. Global and platform pauses still apply. Recurring campaigns are saved paused and wait for live, connected accounts.</p>

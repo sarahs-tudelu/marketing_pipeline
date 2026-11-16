@@ -41,6 +41,7 @@ from .idea_plan import (
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
 from .media_studio import (
     CreativeBrief,
+    finish_video,
     platform_copy,
     queue_jobs,
     resume_job,
@@ -71,8 +72,9 @@ from .retries import block_reason as retry_block_reason
 from .retries import original_post, retry_post
 from .rights import RIGHTS, owner_value, rights_label, usage_rights
 from .scheduler import schedule
-from .storage import ingest
+from .storage import ingest, storage
 from .upload_errors import describe_upload_error, upload_error_details
+from .video_rules import has_sound
 
 
 class DraftInput(BaseModel):
@@ -661,7 +663,11 @@ def create_app(settings=None):
             await save_idea_uploads(db, form, values)
             uploads = idea_uploads(db, values)
             if uploads and values["upload_use"] == "as_is":
-                plan = uploaded_plan(idea, uploads, requested_style=values["kind"] or "auto")
+                videos = [a for a in uploads if a.media["mime"].startswith("video/")]
+                silent = len(videos) == 1 and not await run_in_threadpool(
+                    has_sound, storage(settings).read(videos[0].storage_key)
+                )
+                plan = uploaded_plan(idea, uploads, requested_style=values["kind"] or "auto", silent=silent)
                 return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
             references = [db.get(Asset, i) for i in values["reference_ids"]]
             if any(a is None for a in references):
@@ -699,15 +705,19 @@ def create_app(settings=None):
             duration = int(str(form.get("duration", "10")))
         except ValueError:
             duration = 10
+        silent = form.get("silent_video") == "on"
         return IdeaPlan(
             as_uploaded=form.get("as_uploaded") == "on",
+            ambient_music=silent or form.get("sound") == "ambient",
+            silent_video=silent,
             title=str(form.get("campaign", "")),
             operation=operation if operation in {"image", "video", "video_edit"} else "image",
             duration=max(3, min(90, duration)),
             kind="non_promotional" if form.get("plan_kind") == "non_promotional" else "promotional",
             shots=shots[:MAX_CLIPS],
             soundtrack=str(form.get("soundtrack", ""))[:1800],
-            end_card=form.get("end_card") == "on",
+            # Every video ends with a cut to the logo.
+            end_card=operation in {"video", "video_edit"},
             available_systems=[str(s) for s in form.getlist("available_systems")][:40],
             notes=[str(n) for n in form.getlist("notes")][:8],
             planner=str(form.get("planner", ""))[:100],
@@ -724,9 +734,9 @@ def create_app(settings=None):
             plan = plan_from_form(form)
             if mode not in {"once", "next"}:
                 raise ValueError("Choose Create now or Use for next automatic post")
-            if plan.end_card and plan.operation != "image" and not form.get("logo_id"):
-                raise ValueError("Choose the logo for the end card, or untick End with the Tudelu logo")
             video = plan.operation != "image"
+            # Blank picks the newest logo; with none in the library, queueing explains how to add it.
+            logo_id = str(form.get("logo_id", "")) if video else ""
             uploads = idea_uploads(db, values)
             sounds = [a.id for a in uploads if a.media["mime"].startswith("audio/")]
             pictures = [a.id for a in uploads if a.id not in sounds]
@@ -747,8 +757,9 @@ def create_app(settings=None):
                     website=False,
                     create_posts=True,
                     workflow={"once": "immediate", "next": "next"}[mode],
-                    end_card_asset_id=str(form.get("logo_id", "")) if video and plan.end_card else "",
+                    end_card_asset_id=logo_id,
                     as_uploaded=True,
+                    ambient_music=video and plan.ambient_music and not sounds,
                 )
                 await run_in_threadpool(queue_jobs, db, settings, brief)
                 db.commit()
@@ -771,7 +782,7 @@ def create_app(settings=None):
                 create_posts=True,
                 workflow={"once": "immediate", "next": "next"}[mode],
                 shots=plan.shots if plan.operation == "video" else plan.shots[:1] if not video else [],
-                end_card_asset_id=str(form.get("logo_id", "")) if video and plan.end_card else "",
+                end_card_asset_id=logo_id,
             )
             await run_in_threadpool(queue_jobs, db, settings, brief)
             db.commit()
@@ -839,7 +850,12 @@ def create_app(settings=None):
 
     @app.post("/api/posts", dependencies=mutation)
     def new_post(payload: DraftInput, db: DB):
-        post = draft(db, **payload.model_dump())
+        values = payload.model_dump()
+        try:
+            post = compose_post(db, values)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(400, str(exc)) from None
         return {"id": post.id, "status": post.status}
 
     def action_impl(db, post, action, actor, parts=None, revision_request="", reviewed_digest="", confirmed_removed=False):
@@ -901,6 +917,27 @@ def create_app(settings=None):
             transition(db, post, "generated", "Edited caption and fact citations", actor)
             db.commit()
             run_gate(db, settings, post)
+        elif action == "finish_video":
+            # Posts made before every video had sound and the logo ending: the app adds them itself.
+            if post.status not in {"held", "awaiting_review"} or not post.caption:
+                raise ValueError("Only a held or unapproved post with a caption can get the logo ending and sound")
+            from .human_review import require_no_replacement
+
+            require_no_replacement(db, post)
+            assets = [db.get(Asset, i) for i in post.asset_ids]
+            if None in assets:
+                raise ValueError("Media this post uses is missing from the asset library")
+            finished = [finish_video(db, settings, a, post.platform) for a in assets]
+            if [a.id for a in finished] == post.asset_ids:
+                raise ValueError("This post's video already has sound and ends with the Tudelu logo")
+            transition(db, post, "draft", "Added the logo ending and sound; approval invalidated", actor)
+            post.asset_ids = [a.id for a in finished]
+            post.ai_disclosure = any(requires_ai_review(a) for a in finished)
+            post.approved_digest = ""
+            post.human_review_required, post.human_approved_digest = True, ""
+            transition(db, post, "generated", "Video now has sound and ends with the Tudelu logo", actor)
+            db.commit()
+            run_gate(db, settings, post)
         elif action == "tiktok_status":
             if post.platform != "tiktok" or post.status != "awaiting_manual":
                 raise ValueError("Only TikTok inbox posts may be reconciled here")
@@ -951,14 +988,17 @@ def create_app(settings=None):
 
     def compose_post(db, values):
         asset_ids = values["asset_ids"]
+        assets = [db.get(Asset, i) for i in asset_ids]
+        if not assets or None in assets:
+            raise ValueError("Choose a photo or video from the asset library")
         if values["platform"] in REAL_MEDIA_ONLY:
             # Real Drive media only; a resized copy is made when the original doesn't fit the platform.
-            assets = [db.get(Asset, i) for i in asset_ids]
-            if not assets or None in assets:
-                raise ValueError("Choose a photo or video from the asset library")
             if error := real_drive_media_error(db, assets):
                 raise ValueError(error)
             asset_ids = [platform_copy(db, settings, a, values["platform"]).id for a in assets]
+        elif values["platform"] in PLATFORMS:
+            # Every video has sound and ends with the logo; a copy gets them when the original lacks them.
+            asset_ids = [finish_video(db, settings, a, values["platform"]).id for a in assets]
         return draft(
             db,
             values["platform"],

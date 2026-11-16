@@ -179,7 +179,11 @@ def gather_sources(db, settings, job):
             .order_by(Asset.created_at.desc())
             .limit(60)
         ).all()
-        if _usable(a, at, fixture) and a.id not in brief["reference_ids"]
+        # The logo isn't scene material, and platform copies repeat their originals.
+        if _usable(a, at, fixture)
+        and a.id not in brief["reference_ids"]
+        and not a.tags.get("brand_logo")
+        and "rendition" not in a.tags
     ]
     if brief["product"] != "company":
         candidates.sort(key=lambda a: a.tags.get("product") != brief["product"])

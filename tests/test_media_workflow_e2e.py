@@ -17,7 +17,7 @@ from social.storage import storage
 
 
 @pytest.mark.parametrize("operation", ["image", "video", "video_edit", "audio", "soundtrack"])
-def test_uploaded_reference_to_generated_media_and_caption(db, settings, monkeypatch, operation):
+def test_uploaded_reference_to_generated_media_and_caption(db, settings, house_logo, monkeypatch, operation):
     def no_network(*args, **kwargs):
         raise AssertionError("The fixture workflow must not contact external services")
 
@@ -75,7 +75,8 @@ def test_uploaded_reference_to_generated_media_and_caption(db, settings, monkeyp
             "product": "demo",
             "kind": "promotional",
             "rights": "not_public",
-            "duration": "3",
+            # Videos end with the 3-second logo, so they need at least 5 seconds.
+            "duration": "5",
         }
         if operation == "soundtrack":
             form.update(audio_prompt="Quiet ambient tone", audio_reference_ids=source.id)

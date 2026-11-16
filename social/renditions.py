@@ -148,8 +148,11 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
     return output.getvalue()
 
 
-def logo_card(logo, width, height, seconds, *, fade=0.6):
-    """A silent end card: the uploaded logo, unaltered, centered on a plain background with a fade-in."""
+def logo_card(logo, width, height, seconds, *, fade=0.0):
+    """A silent end card: the uploaded logo, unaltered, centered on a plain background.
+
+    The video cuts straight to it; `fade` (seconds) fades the logo in from the background instead.
+    """
     with Image.open(io.BytesIO(logo)) as source:
         mark = ImageOps.exif_transpose(source).convert("RGBA")
     mark.thumbnail((round(width * 0.56), round(height * 0.3)), Image.Resampling.LANCZOS)
@@ -170,7 +173,7 @@ def logo_card(logo, width, height, seconds, *, fade=0.6):
         video.gop_size = 60
         video.options = {"crf": "18", "preset": "veryfast"}
         for index in range(frames):
-            level = min(1, index / max(1, round(fade * 30)))
+            level = min(1, index / round(fade * 30)) if round(fade * 30) else 1
             frame = av.VideoFrame.from_image(Image.blend(blank, still, level) if level < 1 else still)
             frame.pts, frame.time_base = index, Fraction(1, 30)
             for packet in video.encode(frame):

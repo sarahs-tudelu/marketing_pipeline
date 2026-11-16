@@ -50,6 +50,7 @@ CHECKS = {
     "media": ("The media doesn't meet this platform's format limits.", "media"),
     "provenance_integrity": ("The media file changed after it was saved.", "media"),
     "drive_media": ("This platform only posts real photos and videos from Google Drive.", "replace"),
+    "video_finish": ("Every video needs sound and must end with a cut to the Tudelu logo.", "finish"),
     "duplicates": ("The caption is too similar to another recent post.", "caption"),
     "audio_review": ("The audio check found a problem with the sound.", "music"),
     "vision_review": ("The visual check found a problem in the picture.", "visual"),
@@ -66,6 +67,10 @@ FIXES = {
     "media": "Correct the media details, then recheck the post.",
     "recheck": "Correct the cause, then recheck the post.",
     "replace": "Reject this post, then create it again from a real photo or video imported from Google Drive.",
+    "finish": (
+        "Add the logo ending and sound below. The app adds them itself, without Runway: ambient music when "
+        "the video has no sound of its own."
+    ),
 }
 
 

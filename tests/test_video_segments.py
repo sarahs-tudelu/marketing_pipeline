@@ -17,6 +17,9 @@ from social.renditions import audio_samples, video_sequence
 from social.storage import ingest, storage
 from social.video_segments import edit_reference, plan_segments
 
+# Every video ends on the logo, so these tests keep one in the library.
+pytestmark = pytest.mark.usefixtures("house_logo")
+
 
 def clip(seconds, color, *, tone=False, tracks=1):
     output = io.BytesIO()
@@ -117,7 +120,8 @@ def test_full_pipeline_joins_saved_clips_and_soundtrack_once(db, settings, monke
 
 def test_failure_on_later_clip_resumes_without_buying_completed_clips_again(db, settings, monkeypatch):
     monkeypatch.setattr('social.media_studio.write_prompt', lambda *a: {'generation_prompt': 'A pergola at dusk', 'prompt_writer': {}, 'depicted_system': 'Pergolas'})
-    job = queue_jobs(db, settings, brief(db, settings, duration=12, create_posts=False))[0]
+    # 15 seconds: 12 seconds of footage in two 6-second clips, then the 3-second logo.
+    job = queue_jobs(db, settings, brief(db, settings, duration=15, create_posts=False))[0]
     job.brief = job.brief | {'execution_mode': 'live'}
     db.commit()
     settings.ai_mode, settings.runway_api_key = 'live', SecretStr('mock')
@@ -148,25 +152,27 @@ def test_failure_on_later_clip_resumes_without_buying_completed_clips_again(db, 
     resume_job(job)
     db.commit()
     process_jobs(db, settings, provider)
-    assert job.state == 'rendering' and len(provider.submissions) == 2
+    # Both clips are saved; the default ambient music is the next step.
+    assert (job.state, job.stage) == ('queued', 'audio') and len(provider.submissions) == 2
     assert job.brief['video_segments'][0]['output_asset_id'] == saved
     assert len(job.source_asset_ids) == 2
 
 
 def test_long_edit_splits_original_into_immutable_reusable_intervals(db, settings):
-    data = video_sequence([(clip(30, c), 0, 30) for c in (0, 1, 2)], 64, 64)
+    # A 90-second video has 87 seconds of footage before the logo: three 29-second edit inputs.
+    data = video_sequence([(clip(29, c), 0, 29) for c in (0, 1, 2)], 64, 64)
     original = ingest(db, settings, data, 'original.mp4', rights='public')
     job = queue_jobs(db, settings, brief(db, settings, operation='video_edit', reference_ids=[original.id]))[0]
     db.commit()
     for index in range(3):
         part = edit_reference(db, settings, job)
-        assert part.id != original.id and part.media['duration'] == 30
+        assert part.id != original.id and part.media['duration'] == 29
         assert edit_reference(db, settings, job).id == part.id
         with av.open(io.BytesIO(storage(settings).read(part.storage_key))) as media:
             frame = next(media.decode(video=0))
             assert frame.to_ndarray(format='rgb24').mean(axis=(0, 1)).argmax() == index
         assert part.tags['source_checksum'] == original.checksum
-        assert part.tags['edit_interval'] == {'start': index * 30, 'duration': 30}
+        assert part.tags['edit_interval'] == {'start': index * 29, 'duration': 29}
         job.brief = job.brief | {'video_segments': [s | {'output_asset_id': part.id} if s['index'] == index else s for s in job.brief['video_segments']]}
         db.commit()
     assert storage(settings).read(original.storage_key) == data
@@ -183,7 +189,8 @@ def test_invalid_lengths_rejected_before_paid_work(db, settings):
 def test_live_edit_submits_only_the_saved_30_second_input(db, settings, monkeypatch):
     monkeypatch.setattr('social.media_studio.write_prompt', lambda *a: {'generation_prompt': 'Warm lighting', 'prompt_writer': {}, 'depicted_system': 'Pergolas'})
     original = ingest(db, settings, clip(90, 0), 'long-source.mp4', rights='public')
-    job = queue_jobs(db, settings, brief(db, settings, operation='video_edit', reference_ids=[original.id]))[0]
+    # 30 seconds of edited footage, then the 3-second logo.
+    job = queue_jobs(db, settings, brief(db, settings, operation='video_edit', reference_ids=[original.id], duration=33))[0]
     job.brief = job.brief | {'execution_mode': 'live'}
     db.commit()
     settings.ai_mode, settings.runway_api_key = 'live', SecretStr('mock')

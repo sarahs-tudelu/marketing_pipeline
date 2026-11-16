@@ -18,6 +18,9 @@ from social.providers import Claude, OpenAI
 from social.seed import seed_media
 from social.storage import ingest
 
+# Every video ends on the logo, so these tests keep one in the library.
+pytestmark = pytest.mark.usefixtures("house_logo")
+
 SITE = """<html><head><title>Tudelu - Architectural Systems</title>
 <meta name="description" content="Motorized walls, canopies and pergolas.">
 <script>var promo = "Greenhouses";</script></head><body>
@@ -71,9 +74,12 @@ class FakeRunway:
         self.db, self.job, self.payloads = db, job, []
 
     def submit(self, endpoint, payload):
-        # The written prompt is committed before the paid request.
+        # The written prompt is committed before the paid request. Videos end on the logo, so their
+        # footage is generated as clips, each with its own saved prompt.
         with Session(self.db.get_bind()) as other:
-            assert other.get(MediaJob, self.job.id).brief["generation_prompt"] == payload["promptText"]
+            brief = other.get(MediaJob, self.job.id).brief
+            saved = [brief["generation_prompt"]] + [s.get("prompt") for s in brief.get("video_segments", [])]
+            assert payload["promptText"] in saved
         self.payloads.append((endpoint, payload))
         return "task-1"
 
@@ -174,7 +180,8 @@ def test_live_prompt_uses_site_rules_public_uploads_and_previous_generations(
 
     endpoint, payload = runway.payloads[0]
     assert endpoint == "text_to_video"
-    assert payload["promptText"] == job.brief["generation_prompt"]
+    assert payload["promptText"] == job.brief["video_segments"][0]["prompt"]
+    assert payload["promptText"].startswith(job.brief["generation_prompt"])
     assert job.brief["depicted_system"] == "pergolas"
     recorded = job.brief["prompt_writer"]["sources"]
     assert recorded["uploaded_asset_ids"] == [sources["public"].id]
@@ -208,7 +215,7 @@ def test_ungrounded_prompt_fails_before_runway_and_can_resume(
     resume_job(job)
     db.commit()
     process_jobs(db, settings, runway)
-    assert job.state == "running" and runway.payloads[0][1]["promptText"] == "A pergola at noon."
+    assert job.state == "running" and runway.payloads[0][1]["promptText"].startswith("A pergola at noon.")
 
 
 def test_fixture_prompt_is_recorded_and_older_queued_jobs_are_rewritten(db, settings):

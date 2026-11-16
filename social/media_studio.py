@@ -23,6 +23,16 @@ from .renditions import fitted_size, image_rendition, logo_card, video_rendition
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, payload_for
 from .storage import ingest, storage
+from .video_rules import (
+    AMBIENT_STYLES,
+    NO_LOGO,
+    ambient_tag,
+    ambient_track,
+    default_logo,
+    has_sound,
+    next_ambient_style,
+    seed_for,
+)
 from .video_segments import current_segment, edit_reference, plan_segments, save_segment_prompt, segment_brief
 
 # Directions describe how to show the chosen Tudelu system; the prompt writer picks the system.
@@ -63,6 +73,8 @@ class CreativeBrief(BaseModel):
     # Post the admin's own photo or video as it is: no Runway request, only a platform-sized copy.
     # reference_ids holds that photo or video and audio_reference_ids an optional soundtrack.
     as_uploaded: bool = False
+    # Your own video only: the app's ambient music replaces its sound (always, when it has none).
+    ambient_music: bool = False
 
     @field_validator("rights")
     @classmethod
@@ -97,7 +109,11 @@ class CreativeBrief(BaseModel):
                 raise ValueError("Your own media is posted without generated clips or music")
             if self.operation == "image" and (self.audio_reference_ids or self.end_card_asset_id):
                 raise ValueError("A photo can't carry a soundtrack or a logo end card")
+            if self.ambient_music and (self.operation != "video" or self.audio_reference_ids):
+                raise ValueError("Ambient music replaces a video's own sound; it can't be added to an audio file")
             return self
+        if self.ambient_music:
+            raise ValueError("Ambient music without a description is only for posting your own video")
         if self.operation == "audio" and len(set(self.reference_ids + self.audio_reference_ids)) > 3:
             raise ValueError("Audio generation accepts at most three reference bites in total")
         if self.operation == "image" and "tiktok" in self.platforms and self.create_posts:
@@ -220,18 +236,7 @@ def validate_sources(db, brief, *, live=False):
             )
         sources.append(asset)
     if brief.end_card_asset_id:
-        logo = db.get(Asset, brief.end_card_asset_id)
-        if not logo or not logo.media["mime"].startswith("image/"):
-            raise ValueError("Choose an uploaded logo image for the end card")
-        if logo.rights_expire_at and logo.rights_expire_at <= now():
-            raise ValueError("The logo's usage rights have expired")
-        if live and logo.demo_only:
-            raise ValueError("Live campaigns cannot use a demo logo")
-        if brief.rights == "public" and logo.rights == "not_public":
-            raise ValueError(
-                f"{logo.original_name} is marked Not public, so it cannot close a Public video. "
-                "Upload the logo as Public, or choose Not public."
-            )
+        check_logo(db.get(Asset, brief.end_card_asset_id), brief, live=live)
     visual = [a for a in sources if a.id in brief.reference_ids]
     if brief.as_uploaded:
         return _uploaded_sources(brief, visual, sources)
@@ -247,10 +252,32 @@ def validate_sources(db, brief, *, live=False):
         raise ValueError("Video editing requires one uploaded video")
     if brief.operation == "mixed" and any(a.media["mime"].startswith("audio/") for a in visual):
         raise ValueError("Put audio in the soundtrack reference selection")
-    footage = brief.duration - (END_CARD_SECONDS if brief.end_card_asset_id else 0)
+    footage = brief.duration - END_CARD_SECONDS
     if brief.operation == "video_edit" and footage > 10 and visual[0].media["duration"] + 0.1 < footage:
         raise ValueError("The requested edit is longer than the uploaded video. Choose a shorter duration or generate a new video.")
     return sources
+
+
+def check_logo(logo, brief, *, live=False):
+    if not logo or not logo.media["mime"].startswith("image/"):
+        raise ValueError("Choose an uploaded logo image for the end card")
+    if logo.rights_expire_at and logo.rights_expire_at <= now():
+        raise ValueError("The logo's usage rights have expired")
+    if live and logo.demo_only:
+        raise ValueError("Live campaigns cannot use a demo logo")
+    if brief.rights == "public" and logo.rights == "not_public":
+        raise ValueError(
+            f"{logo.original_name} is marked Not public, so it cannot close a Public video. "
+            "Upload the logo as Public, or choose Not public."
+        )
+    return logo
+
+
+def ending_logo(db, brief, *, live=False):
+    """The logo a video ends on: the one chosen in the brief, otherwise the newest tagged logo."""
+    if not brief.end_card_asset_id and not (logo := default_logo(db, live=live)):
+        raise ValueError(NO_LOGO)
+    return check_logo(db.get(Asset, brief.end_card_asset_id) if brief.end_card_asset_id else logo, brief, live=live)
 
 
 def _uploaded_sources(brief, visual, sources):
@@ -262,7 +289,7 @@ def _uploaded_sources(brief, visual, sources):
     if any(requires_ai_review(a) for a in sources):
         raise ValueError("Only real media can be posted as it is. Use AI-made media as a reference instead.")
     if brief.operation == "video":
-        card = END_CARD_SECONDS if brief.end_card_asset_id else 0
+        card = END_CARD_SECONDS
         length = visual[0].media["duration"]
         if brief.duration - card > length + 0.1:
             raise ValueError(
@@ -273,9 +300,10 @@ def _uploaded_sources(brief, visual, sources):
 
 def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None):
     brief = CreativeBrief.model_validate(brief)
-    sources = validate_sources(db, brief, live=any(settings.wants_live(p, db.get(Account, p)) for p in brief.platforms))
+    live = any(settings.wants_live(p, db.get(Account, p)) for p in brief.platforms)
+    sources = validate_sources(db, brief, live=live)
     if brief.as_uploaded:
-        return _queue_uploaded(db, settings, brief, snapshot)
+        return _queue_uploaded(db, settings, brief, snapshot, live=live)
     if settings.ai_mode == "live" and not settings.runway_api_key.get_secret_value():
         raise ValueError("RUNWAY_API_KEY is missing. Fill in .env and restart web/worker.")
     if (
@@ -290,6 +318,8 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         raise ValueError("Mixed format/content is for recurring campaigns; select a specific one-off format")
     snapshot = snapshot if snapshot is not None else (website_snapshot(settings) if brief.website else {})
     batch = f"{campaign.id}:{sequence}" if campaign else uid()
+    # One ambient style per batch, so each platform's version of the post sounds the same.
+    style = next_ambient_style(db)
     result = []
     for platform in brief.platforms:
         profile = profiles(settings)[platform]
@@ -354,11 +384,18 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         if operation in {"video", "video_edit"}:
             if brief.duration > profile.max_duration:
                 raise ValueError(f"{platform}: choose a duration of at most {profile.max_duration:g} seconds")
-            end_card = (
-                {"asset_id": brief.end_card_asset_id, "seconds": END_CARD_SECONDS}
-                if brief.end_card_asset_id
-                else None
-            )
+            if brief.duration < END_CARD_SECONDS + MIN_CLIP_SECONDS:
+                raise ValueError(
+                    f"Every video ends with the {END_CARD_SECONDS}-second Tudelu logo, so choose a length of at "
+                    f"least {END_CARD_SECONDS + MIN_CLIP_SECONDS} seconds"
+                )
+            # Every video ends with a cut to the logo, and every video has sound: calm ambient music
+            # unless the brief describes other music or reworks uploaded audio.
+            logo = ending_logo(db, brief, live=live)
+            end_card = {"asset_id": logo.id, "seconds": END_CARD_SECONDS}
+            values["end_card_asset_id"] = logo.id
+            if not brief.audio_prompt.strip() and not brief.audio_reference_ids:
+                values.update(audio_prompt=AMBIENT_STYLES[style][1], ambient_style=style)
             # Generated or edited footage; the logo end card is rendered locally after it.
             footage = brief.duration - (END_CARD_SECONDS if end_card else 0)
             maximum = 30 if operation == "video_edit" else 10
@@ -381,7 +418,7 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             values["end_card"] = end_card
             # A full-length music track for a plain soundtrack direction; seed_audio reworks uploaded bites.
             values["soundtrack_model"] = (
-                "music" if brief.audio_prompt.strip() and not brief.audio_reference_ids else "seed_audio"
+                "music" if values["audio_prompt"].strip() and not brief.audio_reference_ids else "seed_audio"
             )
         if operation == "image":
             values.update(audio_prompt="", audio_reference_ids=[], end_card_asset_id="")
@@ -398,9 +435,13 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
     return result
 
 
-def _queue_uploaded(db, settings, brief, snapshot):
+def _queue_uploaded(db, settings, brief, snapshot, *, live=False):
     """One job per platform that fits the admin's own media to the platform; Runway is never called."""
     batch = uid()
+    # A video ends on the logo. The app's ambient music replaces its sound when chosen, and is
+    # added anyway when the video turns out to be silent.
+    logo = ending_logo(db, brief, live=live) if brief.operation == "video" else None
+    style = next_ambient_style(db) if brief.operation == "video" else ""
     result = []
     for platform in brief.platforms:
         profile = profiles(settings)[platform]
@@ -415,9 +456,10 @@ def _queue_uploaded(db, settings, brief, snapshot):
             "website_snapshot": snapshot or {},
             "seed": 0,
             "execution_mode": settings.ai_mode,
-            "end_card": {"asset_id": brief.end_card_asset_id, "seconds": END_CARD_SECONDS}
-            if brief.end_card_asset_id
-            else None,
+            "end_card": {"asset_id": logo.id, "seconds": END_CARD_SECONDS} if logo else None,
+            "end_card_asset_id": logo.id if logo else "",
+            # Only recorded as used when the music is actually laid (see _uploaded_copy).
+            "fallback_ambient_style": style,
         }
         job = MediaJob(
             batch_key=f"{batch}:{platform}",
@@ -591,19 +633,31 @@ def _uploaded_copy(db, settings, job, first, originals):
         soundtrack = storage(settings).read(sound.storage_key)
         if hashlib.sha256(soundtrack).hexdigest() != sound.checksum:
             raise ValueError("Soundtrack integrity failed before creating the video")
-    end_card = brief.get("end_card") if brief["operation"] == "video" else None
+    video = brief["operation"] == "video"
+    end_card = brief.get("end_card") if video else None
     logo = db.get(Asset, end_card["asset_id"]) if end_card else None
     if end_card and not logo:
         raise ValueError("The end-card logo is missing from the asset library; upload it and create the post again")
-    data, extension = fitted_copy(
+    duration = brief["duration"]
+    if video and not logo:
+        # Planned before every video ended on the logo: the card follows the planned footage.
+        logo = default_logo(db, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+        if not logo:
+            raise ValueError(NO_LOGO)
+        end_card = {"asset_id": logo.id, "seconds": END_CARD_SECONDS}
+        duration += END_CARD_SECONDS
+    data, extension, sound_tags = fitted_copy(
         settings,
         first,
         profile,
         job.platform,
-        duration=brief["duration"],
+        duration=duration,
         soundtrack=soundtrack,
         logo=logo,
         card_seconds=end_card["seconds"] if end_card else 0,
+        ambient=brief.get("fallback_ambient_style") or (next_ambient_style(db) if video else ""),
+        replace_sound=bool(brief.get("ambient_music")),
+        seed=seed_for(job.batch_key.rsplit(":", 1)[0]),
     )
     used = [a for a in [first, sound, logo] if a]
     end_card_tag = {
@@ -634,6 +688,7 @@ def _uploaded_copy(db, settings, job, first, originals):
             "creative_brief": {"prompt": brief["prompt"], "kind": brief["kind"], "concept": ""},
             **({"soundtrack_asset_id": sound.id} if sound else {}),
             **({"end_card": end_card_tag} if end_card_tag else {}),
+            **sound_tags,
         },
     )
     errors = media_errors([result], profile, job.platform)
@@ -668,6 +723,7 @@ def _finish(db, settings, job):
         logo = db.get(Asset, end_card["asset_id"]) if end_card else None
         if end_card and not logo:
             raise ValueError("The end-card logo is missing from the asset library; upload it and create the post again")
+        sound_tags = {}
         if brief["operation"] == "image":
             data = image_rendition(data, profile.image_width, profile.image_height,
                                    source=first.source, generator=first.generator)
@@ -675,6 +731,12 @@ def _finish(db, settings, job):
         else:
             sound_asset = next((a for a in originals if a.media["mime"].startswith("audio/")), None)
             soundtrack = storage(settings).read(sound_asset.storage_key) if sound_asset else None
+            if not logo:
+                # Planned before every video ended on the logo: the card is added after the footage.
+                logo = default_logo(db, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+                if not logo:
+                    raise ValueError(NO_LOGO)
+                end_card = {"asset_id": logo.id, "seconds": END_CARD_SECONDS}
             if brief.get("video_segments"):
                 clips = []
                 for segment in brief["video_segments"]:
@@ -685,18 +747,25 @@ def _finish(db, settings, job):
                     if hashlib.sha256(clip_data).hexdigest() != asset.checksum:
                         raise ValueError("Video clip integrity failed before assembly")
                     clips.append((clip_data, 0, segment["duration"]))
-                if logo:
-                    logo_data = storage(settings).read(logo.storage_key)
-                    if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
-                        raise ValueError("Logo integrity failed before creating the end card")
-                    card = logo_card(logo_data, profile.video_width, profile.video_height, end_card["seconds"])
-                    clips.append((card, 0, end_card["seconds"]))
-                data = video_sequence(clips, profile.video_width, profile.video_height, soundtrack,
-                                      require_full_duration=True)
             else:
-                data = video_rendition(
-                    data, profile.video_width, profile.video_height, brief["duration"], soundtrack
-                )
+                clips = [(data, 0, brief["duration"])]
+            excess = sum(c[2] for c in clips) + end_card["seconds"] - profile.max_duration
+            if excess > 0:
+                clips[-1] = clips[-1][:2] + (max(MIN_CLIP_SECONDS, clips[-1][2] - excess),)
+            sound_tags = {"video_sound": "music" if sound_asset else "own"}
+            if soundtrack is None and not any(has_sound(c[0]) for c in clips):
+                # Planned without music: the app's ambient track keeps the video from being silent.
+                style = brief.get("ambient_style") or next_ambient_style(db)
+                seconds = sum(c[2] for c in clips) + end_card["seconds"]
+                soundtrack = ambient_track(style, seconds, seed_for(job.batch_key.rsplit(":", 1)[0]))
+                sound_tags = {"video_sound": "ambient", "ambient_music": ambient_tag(style, seconds)}
+            logo_data = storage(settings).read(logo.storage_key)
+            if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
+                raise ValueError("Logo integrity failed before creating the end card")
+            card = logo_card(logo_data, profile.video_width, profile.video_height, end_card["seconds"])
+            clips.append((card, 0, end_card["seconds"]))
+            data = video_sequence(clips, profile.video_width, profile.video_height, soundtrack,
+                                  require_full_duration=bool(brief.get("video_segments")))
             name = f"{job.platform}-{job.id}.mp4"
         # A multi-clip video records every clip's prompt, not only the first clip's.
         clip_prompts = list(dict.fromkeys(s["prompt"] for s in brief.get("video_segments", []) if s.get("prompt")))
@@ -735,6 +804,7 @@ def _finish(db, settings, job):
                     "note": "The final seconds show Tudelu's official logo, supplied as company media and "
                     "added by the app after generation.",
                 }} if logo else {}),
+                **sound_tags,
             },
         )
         from .gate import media_errors
@@ -776,12 +846,24 @@ def _finish(db, settings, job):
 
 
 def fitted_copy(
-    settings, asset, profile, platform, *, duration=None, soundtrack=None, logo=None, card_seconds=0
+    settings,
+    asset,
+    profile,
+    platform,
+    *,
+    duration=None,
+    soundtrack=None,
+    logo=None,
+    card_seconds=0,
+    ambient="",
+    replace_sound=False,
+    seed=0,
 ):
-    """Bytes and file extension of a platform copy of real media, keeping its own shape.
+    """Bytes, file extension and sound tags of a platform copy of real media, keeping its own shape.
 
-    Media too small for the platform is padded to the platform's size instead. Video keeps its own
-    sound unless a soundtrack is given, and can end on the logo card.
+    Media too small for the platform is padded to the platform's size instead. A video ends on the
+    logo card when one is given. It keeps its own sound unless a soundtrack is given; the app's
+    ambient track in the `ambient` style replaces it when `replace_sound` is set or the video is silent.
     """
     data = storage(settings).read(asset.storage_key)
     if hashlib.sha256(data).hexdigest() != asset.checksum:
@@ -794,7 +876,7 @@ def fitted_copy(
         )
         if size[0] < profile.min_width or size[1] < profile.min_height:
             size = (profile.image_width, profile.image_height)
-        return image_rendition(data, *size, source=asset.source, generator=asset.generator), "jpg"
+        return image_rendition(data, *size, source=asset.source, generator=asset.generator), "jpg", {}
     size = fitted_size(
         media["width"], media["height"], profile.video_width, profile.video_height,
         profile.video_min_ratio, profile.video_max_ratio,
@@ -806,30 +888,35 @@ def fitted_copy(
     if small:
         size = (profile.video_width, profile.video_height)
     # The requested length includes the logo card; the footage never runs past the video's own end.
-    total = min(duration or media.get("duration", 0), profile.max_duration)
-    footage = min(total - (card_seconds if logo else 0), media.get("duration", 0))
+    card = card_seconds if logo else 0
+    total = min(duration or media.get("duration", 0) + card, profile.max_duration)
+    footage = min(total - card, media.get("duration", 0))
+    sound_tags = {"video_sound": "upload" if soundtrack is not None else "own"}
+    if soundtrack is None and ambient and (replace_sound or not has_sound(data)):
+        soundtrack = ambient_track(ambient, footage + card, seed)
+        sound_tags = {"video_sound": "ambient", "ambient_music": ambient_tag(ambient, footage + card)}
     if logo is None:
-        return video_rendition(data, *size, footage, soundtrack), "mp4"
+        return video_rendition(data, *size, footage, soundtrack), "mp4", sound_tags
     logo_data = storage(settings).read(logo.storage_key)
     if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
         raise ValueError("Logo integrity failed before creating the end card")
-    card = logo_card(logo_data, *size, card_seconds)
-    return video_sequence([(data, 0, footage), (card, 0, card_seconds)], *size, soundtrack), "mp4"
+    ending = logo_card(logo_data, *size, card)
+    return video_sequence([(data, 0, footage), (ending, 0, card)], *size, soundtrack), "mp4", sound_tags
 
 
 def platform_copy(db, settings, asset, platform):
-    """Use real media as it is when the platform accepts it, otherwise a resized copy linked to it."""
+    """Use real media as it is when the platform accepts it, otherwise a resized copy linked to it.
+
+    A video always gets sound and the logo ending as well (see finish_video).
+    """
     from .gate import media_errors
 
+    if asset.media["mime"].startswith("video/"):
+        return finish_video(db, settings, asset, platform)
     profile = profiles(settings)[platform]
     if not media_errors([asset], profile, platform):
         return asset
-    if asset.media.get("duration", 0) > profile.max_duration + 0.1:
-        raise ValueError(
-            f"{asset.original_name} is longer than {profile.max_duration:g} seconds. Trim it, import it again "
-            "and create the post from the shorter video."
-        )
-    data, extension = fitted_copy(settings, asset, profile, platform)
+    data, extension, _ = fitted_copy(settings, asset, profile, platform)
     copy = ingest(
         db,
         settings,
@@ -848,6 +935,85 @@ def platform_copy(db, settings, asset, platform):
     errors = media_errors([copy], profile, platform)
     if errors:
         raise ValueError(f"{asset.original_name} can't be fitted for {platform.title()}: " + ", ".join(errors))
+    return copy
+
+
+def finish_video(db, settings, asset, platform):
+    """A video that follows the house rules: it has sound and ends with a cut to the Tudelu logo.
+
+    Returns the video itself when it already does and fits the platform, otherwise a copy linked to
+    it. The copy keeps the video's shape and its own sound; a silent video gets the app's ambient
+    music. Nothing is sent to Runway, so real media stays real. Images are returned unchanged.
+    """
+    from .gate import media_errors
+    from .idea_plan import _platform_names
+    from .video_rules import video_rule_errors
+
+    if not asset.media["mime"].startswith("video/"):
+        return asset
+    profile = profiles(settings)[platform]
+    if not video_rule_errors([asset]) and not media_errors([asset], profile, platform):
+        return asset
+    name = _platform_names([platform])
+    ended = bool((asset.tags or {}).get("end_card"))
+    logo = None if ended else default_logo(db, live=settings.wants_live(platform, db.get(Account, platform)))
+    if not ended and not logo:
+        raise ValueError(NO_LOGO)
+    card = 0 if ended else END_CARD_SECONDS
+    length = asset.media.get("duration", 0)
+    if length + card > profile.max_duration + 0.1:
+        limit = (
+            f"With the {card}-second logo ending, videos for {name} can be at most "
+            f"{profile.max_duration - card:g} seconds."
+            if card
+            else f"Videos for {name} can be at most {profile.max_duration:g} seconds."
+        )
+        raise ValueError(
+            f"{asset.original_name} is {length:.0f} seconds long. {limit} Trim it, import it again and "
+            "create the post from the shorter video."
+        )
+    data, extension, sound_tags = fitted_copy(
+        settings,
+        asset,
+        profile,
+        platform,
+        logo=logo,
+        card_seconds=card,
+        ambient=next_ambient_style(db),
+        seed=seed_for(asset.id, platform),
+    )
+    tags = (asset.tags or {}) | {
+        "source_asset_ids": [asset.id] + ([logo.id] if logo else []),
+        "rendition": {"platform": platform, "original_asset_id": asset.id},
+        **sound_tags,
+    }
+    if logo:
+        tags["end_card"] = {
+            "asset_id": logo.id,
+            "checksum": logo.checksum,
+            "seconds": card,
+            "note": "The final seconds show Tudelu's official logo, supplied as company media and added by the app.",
+        }
+    used = [a for a in (asset, logo) if a]
+    copy = ingest(
+        db,
+        settings,
+        data,
+        f"{platform}-{asset.id}.{extension}",
+        source=asset.source,
+        generator=asset.generator,
+        prompt=asset.prompt,
+        rights=combined_rights(asset.rights, [logo]) if logo else asset.rights,
+        owner=asset.owner,
+        rights_expire_at=min([a.rights_expire_at for a in used if a.rights_expire_at], default=None),
+        customer_permission=asset.customer_permission,
+        permission_reference=asset.permission_reference,
+        demo_only=any(a.demo_only for a in used),
+        tags=tags,
+    )
+    errors = media_errors([copy], profile, platform)
+    if errors:
+        raise ValueError(f"{asset.original_name} can't be fitted for {name}: " + ", ".join(errors))
     return copy
 
 

@@ -27,10 +27,10 @@ def change_facts(db, post, **updates):
 def test_complete_gate_audits_all_checks(db, settings, post):
     result = run_gate(db, settings, post)
     assert post.status == "approved"
-    assert len(result) == 18
+    assert len(result) == 19
     assert all(c.passed for c in result)
     assert post.approved_digest
-    assert len(db.scalars(select(CheckResult)).all()) == 18
+    assert len(db.scalars(select(CheckResult)).all()) == 19
 
 
 @pytest.mark.parametrize("live", [False, True])

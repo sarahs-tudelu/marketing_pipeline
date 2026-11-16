@@ -45,6 +45,16 @@ def assets(db, settings):
 
 
 @pytest.fixture
+def house_logo(db, settings):
+    """The Tudelu logo every video ends on; videos can't be made without one in the library."""
+    stream = io.BytesIO()
+    Image.new("RGBA", (400, 100), (23, 61, 53, 255)).save(stream, format="PNG")
+    asset = ingest(db, settings, stream.getvalue(), "house-logo.png", rights="public", tags={"brand_logo": True})
+    db.commit()
+    return asset
+
+
+@pytest.fixture
 def post(db, settings, assets):
     facts = load_facts(db, settings.facts_path)
     p = draft(db, "linkedin", "test", [a.id for a in assets], facts.id, product="demo", human_review_required=False)

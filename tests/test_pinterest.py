@@ -56,7 +56,11 @@ def configured(settings):
 
 
 def claimed(db, settings, asset):
+    from social.media_studio import platform_copy
+
     facts = load_facts(db, settings.facts_path)
+    # As Post from library media does: a video gets the logo ending and sound in a linked copy.
+    asset = platform_copy(db, settings, asset, "pinterest")
     post = draft(db, "pinterest", "Pinterest test", [asset.id], facts.id, product="demo")
     generate(db, settings, post)
     run_gate(db, settings, post)
@@ -176,7 +180,7 @@ def test_library_post_resizes_a_large_drive_photo(db, settings, assets):
 
 
 @pytest.mark.parametrize("kind", ["image", "video"])
-def test_dry_pinterest_publish_records_requests(db, settings, kind):
+def test_dry_pinterest_publish_records_requests(db, settings, house_logo, kind):
     data = jpeg(1000, 1500) if kind == "image" else seed_media(duration=6)[1]
     asset = drive_asset(db, settings, data, "pin.jpg" if kind == "image" else "pin.mp4")
     post = claimed(db, settings, asset)
@@ -204,7 +208,7 @@ def test_dry_pinterest_publish_records_requests(db, settings, kind):
 
 
 @pytest.mark.parametrize("kind", ["image", "video"])
-def test_live_pinterest_publish(db, settings, monkeypatch, kind):
+def test_live_pinterest_publish(db, settings, house_logo, monkeypatch, kind):
     monkeypatch.setattr("social.adapters.platforms.public_url", lambda u: u)
     settings = configured(settings)
     data = jpeg(1000, 1500) if kind == "image" else seed_media(duration=6)[1]

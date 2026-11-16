@@ -25,11 +25,15 @@
     <ul class="plan-notes">{% for a in idea_uploads %}<li>{{ a.original_name }} · {{ {'image': 'photo', 'video': 'video', 'audio': 'soundtrack'}[a.media.mime.split('/')[0]] }}{% if a.media.get('duration') %} · {{ a.media.duration|round|int }} s{% endif %}</li>{% endfor %}</ul>
     <p class="muted">It's posted as it is. Each platform gets a copy sized for it, and the original stays unchanged in the asset library.</p>
     {% if plan.operation == 'video' %}
-      <label>Length (seconds)<input type="number" name="duration" min="3" max="90" value="{{ plan.duration }}"></label>
+      <label>Length (seconds)<input type="number" name="duration" min="5" max="90" value="{{ plan.duration }}"></label>
+      {% for a in idea_uploads if a.media.mime.startswith('audio/') %}{% if loop.first %}<p>Sound: {{ a.original_name }} replaces the video's own sound.</p>{% endif %}
+      {% else %}{% if plan.silent_video %}<input type="hidden" name="silent_video" value="on"><p>Sound: your video has none, so it gets ambient music made by the app (not by AI), in a style your recent videos haven't used.</p>
+      {% else %}<label>Sound<select name="sound"><option value="own" {{ '' if plan.ambient_music else 'selected' }}>Keep its own sound</option><option value="ambient" {{ 'selected' if plan.ambient_music else '' }}>Ambient music made by the app instead</option></select></label>
+        <small class="muted">Every video has sound. The ambient music isn't made by AI, so your video stays real media.</small>{% endif %}{% endfor %}
       <fieldset><legend>Ending</legend>
-        <label class="checkbox"><input type="checkbox" name="end_card" {{ 'checked' if plan.end_card and logos else '' }} {{ 'disabled' if not logos else '' }}>End with the Tudelu logo ({{ end_card_seconds }} seconds, added after your video)</label>
-        {% if logos %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>
-        {% else %}<p class="muted">To end videos with the logo, <a href="/admin/upload">upload it</a> and tick <i>This is the Tudelu logo</i>.</p>{% endif %}
+        <p>Every video ends with a cut to the Tudelu logo ({{ end_card_seconds }} seconds{{ ', added after your video' if plan.as_uploaded else '' }}).</p>
+        {% if logos %}{% if logos|length > 1 %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>{% else %}<input type="hidden" name="logo_id" value="{{ logos[0].id }}"><p class="muted">Logo: {{ logos[0].original_name }}</p>{% endif %}
+        {% else %}<p class="error" role="status">There's no logo in the asset library yet, so this video can't be made. <a href="/admin/upload">Upload the logo</a> as a PNG and tick <i>This is the Tudelu logo</i>, then plan the idea again.</p>{% endif %}
       </fieldset>
     {% endif %}
   </section>
@@ -41,7 +45,7 @@
       <label>Format<select name="operation" data-format-switch>{% for value, label in formats.items() if value != 'auto' %}<option value="{{ value }}" {{ 'selected' if plan.operation == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
     </div>
     <div class="two">
-      <label data-show-for="video video_edit">Length (seconds)<input type="number" name="duration" min="3" max="90" value="{{ plan.duration }}"></label>
+      <label data-show-for="video video_edit">Length (seconds)<input type="number" name="duration" min="5" max="90" value="{{ plan.duration }}"></label>
       <label>Content style<select name="plan_kind"><option value="promotional" {{ 'selected' if plan.kind == 'promotional' else '' }}>Promotional</option><option value="non_promotional" {{ 'selected' if plan.kind == 'non_promotional' else '' }}>Editorial / non-promotional</option></select></label>
     </div>
     <fieldset data-show-for="video image"><legend>{{ 'Clips, in viewing order' if plan.operation != 'image' else 'Scene' }}</legend>
@@ -61,13 +65,12 @@
       <datalist id="known-systems">{% for name in plan.available_systems %}<option value="{{ name }}">{% endfor %}</datalist>
     </fieldset>
     <div data-show-for="video video_edit">
-      <label>Music<textarea name="soundtrack" rows="2" maxlength="1800" placeholder="Leave blank for no music">{{ plan.soundtrack }}</textarea></label>
-      <small>Runway composes an instrumental track for the full length of the video. Mention vocals if you want them.</small>
+      <label>Music<textarea name="soundtrack" rows="2" maxlength="1800" placeholder="Leave blank for calm ambient music">{{ plan.soundtrack }}</textarea></label>
+      <small>Every video has sound. Runway composes an instrumental track for the full length of the video. Left blank, it's calm ambient music in a style your recent videos haven't used (piano, bells, soft keys, marimba, pads or nature sounds). Mention vocals if you want them.</small>
       <fieldset><legend>Ending</legend>
-        <label class="checkbox"><input type="checkbox" name="end_card" {{ 'checked' if plan.end_card and logos else '' }} {{ 'disabled' if not logos else '' }}>End with the Tudelu logo ({{ end_card_seconds }} seconds)</label>
-        {% if logos %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>
-        {% elif plan.end_card %}<p class="error" role="status">Your idea asks for the logo at the end, but no logo is in the asset library yet. <a href="/admin/upload">Upload the logo</a> as a PNG and tick <i>This is the Tudelu logo</i>, then plan the idea again. Without it, the video ends on the last clip.</p>
-        {% else %}<p class="muted">To end videos with the logo, <a href="/admin/upload">upload it</a> and tick <i>This is the Tudelu logo</i>.</p>{% endif %}
+        <p>Every video ends with a cut to the Tudelu logo ({{ end_card_seconds }} seconds{{ ', added after your video' if plan.as_uploaded else '' }}).</p>
+        {% if logos %}{% if logos|length > 1 %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>{% else %}<input type="hidden" name="logo_id" value="{{ logos[0].id }}"><p class="muted">Logo: {{ logos[0].original_name }}</p>{% endif %}
+        {% else %}<p class="error" role="status">There's no logo in the asset library yet, so this video can't be made. <a href="/admin/upload">Upload the logo</a> as a PNG and tick <i>This is the Tudelu logo</i>, then plan the idea again.</p>{% endif %}
       </fieldset>
     </div>
   </section>

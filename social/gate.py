@@ -19,6 +19,7 @@ from .provider_errors import ProviderError
 from .providers import Providers
 from .security import public_url
 from .storage import storage
+from .video_rules import video_rule_errors
 
 URL_RE = re.compile(r"https?://[^\s<>]+")
 TESTIMONIAL_RE = re.compile(
@@ -258,6 +259,8 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     if post.platform in REAL_MEDIA_ONLY:
         check("drive_media", lambda: (not (error := real_drive_media_error(db, assets)), {"reason": error}))
     check("media", lambda: (not (errors := media_errors(assets, profile, post.platform)), {"errors": errors}))
+    # Every video has sound and ends with a cut to the Tudelu logo.
+    check("video_finish", lambda: (not (errors := video_rule_errors(assets)), {"reasons": errors}))
     check(
         "provenance_integrity",
         lambda: (

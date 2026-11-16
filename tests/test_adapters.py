@@ -5,6 +5,7 @@ from urllib.parse import parse_qsl
 import httpx
 import pytest
 from sqlalchemy import select
+from test_video_rules import HOUSE_TAGS, house_video
 
 from social.adapters import ADAPTERS
 from social.adapters.base import Deferred, PublishError, error_for
@@ -15,18 +16,18 @@ from social.models import Account, Control, RequestRecord
 from social.pipeline import draft, generate, publish_due
 from social.scheduler import schedule
 from social.security import Vault
-from social.seed import seed_media
 from social.storage import ingest
 
 
 @pytest.fixture(scope="module")
 def video_bytes():
-    return seed_media()[1]
+    return house_video()
 
 
 def prepared(db, settings, assets, platform, video=None, ai=False):
     if video:
-        a = ingest(db, settings, video, "clip.mp4", rights="Company owned")
+        # Videos have sound and end on the logo, as the app makes them.
+        a = ingest(db, settings, video, "clip.mp4", rights="Company owned", tags=HOUSE_TAGS)
         assets = [a]
     if ai:
         assets[0].source, assets[0].generator, assets[0].prompt = (

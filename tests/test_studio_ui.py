@@ -367,7 +367,7 @@ def test_media_queue_page_updates_in_place(db, settings):
         asyncio.run(exercise(client))
 
 
-def test_long_video_progress_refreshes_between_clips(db, settings, assets):
+def test_long_video_progress_refreshes_between_clips(db, settings, assets, house_logo):
     from test_runway_media import brief_for
 
     from social.audio_review import observe_audio

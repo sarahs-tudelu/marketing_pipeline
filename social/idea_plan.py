@@ -1,9 +1,10 @@
 """Turn an admin's free-text idea into a reviewable media plan before anything is generated.
 
 The plan sets the format (image, video or video edit), the finished length, the clips (a setting
-and a Tudelu system for each), the soundtrack direction and an optional logo end card. Explicit
-signals in the idea, such as "30 second reel", "music" or "logo at the end", always win over a
-model's reading, so an idea that asks for video can no longer become a single image by default.
+and a Tudelu system for each) and the soundtrack direction. Every video has sound (calm ambient music
+unless the idea asks for other music) and ends with a cut to the Tudelu logo. Explicit signals in the
+idea, such as "30 second reel" or "music", always win over a model's reading, so an idea that asks
+for video can no longer become a single image by default.
 """
 
 import json
@@ -102,6 +103,9 @@ class IdeaPlan(BaseModel):
     planner: str = ""
     # The admin's own photo or video is posted as it is; nothing is generated.
     as_uploaded: bool = False
+    # Your own video: the app's ambient music replaces its sound. silent_video: it has no sound.
+    ambient_music: bool = False
+    silent_video: bool = False
 
     @field_validator("title", mode="before")
     @classmethod
@@ -136,9 +140,9 @@ PLANNER_INSTRUCTIONS = (
     "'Coming soon' unless the idea names it. When the idea asks for all or several products, give each clip a "
     "different available system. Use an empty system to let the later prompt writer choose. "
     "soundtrack: a music direction (mood, instruments, tempo; no artist or song names) only when the idea asks "
-    "for music or sound; otherwise empty. "
-    "end_card: true when the idea asks for the logo or brand at the end of a video. The generator never draws "
-    "logos; the app appends the official uploaded logo as an end card. "
+    "for music or sound; otherwise empty, and the app picks calm ambient music. Every video has sound. "
+    "end_card: true for every video; the app always ends videos with a cut to the official uploaded logo. "
+    "The generator never draws logos. "
     "kind: use requested_style unless it is auto; introductions, launches and offers are promotional. "
     "When catalog.visual_guidance is present, use only its product profiles and obey their global and "
     "product rules, even if a website example or idea conflicts. Fixed pergola louvers do not operate; "
@@ -292,7 +296,7 @@ def _rule_plan(idea, signals, catalog, product, has_video_reference):
     operation = (
         "video_edit" if has_video_reference and signals["edit"] else "video" if signals["video"] else "image"
     )
-    end = signals["end_card"] and operation != "image"
+    end = operation != "image"
     duration = signals["seconds"] or (
         min(90, max(5, len(shots) * 6 + (END_CARD_SECONDS if end else 0))) if len(shots) > 1 else 10
     )
@@ -394,7 +398,8 @@ def finalize(plan, signals, idea, requested_format, requested_style, has_video_r
         duration = signals["seconds"]
     if signals["seconds_requested"] and signals["seconds_requested"] > 90 and operation != "image":
         notes.append("Videos can be at most 90 seconds, so the length was shortened.")
-    end_card = operation != "image" and (plan.end_card or signals["end_card"])
+    # Every video ends with a cut to the logo.
+    end_card = operation != "image"
     if end_card and duration < END_CARD_SECONDS + MIN_CLIP_SECONDS:
         duration = END_CARD_SECONDS + MIN_CLIP_SECONDS
     soundtrack = (
@@ -402,6 +407,8 @@ def finalize(plan, signals, idea, requested_format, requested_style, has_video_r
         if operation == "image" or (signals["silent"] and not signals["soundtrack"])
         else (plan.soundtrack.strip() or signals["soundtrack"])
     )
+    if operation != "image" and signals["silent"] and not soundtrack:
+        notes.append("Every video has sound, so this one gets calm ambient music instead of silence.")
     if operation == "image" and (signals["soundtrack"] or signals["end_card"]):
         notes.append("Images can't carry music or a logo end card; choose Video to include them.")
     shots, dropped = [], []
@@ -448,8 +455,12 @@ def finalize(plan, signals, idea, requested_format, requested_style, has_video_r
     )
 
 
-def uploaded_plan(idea, uploads, *, requested_style="auto"):
-    """A plan for posting the admin's own photo or video as it is. Only the caption is written by AI."""
+def uploaded_plan(idea, uploads, *, requested_style="auto", silent=False):
+    """A plan for posting the admin's own photo or video as it is. Only the caption is written by AI.
+
+    A video ends on the logo and always has sound: an uploaded audio file, its own sound, or the app's
+    ambient music (when it's silent, or the idea asks for music).
+    """
     visual = [a for a in uploads if not a.media["mime"].startswith("audio/")]
     audio = [a for a in uploads if a.media["mime"].startswith("audio/")]
     if len(visual) != 1:
@@ -465,7 +476,8 @@ def uploaded_plan(idea, uploads, *, requested_style="auto"):
         raise ValueError("A photo can't carry sound. Add a video, or untick the audio file.")
     signals = read_signals(idea)
     notes = []
-    end_card = video and signals["end_card"]
+    end_card = video
+    ambient = False
     duration = 10
     if video:
         length = int(media.get("duration", 0))
@@ -478,12 +490,17 @@ def uploaded_plan(idea, uploads, *, requested_style="auto"):
             footage = max(MIN_CLIP_SECONDS, signals["seconds"] - (END_CARD_SECONDS if end_card else 0))
             notes.append(f"Length set to {signals['seconds']} seconds as written in your idea.")
         duration = footage + (END_CARD_SECONDS if end_card else 0)
-        if signals["soundtrack"] and not audio:
-            notes.append(
-                "Music isn't generated for your own video. It keeps its own sound unless you add an audio file."
-            )
         if audio:
             notes.append(f"{audio[0].original_name} replaces the video's own sound.")
+        elif silent:
+            ambient = True
+            notes.append("Your video has no sound, so it gets ambient music made by the app (not by AI).")
+        elif signals["soundtrack"]:
+            ambient = True
+            notes.append(
+                "Your idea asks for music, so ambient music made by the app (not by AI) replaces the video's "
+                "own sound. Choose Keep its own sound below to change that."
+            )
     elif signals["soundtrack"] or signals["end_card"] or signals["video"]:
         notes.append("Your photo is posted as a photo, so it can't carry music, motion or a logo end card.")
     kind = (
@@ -501,6 +518,8 @@ def uploaded_plan(idea, uploads, *, requested_style="auto"):
         end_card=end_card,
         notes=notes,
         as_uploaded=True,
+        ambient_music=ambient,
+        silent_video=video and silent and not audio,
     )
 
 
@@ -558,16 +577,15 @@ def plan_summary(plan, platforms):
         return f"Your video, posted as it is ({plan.duration} seconds{tail}), for {where}."
     if plan.operation == "image":
         return f"One image for {where}."
+    music = "music" if plan.soundtrack else "ambient music"
     if plan.operation == "video_edit":
-        extras = [x for x, on in (("music", plan.soundtrack), ("a logo end card", plan.end_card)) if on]
-        tail = " with " + " and ".join(extras) if extras else ""
-        return f"A {plan.duration}-second edit of your uploaded video{tail}, for {where}."
+        extras = [music] + (["a logo end card"] if plan.end_card else [])
+        return f"A {plan.duration}-second edit of your uploaded video with {' and '.join(extras)}, for {where}."
     clips = clip_seconds_preview(plan)
     parts = [f"{len(clips)} clip{'s' if len(clips) != 1 else ''}"]
     if plan.end_card:
         parts.append(f"a {END_CARD_SECONDS}-second logo end card")
-    if plan.soundtrack:
-        parts.append("music")
+    parts.append(music)
     return (
         f"A {plan.duration}-second video: "
         + ", ".join(parts[:-1])
@@ -580,9 +598,14 @@ def plan_summary(plan, platforms):
 def work_summary(plan, platforms):
     """What Runway is asked to generate, so cost is visible before anything starts."""
     if plan.as_uploaded:
+        ending = (
+            " The video ends with a cut to the Tudelu logo, and any ambient music is made by the app, not by AI."
+            if plan.operation == "video"
+            else ""
+        )
         return (
             "Nothing is sent to Runway. Each platform gets a copy of your media sized for it, and the original "
-            "stays unchanged in the asset library. AI writes the caption, and the usual checks run."
+            f"stays unchanged in the asset library.{ending} AI writes the caption, and the usual checks run."
         )
     count = max(1, len(platforms))
     each = "per platform" if count > 1 else "in total"
@@ -596,8 +619,8 @@ def work_summary(plan, platforms):
         work = (
             f"{len(clips)} Runway video clip{'s' if len(clips) != 1 else ''} ({footage} seconds of footage)"
         )
-    if plan.soundtrack:
-        work += f" and 1 instrumental music track ({plan.duration} seconds)"
+    # Every video has sound: the described music, or calm ambient music in a style not used recently.
+    work += f" and 1 {'instrumental' if plan.soundtrack else 'ambient'} music track ({plan.duration} seconds)"
     summary = f"{work} {each}."
     if count > 1:
         summary += f" {count} platforms are selected, and each gets its own generation."

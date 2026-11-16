@@ -43,7 +43,8 @@ def real_drive_media_error(db, assets):
     """Why media can't go to a real-media-only platform such as Pinterest, or "" when it can.
 
     Every asset and everything it was made from must be real (no AI generation or editing), and the
-    originals must have been imported from Google Drive. Resized platform copies count as the original.
+    originals must have been imported from Google Drive. Resized platform copies count as the original,
+    and the logo a video ends on is the company's own artwork, not Drive media.
     """
     from .asset_edit import ancestry
 
@@ -52,7 +53,8 @@ def real_drive_media_error(db, assets):
         return "Media this post was made from is missing from the asset library."
     if any(requires_ai_review(a) for a in sources):
         return "Pinterest only posts real photos and videos, and this media was made or edited with AI."
-    originals = [a for a in sources if "rendition" not in (a.tags or {})]
+    logos = {((a.tags or {}).get("end_card") or {}).get("asset_id") for a in sources}
+    originals = [a for a in sources if "rendition" not in (a.tags or {}) and a.id not in logos]
     if not originals or not all((a.tags or {}).get("google_drive_file_id") for a in originals):
         return (
             "Pinterest only posts photos and videos imported from Google Drive. Import them through "

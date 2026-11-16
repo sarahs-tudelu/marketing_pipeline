@@ -151,7 +151,7 @@ def test_writer_rejects_unapproved_or_conflicting_product_before_runway(
 
 
 def test_every_storyboard_clip_gets_its_own_cues_and_manual_retry_keeps_them(
-    db, settings, sheet, monkeypatch
+    db, settings, sheet, house_logo, monkeypatch
 ):
     job = job_for(
         db,

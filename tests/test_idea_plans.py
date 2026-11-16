@@ -161,7 +161,10 @@ def test_music_uses_full_length_text_to_music(settings):
 
 def test_logo_card_keeps_logo_visible_on_a_contrasting_background():
     dark = frames(logo_card(png((230, 110, 30, 255)), 720, 1280, 3))
-    assert len(dark) == 90 and dark[0].getpixel((360, 640))[0] > 240  # Fades in from the background.
+    # The video cuts straight to the logo: it's there from the first frame.
+    assert len(dark) == 90 and dark[0].getpixel((360, 640))[2] < 80 and dark[0].getpixel((5, 5)) == (255, 255, 255)
+    faded = frames(logo_card(png((230, 110, 30, 255)), 720, 1280, 3, fade=0.6))
+    assert faded[0].getpixel((360, 640))[0] > 240  # An optional fade-in starts from the background.
     assert dark[-1].getpixel((5, 5)) == (255, 255, 255) and dark[-1].getpixel((360, 640))[2] < 80
     light = frames(logo_card(png((255, 255, 255, 255)), 720, 1280, 3))
     assert sum(light[-1].getpixel((5, 5))) < 60 and sum(light[-1].getpixel((360, 640))) > 700
@@ -213,7 +216,7 @@ def test_review_flow_creates_the_reported_idea_as_a_video_with_music_and_logo(
         review = client.post("/forms/ideas/plan", data=idea)
         assert review.status_code == 200
         assert "A 30-second video: 4 clips, a 3-second logo end card and music, for Instagram." in review.text
-        assert f'<option value="{logo.id}">tudelu-logo.png</option>' in review.text
+        assert f'<input type="hidden" name="logo_id" value="{logo.id}"><p class="muted">Logo: tudelu-logo.png</p>' in review.text
         assert "Nothing is generated until you choose below" in review.text
         assert not db.scalars(select(MediaJob)).all()
 
@@ -230,9 +233,10 @@ def test_review_flow_creates_the_reported_idea_as_a_video_with_music_and_logo(
             "end_card": "on",
             "logo_id": logo.id,
         }
-        missing = client.post("/forms/ideas/create", data=idea | plan | {"logo_id": "", "mode": "once"})
-        assert missing.status_code == 400 and "Choose the logo" in missing.text
-        assert 'value="storefront at dusk"' in missing.text
+        # Too short for the logo ending: the error keeps every planned value on the page.
+        short = client.post("/forms/ideas/create", data=idea | plan | {"duration": "4", "mode": "once"})
+        assert short.status_code == 400 and "at least 5 seconds" in short.text
+        assert 'value="storefront at dusk"' in short.text
         created = client.post("/forms/ideas/create", data=idea | plan | {"mode": "once"})
         assert created.status_code == 200 and str(created.url).endswith("/admin/media-queue")
     job = db.scalar(select(MediaJob))
@@ -306,7 +310,7 @@ def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, l
         write_prompt(db, settings, job)
 
 
-def test_start_image_is_used_for_the_first_planned_clip_only(db, settings, assets, monkeypatch):
+def test_start_image_is_used_for_the_first_planned_clip_only(db, settings, assets, house_logo, monkeypatch):
     shots = [Shot(setting="backyard"), Shot(setting="walkway")]
     job = queue_jobs(
         db,
@@ -387,7 +391,7 @@ def test_idea_to_plan_to_progress_in_browser(db, settings, facts, logo, tmp_path
             await playwright.expect(plan.get_by_label("Music")).to_have_value(
                 "soft ambient music in the morning"
             )
-            await playwright.expect(plan.get_by_label("End with the Tudelu logo (3 seconds)")).to_be_checked()
+            await playwright.expect(plan.get_by_text("Every video ends with a cut to the Tudelu logo (3 seconds).")).to_be_visible()
             await playwright.expect(plan.locator('input[name="shot_setting"]')).to_have_count(5)
             await page.screenshot(path=str(capture / "idea-plan-desktop.png"), full_page=True)
             await plan.get_by_label("Format").select_option("image")

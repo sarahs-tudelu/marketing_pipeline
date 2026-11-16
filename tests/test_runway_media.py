@@ -114,7 +114,7 @@ def test_runway_auth_error_safe(settings):
 
 
 @pytest.mark.parametrize("operation", ["image", "video", "audio"])
-def test_fixture_generation_offline_platform_rendition_and_post(db, settings, operation, monkeypatch):
+def test_fixture_generation_offline_platform_rendition_and_post(db, settings, house_logo, operation, monkeypatch):
     def network_forbidden(*args, **kwargs):
         raise AssertionError("Fixture mode must not call Runway")
 
@@ -144,7 +144,7 @@ def test_fixture_generation_offline_platform_rendition_and_post(db, settings, op
         assert len(db.scalars(select(Post)).all()) == 1
 
 
-def test_video_with_generated_audio_is_muxed_and_originals_retained(db, settings):
+def test_video_with_generated_audio_is_muxed_and_originals_retained(db, settings, house_logo):
     job = queue_jobs(db, settings, brief_for(db, settings, operation="video", audio_prompt="Quiet ambience"))[
         0
     ]
@@ -259,7 +259,7 @@ def test_reference_validation_and_audio_not_directly_publishable(db, settings, a
     assert hashlib.sha256(storage(settings).read(audio.storage_key)).hexdigest() == audio.checksum
 
 
-def test_campaign_rotates_concepts_media_and_promotional_mix(db, settings, assets):
+def test_campaign_rotates_concepts_media_and_promotional_mix(db, settings, assets, house_logo):
     brief = brief_for(db, settings, operation="mixed", kind="mixed", reference_ids=[assets[0].id])
     campaign = MediaCampaign(name="Rotation", brief=brief.model_dump())
     db.add(campaign)
@@ -292,7 +292,7 @@ def test_campaign_waits_for_live_and_kill_switch_stops_jobs(db, settings):
     assert job.state == "queued"
 
 
-def test_live_campaign_creates_one_batch_and_blocks_backlog(db, settings, monkeypatch):
+def test_live_campaign_creates_one_batch_and_blocks_backlog(db, settings, house_logo, monkeypatch):
     from types import SimpleNamespace
 
     from social.adapters import ADAPTERS
