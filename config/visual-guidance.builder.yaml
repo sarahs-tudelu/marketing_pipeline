@@ -1,0 +1,287 @@
+version: tudelu-builder-visual-2026-11-16-v1
+reviewed_on: '2026-11-16'
+purpose: Product appearance and motion constraints adapted from the Tudelu AI Builder for social images
+  and videos. These guide depictions, not structural certification, availability, prices, installation
+  instructions or additional caption claims. Caption claims still require approved fact IDs. Only the
+  product profiles below are configured for generation.
+sources:
+- id: assistant_rules
+  repository: https://github.com/tudelu-system/tudelu-frontend
+  commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+  path: apps/canopy-designer/server/assistant/rules.js
+  sha256: b7c86b340fa3a57df503cabda5646edca7a012a2dd7d217fc157c278bbe58a9a
+- id: product_rules
+  repository: https://github.com/tudelu-system/tudelu-frontend
+  commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+  path: apps/canopy-designer/PRODUCT-RULES.md
+  sha256: 02ee58c86500a64d1ae81b0cf61736fc14ce58b8bc34b2e4721155aa1e50f578
+- id: builder_products
+  repository: https://github.com/tudelu-system/tudelu-frontend
+  commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+  path: apps/canopy-designer/skill-sources/tudelu-project-planning/references/builder-products.md
+  sha256: b25bed376a7262ba5a0f926fc43cc3bb16c4de67b2356ff9c3d63c3ac7d1e9f3
+- id: product_families
+  repository: https://github.com/tudelu-system/tudelu-frontend
+  commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+  path: apps/canopy-designer/skill-sources/tudelu-project-planning/references/product-product-families.md
+  sha256: 3e93406601d54725378b4753080e34aafeb93641ace352b703c0fe574ceb732b
+- id: product_scope
+  repository: https://github.com/tudelu-system/tudelu-frontend
+  commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+  path: apps/canopy-designer/skill-sources/tudelu-project-planning/references/product-scope-and-boundaries.md
+  sha256: 348e9752df6e6f9efce01924c51da23822a7c7753cc8f36cdf48efb86fb74f27
+global_rules:
+- id: builder.authority
+  instruction: Apply these product constraints before website examples, creative ideas, reference-image
+    descriptions or earlier AI generations. A generated picture never establishes a new product capability.
+    Use current company media for appearance only when it agrees with the matching product rules. Do not
+    invent unsupported configurations to satisfy an idea.
+  source_ids:
+  - assistant_rules
+  - product_families
+  - product_scope
+- id: builder.geometry
+  instruction: Fascia frames are straight aluminum extrusions with crisp mitered polygon corners and constant
+    cross-sections. Do not bend, stretch, warp or curve the fascia, float members, leave disconnected
+    ends, or overlap solid parts. Different straight-sided footprints are possible. A photorealistic depiction
+    is not a parts-fit or engineering approval.
+  source_ids:
+  - product_rules
+  - assistant_rules
+- id: builder.connections
+  instruction: Louvers connect physically to the fascia or flush to other frame-connected louvers; each
+    piece has a continuous connection to the frame. Freestanding describes the supports, not permission
+    for floating roof members. Native social depictions keep this connected default; detached experimental
+    concepts are outside this profile.
+  source_ids:
+  - assistant_rules
+  - product_families
+- id: builder.materials
+  instruction: Preserve aluminum profile proportions and mechanically assembled connections. Wood Look
+    is a finish on aluminum components, not timber construction. Use the selected finish; absent a selection
+    use Black. Standard color directions are Black, White, Silver, Brass, Wood Look and Charcoal Grey.
+    Brass is not an exact gold match. Color does not establish stock. Stainless hanger rods and fittings
+    remain stainless.
+  source_ids:
+  - assistant_rules
+  - product_families
+- id: builder.options
+  instruction: Add only supported, specifically selected accessories. Crown is sharp-edged stepped trim;
+    Tube is a square-tube detail; Channel is C-channel trim. Crown and Tube can take the one-inch LED
+    diffuser; Channel is not that lighting detail. Recessed downlights sit in insulated panels facing
+    downward, in the exposed lower panels of a double roof. Do not invent hanging fans, heaters or decorative
+    fixture mounts.
+  source_ids:
+  - assistant_rules
+  - builder_products
+  - product_families
+- id: builder.drainage
+  instruction: Supported drainage directions are scuppers, building tie-in outlets, through-post drainage
+    and separate Leader downspouts. Through-post drainage uses the post itself, not an invented internal
+    pipe. The modeled Leader is a straight tube over its outlet; do not invent elbows, mounts or discharge
+    connections. Roof-panel interlocks join side-by-side, never end-to-end. Do not invent panel end splices.
+  source_ids:
+  - assistant_rules
+  - product_families
+- id: builder.scope
+  instruction: Show plausible product geometry without implying verified spans, load capacity, anchoring,
+    weather ratings, safety certification or site approval. A custom scene is not evidence of a completed
+    customer project. Do not depict the coming-soon families (architectural elements, exterior cladding,
+    standalone gutters, fencing/screens and ceilings) as released products; they have no approved visual
+    profile in this version.
+  source_ids:
+  - assistant_rules
+  - product_families
+  - product_scope
+products:
+- product_id: partition_walls
+  name: Retractable Partition Walls
+  aliases:
+  - Retractable Partition Wall
+  - Partition Walls
+  - Partition Wall
+  - MUTE
+  - MUTE system
+  - 48STC MUTE system
+  prompt_cue: 'Tudelu MUTE: a seamless fabric/composite partition with a continuous unsegmented surface,
+    overhead housing and side guides, an uninterrupted floor, and vertical ceiling retraction. Preserve
+    this geometry throughout the shot.'
+  rules:
+  - id: mute.form
+    instruction: Depict the current MUTE ceiling-retracting fabric/composite partition, with a seamless
+      zero-panel surface. Include plausible overhead housing and side guides; exposed or recessed housing
+      depends on the reference configuration. No floor track. Never substitute glass sliding doors, rigid
+      stacking panels, accordion walls, folding screens, a roll-up metal shutter or a portable room divider.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: mute.motion
+    instruction: If movement is requested, the partition deploys downward from its overhead housing and
+      retracts upward to the ceiling. It does not slide sideways, stack at a jamb or pivot open. A static
+      scene may show it deployed or retracted; do not invent a visible motor mechanism, integral pass
+      door or emergency-opening behavior.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: mute.finish
+    instruction: Rigid frame parts are Black or White. Tudelu Composite fabric directions are Snow, Sand,
+      Stone and Stormcloud; default to a plain neutral surface. Paintability is not permission to invent
+      released wood-veneer or printed fabric collections. Do not imply guaranteed silence or room privacy
+      through visual annotations.
+    source_ids:
+    - assistant_rules
+    - product_families
+- product_id: canopies
+  name: Architectural Canopies
+  aliases:
+  - Architectural Canopy
+  - Canopies
+  - Canopy
+  - Tudelu Canopy
+  prompt_cue: Prefinished aluminum canopy, crisp straight mitered fascia, consistent extrusion sections
+    and physically seated joints. Maintain the selected roof and support arrangement, with believable
+    proportions and continuous connections.
+  rules:
+  - id: canopy.frame
+    instruction: Use modular prefinished aluminum, mechanically assembled, with 6-inch, 8-inch or 8-inch
+      Pro fascia proportions. Pro and heavy name the same family; use Pro in customer wording. Footprints
+      use straight miter-cut pieces, never curved fascia, timber beams or a generic fabric awning. Width
+      follows the wall; projection extends out from the wall.
+    source_ids:
+    - assistant_rules
+    - builder_products
+    - product_rules
+  - id: canopy.roof
+    instruction: The default canopy roof uses 2-inch insulated interlocking panels and a flat underside.
+      Glass, printed-finish and double-roof configurations require that selection; do not add them automatically.
+      Use real panel seams and continuous supported runs rather than invented end splices or a generic
+      shingle roof.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: canopy.supports
+    instruction: Supported arrangements include building attachment, suspended hanger rods, freestanding
+      aluminum posts and cantilever brackets, sometimes combined. Posts use 4x4 or 5x5 profiles. Preserve
+      the requested supported arrangement and use reference-specific connections. Do not float the canopy
+      or substitute rods for requested cantilevers. Support appearance does not establish structural adequacy.
+    source_ids:
+    - assistant_rules
+    - builder_products
+- product_id: pergolas
+  name: Pergolas
+  aliases:
+  - Pergola
+  - Tudelu Pergola
+  prompt_cue: Tudelu aluminum pergola with fixed stationary louvers physically connected within a straight
+    mitered fascia frame, consistent member sections and grounded aluminum supports. Preserve its support
+    and roof configuration while the camera moves.
+  rules:
+  - id: pergola.fixed_louvers
+    instruction: Fixed louvers only. Never show motorized, rotating, opening, closing or retractable roof
+      blades, despite the older motorized-roof website example. Fixed installation tilt is distinct from
+      operation. Typical modeled members use 1x3 or 2x3 aluminum profiles; horizontal, vertical, diagonal
+      and connected patterns are possible.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: pergola.roof
+    instruction: Start with an open louver roof. Add panels or glass only when explicitly selected. Open
+      louvers pass rain and must not be depicted as a watertight closed roof. Round and oval profiles
+      need confirmation and are outside the default native visual profile. All louver pieces remain physically
+      connected.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: pergola.supports
+    instruction: The native standard is a standalone post-supported system, using shared canopy components.
+      The preliminary default is a post about every 10 feet; a 20 by 12 foot example has six posts, not
+      an unlimited clear span. Building-attached variants need a matching reviewed configuration; do not
+      just attach a standalone frame to a facade. Avoid exact structural or site claims from a concept
+      image.
+    source_ids:
+    - assistant_rules
+    - builder_products
+- product_id: sunshades
+  name: Sunshades
+  aliases:
+  - Sunshade
+  - Window Sunshade
+  - Window Sunshades
+  - Tudelu Sunshade
+  prompt_cue: An open aluminum sunshade with fixed stationary shading louvers and continuous physical
+    connections, consistent profile sections and correctly seated supports. Its open louver surface casts
+    patterned shade while the geometry stays fixed.
+  rules:
+  - id: sunshade.fascia
+    instruction: Default to the canopy-platform fascia frame with fixed shading louvers and hanger rods,
+      or fitted cantilevers when selected. Keep its sunshade identity; do not replace it with a solid
+      waterproof canopy, fabric awning, motorized blind or detached floating louvers. Louvers connect
+      to the frame.
+    source_ids:
+    - product_families
+    - builder_products
+  - id: sunshade.ring
+    instruction: Only when explicitly selected, the fascia-less version is a closed ring of 2x3 louvers
+      with Flat L corners, a louver-only roof and posts. This variant has no hanger rods, panels, drainage,
+      lighting, add-ons or cantilevers. Never combine fascia-less geometry with those unsupported accessories.
+    source_ids:
+    - builder_products
+    - product_families
+- product_id: walkways
+  name: Walkways
+  aliases:
+  - Walkway
+  - Covered Walkway
+  - Covered Walkways
+  prompt_cue: A covered pedestrian walkway using the Tudelu prefinished aluminum canopy frame, straight
+    mitered fascia, consistent sections, a supported roof and connected supports. Keep the passage clearly
+    pedestrian in purpose and scale.
+  rules:
+  - id: walkway.assembly
+    instruction: Covered walkways use the canopy frame, roof and support components. Apply the canopy
+      material, straight-frame, roof-panel and support rules while retaining the pedestrian route purpose.
+      Do not substitute a generic tensile tunnel or invent a clear-span, drainage or all-weather performance
+      rating.
+    source_ids:
+    - builder_products
+    - product_families
+    - assistant_rules
+- product_id: drive_through
+  name: Drive-Through Systems
+  aliases:
+  - Drive-Through System
+  - Drive Through
+  - Drive-Through
+  - Drive Through Systems
+  - Drive-Through Canopy
+  prompt_cue: A Tudelu prefinished aluminum canopy shelter over a vehicle circulation lane, straight mitered
+    fascia, consistent profile sections and connected roof supports. Preserve a clear lane and the selected
+    canopy geometry.
+  rules:
+  - id: drive_through.assembly
+    instruction: Use the shared canopy frame, roof and measured connections, applying the canopy material,
+      frame, roof and support rules. Depict a moving-traffic lane rather than parked bays. Keep columns
+      out of the depicted lane. Do not invent traffic equipment, clearance certifications, code approval
+      or throughput claims.
+    source_ids:
+    - builder_products
+    - product_families
+    - assistant_rules
+- product_id: carports
+  name: Carports
+  aliases:
+  - Carport
+  - Carport Canopy
+  - Tudelu Carport
+  prompt_cue: A Tudelu aluminum canopy shelter for parked vehicle bays, with straight mitered fascia,
+    consistent extrusion sections, a supported canopy roof and connected aluminum supports. Keep parked-bay
+    purpose and believable vehicle scale.
+  rules:
+  - id: carport.assembly
+    instruction: 'Carports use the canopy frame, roof and supports: apply the canopy material, straight-frame,
+      roof and support rules while retaining parked-bay purpose. Do not invent a solar-panel roof, EV
+      charger, security system, structural capacity or guarantee of protection from every weather hazard.'
+    source_ids:
+    - builder_products
+    - product_families
+    - assistant_rules

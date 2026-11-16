@@ -6,7 +6,7 @@ from copy import deepcopy
 from sqlalchemy import select
 
 from .db import uid
-from .lifecycle import lock_post
+from .lifecycle import lock_post, transition
 from .models import Asset, CheckResult, MediaJob
 from .prompting import PROMPT_LIMIT, utf16_trim
 from .recovery import MUSIC_PROMPT_LIMIT
@@ -162,10 +162,12 @@ def parts(db, job, vision, audio):
 
 def clip_options(db, post):
     """What the post page offers for redoing part of a held post's media, or None when it does not apply."""
-    if post.status != "held":
+    if post.status not in {"held", "awaiting_review"}:
         return None
     pending = replacement(db, post)
     job = source_job(db, post)
+    if job and job.brief.get("as_uploaded") and not pending:
+        return None  # The admin's own media; there is nothing generated to make again.
     media = [a for i in post.asset_ids if (a := db.get(Asset, i))]
     if not job and not pending and not any(a.source in GENERATED for a in media):
         return None
@@ -191,8 +193,8 @@ def clip_options(db, post):
 def replace_part(db, post, key, prompt, actor):
     """Queue a media job that makes one part again; the held post is replaced when the new media is ready."""
     lock_post(db, post)
-    if post.status != "held":
-        raise ValueError("Only a held post can have part of its media made again")
+    if post.status not in {"held", "awaiting_review"}:
+        raise ValueError("Stop scheduled delivery before changing the media")
     pending = replacement(db, post)
     if pending:
         db.rollback()
@@ -269,5 +271,9 @@ def replace_part(db, post, key, prompt, actor):
         source_asset_ids=sources,
     )
     db.add(created)
+    post.human_review_required, post.human_approved_digest = True, ""
+    post.approved_digest = ""
+    if post.status == "awaiting_review":
+        transition(db, post, "held", "Media changes requested; waiting for replacement", actor)
     db.commit()
     return created

@@ -52,19 +52,21 @@ def test_delete_hides_draft_and_retains_assets_and_audit(db, settings, assets, v
     assert history[-1].actor
 
 
-@pytest.mark.parametrize("status", ["generated", "held", "approved", "scheduled", "publishing", "published"])
-def test_only_drafts_can_be_deleted(db, settings, assets, status):
+@pytest.mark.parametrize("status", ["generated", "held", "awaiting_review", "approved", "scheduled", "publishing", "published"])
+def test_only_unpublished_posts_can_be_deleted(db, settings, assets, status):
     post = new_draft(db, settings, assets)
     post.status = status
     db.commit()
     with TestClient(create_app(settings)) as client:
         csrf = client.get("/api/session").json()["csrf"]
         response = client.post(f"/api/posts/{post.id}/delete", headers={"x-csrf-token": csrf})
-        assert response.status_code == 409
-        assert "Only draft posts" in response.text
-        assert "Delete draft" not in client.get(f"/posts/{post.id}").text
+        allowed = status not in {"publishing", "published"}
+        assert response.status_code == (200 if allowed else 400)
+        if not allowed:
+            assert "started delivery" in response.text
+            assert "Delete draft" not in client.get(f"/posts/{post.id}").text
     db.refresh(post)
-    assert post.status == status
+    assert post.status == ("deleted" if allowed else status)
 
 
 def test_stale_generator_cannot_revive_deleted_draft(db, settings, assets):

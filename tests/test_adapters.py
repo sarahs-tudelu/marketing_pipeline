@@ -35,7 +35,7 @@ def prepared(db, settings, assets, platform, video=None, ai=False):
             "fixture-prompt",
         )
     facts = load_facts(db, settings.facts_path)
-    post = draft(db, platform, "adapter-test", [a.id for a in assets], facts.id, product="demo")
+    post = draft(db, platform, "adapter-test", [a.id for a in assets], facts.id, product="demo", human_review_required=False)
     generate(db, settings, post)
     run_gate(db, settings, post)
     schedule(db, settings, post)

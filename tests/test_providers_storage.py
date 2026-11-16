@@ -138,7 +138,9 @@ def test_vision_identifies_stills_and_video_samples_without_clearing_holds(db, s
         content = payload["input"][0]["content"]
         prompt, serialized_context = content[0]["text"].split("Context: ", 1)
         sent_context = json.loads(serialized_context)
-        assert sent_context["assets"] == context["assets"]
+        assert [a["asset_id"] for a in sent_context["assets"]] == [a.id for a in sources]
+        assert all(a["tags"] == {} for a in sent_context["assets"])
+        assert sent_context["review_scope"] == "media_only"
         assert sent_context["execution_mode"] == "dry_run"
         assert sent_context["public_publication"] is False
         media_inputs = sent_context["media_inputs"]

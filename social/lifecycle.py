@@ -6,11 +6,12 @@ from .models import Post, Transition
 
 ALLOWED = {
     "draft": {"generated", "held", "deleted"},
-    "generated": {"checked", "held"},
-    "checked": {"approved", "held"},
-    "held": {"draft", "generated", "failed"},
-    "approved": {"scheduled", "held"},
-    "scheduled": {"publishing", "held"},
+    "generated": {"checked", "held", "deleted"},
+    "checked": {"approved", "awaiting_review", "held"},
+    "held": {"draft", "generated", "failed", "deleted"},
+    "awaiting_review": {"draft", "generated", "held", "deleted"},
+    "approved": {"scheduled", "awaiting_review", "held", "deleted"},
+    "scheduled": {"publishing", "awaiting_review", "held", "deleted"},
     "publishing": {"published", "failed", "awaiting_manual", "held"},
     "awaiting_manual": {"published", "failed"},
     "failed": set(),

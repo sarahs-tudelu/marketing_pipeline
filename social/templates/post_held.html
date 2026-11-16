@@ -19,6 +19,6 @@
     {% endif %}
     {% for a in held.assets %}<a class="button" href="/admin/assets/{{ a }}/edit">Edit media details</a>{% endfor %}
   </div>
-  <small class="muted">{{ 'Recheck & approve runs the checks again without changing anything.' if post.caption else 'This post has no caption yet, so it can\'t be rechecked until one is written.' }}</small>
+  <small class="muted">{{ 'Run automated checks rechecks this content without changing it. User-created posts then wait for human approval.' if post.caption else 'This post has no caption yet, so it can\'t be rechecked until one is written.' }}</small>
 </section>
 {% endif %}

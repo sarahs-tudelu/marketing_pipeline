@@ -112,7 +112,7 @@ def test_uploaded_reference_to_generated_media_and_caption(db, settings, monkeyp
         checked = client.post(f"/forms/posts/{post_id}/check", data={"csrf": token})
         assert checked.status_code == 200, checked.text
         db.refresh(post)
-        assert post.status == "approved"
+        assert post.status == "awaiting_review"
         assert post.remote_id == "" and post.published_at is None
 
 

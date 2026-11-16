@@ -46,7 +46,7 @@ def test_switch_off_between_worker_stages_prevents_further_progress(db, settings
     from social.facts import load_facts
 
     facts = load_facts(db, settings.facts_path)
-    post = draft(db, "linkedin", "Automatic toggle", [assets[0].id], facts.id, product="demo")
+    post = draft(db, "linkedin", "Automatic toggle", [assets[0].id], facts.id, product="demo", human_review_required=False)
     if stage == "checks":
         generate(db, settings, post)
     original = generate if stage == "caption" else run_gate

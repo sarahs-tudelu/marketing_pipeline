@@ -18,7 +18,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `GOOGLE_APPLICATION_CREDENTIALS` | `(unset)` | Optional ADC JSON / Workload Identity Federation configuration path. Docker mounts it read-only. |
 | `APP_BASE_URL` | `(unset)` | Create later: https://social.[company-domain] (no trailing slash). |
 | `MEDIA_BASE_URL` | `(unset)` | Create later: https://media.[company-domain] (public, read-only media origin). |
-| `LIVE_PLATFORMS` | `(unset)` | Explicit live opt-in: comma-separated linkedin,instagram,facebook,x,tiktok; empty = all dry. |
+| `LIVE_PLATFORMS` | `(unset)` | Explicit live opt-in: comma-separated linkedin,instagram,facebook,x,tiktok,pinterest; empty = all dry. |
 | `PROFILES_PATH` | `config/platforms.yaml` | Versioned platform profiles and initial facts (admin saves immutable DB versions). |
 | `FACTS_PATH` | `config/facts.seed.yaml` | Related configuration in the group above. |
 | `STORAGE_BACKEND` | `"local"` | local or s3. Original bytes, including C2PA/IPTC, are kept unchanged. |
@@ -58,6 +58,9 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `TIKTOK_VERIFIED_URL_PREFIX` | `(unset)` | Optional verified HTTPS domain/prefix; required when transfer=url. |
 | `TIKTOK_TRANSFER` | `"file"` | file or url. File upload works without verified public media prefix. |
 | `TIKTOK_MANUAL_ASSIGNEE` | `"Tudelu social owner"` | Named internal owner mentioned in the completion alert. |
+| `PINTEREST_CLIENT_ID` | `(unset)` | Pinterest app ID for OAuth. Pinterest posts only real photos and videos imported from Google Drive. Accepts a literal value or a gsm:// reference with SECRET_BACKEND=google. |
+| `PINTEREST_CLIENT_SECRET` | `(unset secret)` | Related configuration in the group above. |
+| `PINTEREST_BOARD_ID` | `(unset)` | Numeric ID of the board Pins are saved to. Connecting checks that the connected account owns it. |
 | `AI_MODE` | `"fixture"` | fixture = offline deterministic demo; live = actual AI calls with configured keys. |
 | `CAPTION_PROVIDER` | `"anthropic"` | Provider choices requested by Tudelu. These interfaces can be replaced independently. |
 | `REVIEW_PROVIDER` | `"anthropic"` | Related configuration in the group above. |
@@ -113,7 +116,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 
 ## Platform profile fields
 
-`PROFILES_PATH` is YAML keyed by `linkedin`, `instagram`, `facebook`, `x`, `tiktok`. The following defaults apply unless a platform overrides them. Required fields have no default. Caps, caption length, asset counts and supported media envelopes are validated against conservative code ceilings; lower limits are configurable. Expanding the supported format envelope requires another official-documentation review.
+`PROFILES_PATH` is YAML keyed by `linkedin`, `instagram`, `facebook`, `x`, `tiktok`, `pinterest`. The following defaults apply unless a platform overrides them. Required fields have no default. Caps, caption length, asset counts and supported media envelopes are validated against conservative code ceilings; lower limits are configurable. Expanding the supported format envelope requires another official-documentation review.
 
 | Field | Default |
 |---|---|
@@ -151,10 +154,10 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 
 Windows are same-day local clock pairs such as `[[09:00, 12:00], [14:00, 17:00]]`; quote time values in YAML. Overnight windows must be split into same-day ranges. Use IANA time zones. Targets are calendar-day preferences; hard caps use rolling 24-hour windows. Promotional mix uses a seven-day trailing history rounded up for small samples.
 
-Default hard caps: LinkedIn 3, Instagram 5, Facebook 3, X 3, TikTok 3. All targets are 1/day. Platform YAML overrides include Instagram JPEG-only images, TikTok 360-pixel minimum width/height, image-only carousel counts, and distinct platform lead-ins. Native account-specific limits may be lower and always take precedence.
+Default hard caps: LinkedIn 3, Instagram 5, Facebook 3, X 3, TikTok 3, Pinterest 3. All targets are 1/day. Platform YAML overrides include Instagram JPEG-only images, TikTok 360-pixel minimum width/height, image-only carousel counts, and distinct platform lead-ins. Native account-specific limits may be lower and always take precedence.
 
 ## Provider gateway and credentials
 
 Claude uses official Messages with adaptive thinking and `output_config.effort=xhigh`. Runway uses official asynchronous image/video/audio tasks. OpenAI provides Responses vision, Chat Completions audio listening and embeddings; legacy image generation remains optional. `OPENAI_AUDIO_REVIEW_MODEL` defaults to `gpt-audio-1.5` and uses `OPENAI_API_KEY`. Claude independently reviews the complete audio transcript against active approved facts. `AI_MODE=fixture` is offline; live publication additionally requires live AI checks and semantic embeddings. Media Studio workflows and job recovery are in `docs/runway.md`; connection steps are in `README.md`.
 
-Meta credentials are automatically validated/imported from the three configured environment values at web/worker startup, or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn and TikTok tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.
+Meta credentials are automatically validated/imported from the three configured environment values at web/worker startup, or entered through Connections; all persisted tokens and live response checkpoints use Fernet encryption. X, LinkedIn, TikTok and Pinterest tokens come from OAuth callbacks. Do not place access/refresh tokens in the YAML profiles or facts files. Secret rotation accepts comma-separated Fernet keys, newest first; run `tudelu rotate-tokens` before removing an old key.

@@ -6,6 +6,7 @@ import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from .models import FactSheet
+from .product_rules import VisualGuidance
 from .security import digest
 
 
@@ -42,17 +43,25 @@ class Facts(BaseModel):
     canonical_urls: list[str] = []
     hashtags: dict[str, list[str]]
     facts: list[Fact]
+    visual_guidance: VisualGuidance | None = None
 
     @model_validator(mode="after")
     def unique_ids(self):
         if len({f.id for f in self.facts}) != len(self.facts):
             raise ValueError("Fact IDs must be unique")
+        if self.visual_guidance:
+            product_ids = {p.get("id") for p in self.products}
+            if any(p.product_id not in product_ids for p in self.visual_guidance.products):
+                raise ValueError("Visual profiles must refer to products in the facts sheet")
         return self
 
 
 def save_facts(db, document):
     facts = Facts.model_validate(document)
     doc = facts.model_dump(mode="json")
+    if facts.visual_guidance is None:
+        # Existing immutable versions keep their exact content hashes.
+        doc.pop("visual_guidance")
     key = digest(doc)
     existing = db.get(FactSheet, key)
     if existing:

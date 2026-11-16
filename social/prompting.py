@@ -22,6 +22,7 @@ from .config import profiles
 from .db import now
 from .facts import Facts, active
 from .models import Asset, FactSheet, MediaJob, Post
+from .product_rules import VisualGuidance, constrain_prompt, context_for, profile_for
 from .provider_errors import ProviderError
 
 # promptText limit for gen4_image, gen4.5 and aleph2, in UTF-16 code units (Runway OpenAPI).
@@ -51,6 +52,12 @@ WRITER_INSTRUCTIONS = (
     "rules.facts, uploaded_media or selected_references. Choose the system that best fits admin_idea; if "
     "product is not 'company', depict that product. If the idea cannot be shown with a system Tudelu offers "
     "in those sources, return empty system and prompt and explain in problem. "
+    "When rules.visual_guidance is present, its global_rules and the matching product profile are authoritative "
+    "for geometry, materials, supports and operation. Choose only a system in its products. These Builder rules "
+    "override conflicting website examples, admin ideas and generated or uploaded references. Explain an "
+    "unsupported configuration in problem instead of inventing it. Use references for finish and composition "
+    "only within these rules. Include the physical product cues in every shot; fixed louvers remain stationary "
+    "in video. The camera may move. Never turn installation-angle options into operable blades. "
     "Ground the system's appearance in uploaded_media and selected_references summaries first (they observe "
     "real media), then in the website image descriptions. Use previous_generations only to keep a consistent "
     "look and to choose a different composition, viewpoint and setting from them; they may contain mistakes, "
@@ -147,6 +154,7 @@ def gather_sources(db, settings, job):
         "brand_voice": facts.brand_voice,
         "banned_phrases": facts.banned_phrases,
         "products": facts.products,
+        "visual_guidance": context_for(facts.visual_guidance),
         "facts": [f.text for f in facts.facts if active(f, at) and f.product in scope][:20],
     }
 
@@ -252,6 +260,7 @@ def gather_sources(db, settings, job):
     }
     provenance = {
         "facts_version": facts.version,
+        "visual_guidance": context_for(facts.visual_guidance),
         "website": {k: website.get(k) for k in ("url", "sha256", "fetched_at", "demo_only") if k in website}
         or None,
         "uploaded_asset_ids": [u["asset_id"] for u in uploaded],
@@ -329,6 +338,9 @@ def _fixture_prompt(context):
 
 def _checked_system(name, context):
     name = re.sub(r"\s+", " ", name).strip()
+    if context["rules"].get("visual_guidance"):
+        profile_for(VisualGuidance.model_validate(context["rules"]["visual_guidance"]), name)
+        return name
     if not grounded(name, grounding_text(context)):
         raise ValueError(
             f"The prompt writer chose '{name[:80]}', which is not named on tudelu.com, in the approved "
@@ -340,6 +352,8 @@ def _checked_system(name, context):
 def write_prompt(db, settings, job):
     """Return brief fields for the composed Runway prompt(s) and their provenance."""
     context, provenance = gather_sources(db, settings, job)
+    guidance = (VisualGuidance.model_validate(context["rules"]["visual_guidance"])
+                if context["rules"].get("visual_guidance") else None)
     storyboard = storyboard_segments(job.brief)
     if job.brief["execution_mode"] == "fixture":
         written, writer = _fixture_prompt(context), "fixture/deterministic"
@@ -356,6 +370,8 @@ def write_prompt(db, settings, job):
                 category="response",
             ) from None
         writer = settings.anthropic_model
+        if guidance and written.problem.strip():
+            raise ValueError("The idea conflicts with the Builder product rules. " + written.problem.strip()[:600])
         if not written.system.strip() or not written.prompt.strip():
             raise ValueError(
                 "This idea could not be matched to a Tudelu system found on tudelu.com, in the approved "
@@ -376,7 +392,7 @@ def write_prompt(db, settings, job):
             for shot in written.shots:
                 _checked_system(shot.system, context)
     result = {
-        "generation_prompt": utf16_trim(written.prompt),
+        "generation_prompt": constrain_prompt(written.prompt, profile_for(guidance, written.system)),
         "depicted_system": written.system.strip(),
         "prompt_writer": {
             "writer": writer,
@@ -390,7 +406,7 @@ def write_prompt(db, settings, job):
         clips = [
             segment
             | {
-                "prompt": utf16_trim(shot.prompt),
+                "prompt": constrain_prompt(shot.prompt, profile_for(guidance, shot.system)),
                 "system": " ".join(shot.system.split()),
                 "seed": (job.brief["seed"] + segment["index"]) % (2**32),
             }

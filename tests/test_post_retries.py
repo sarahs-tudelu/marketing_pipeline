@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 
 from social.app import create_app
 from social.db import now
+from social.facts import content_digest
+from social.human_review import approve
 from social.lifecycle import PostBusy
-from social.models import Account, Control, MediaJob, Post, PostRetry, RequestRecord, Transition
+from social.models import Account, Asset, Control, MediaJob, Post, PostRetry, RequestRecord, Transition
 from social.pipeline import publish_due
 from social.retries import block_reason, retry_post
 from social.scheduler import schedule
@@ -29,6 +31,12 @@ def failed(db, post, *, step="limit", state="rejected", irreversible=False):
     db.add(record)
     db.commit()
     return record
+
+
+def approve_retry(db, settings, post):
+    assert post.status == "awaiting_review"
+    approve(db, settings, post, "reviewer", content_digest(post, [db.get(Asset, i) for i in post.asset_ids]))
+    schedule(db, settings, post)
 
 
 def test_retry_reuses_content_preserves_audit_and_completes_with_automation_off(db, settings, post, monkeypatch):
@@ -58,6 +66,7 @@ def test_retry_reuses_content_preserves_audit_and_completes_with_automation_off(
     assert job.post_id == retry.id
     advance_queue(db, settings)
     db.refresh(retry)
+    approve_retry(db, settings, retry)
     assert retry.status == "scheduled" and retry.dry_run
     publish_due(db, settings, at=retry.scheduled_at)
     assert retry.status == "published" and retry.dry_run
@@ -133,6 +142,7 @@ def test_retry_preserves_simulation_when_platform_is_now_live(db, settings, post
     retry = retry_post(db, settings, post, "admin")
     monkeypatch.setattr("social.adapters.adapter", lambda *a, **kw: SimpleNamespace(dry=False))
     advance_queue(db, settings)
+    approve_retry(db, settings, retry)
     assert retry.status == "scheduled" and retry.dry_run
 
 
@@ -152,6 +162,7 @@ def test_live_retry_requires_same_connected_account_at_creation_and_scheduling(d
     retry = retry_post(db, settings, post, "admin")
     assert not retry.dry_run and retry.account_id == "original-account"
     retry.status = "approved"
+    retry.human_approved_digest = content_digest(retry, [db.get(Asset, i) for i in retry.asset_ids])
     db.commit()
     selected.dry = True
     with pytest.raises(ValueError, match="original live account"):
@@ -209,7 +220,7 @@ def test_retry_button_opens_new_attempt_and_shows_progress(db, settings, post, t
             advance_queue(db, settings)
             # Route interception follows the redirect internally; use its resulting canonical URL.
             await page.goto(f"http://studio.test/posts/{retry_id}")
-            await playwright.expect(page.locator(".section-head .status")).to_have_text("scheduled")
+            await playwright.expect(page.locator(".section-head .status")).to_have_text("awaiting review")
             await playwright.expect(page.locator("#post-retry .loading-spinner")).to_have_count(0)
             await page.goto(f"http://studio.test/posts/{post.id}")
             await playwright.expect(page.get_by_role("link", name="Open retry", exact=True)).to_have_attribute("href", f"/posts/{retry_id}")

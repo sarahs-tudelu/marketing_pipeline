@@ -1,0 +1,1655 @@
+version: tudelu-2026-11-16-builder-v1
+demo_only: false
+products:
+- id: partition_walls
+  name: Retractable Partition Walls
+  status: presented_on_site
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  - https://tudelu.com/partition-walls
+  scope_notes: Product family has a public page; not proof of stock or suitability.
+  claim_provenance:
+    W01:
+      source_claim_id: W01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/systems
+      limits: Does not mean installation needs no ceiling space, side guides, or structural work.
+      content_role: descriptive
+    W02:
+      source_claim_id: W02
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: Do not imply that every installation conceals the housing or all components.
+      content_role: descriptive
+    W03:
+      source_claim_id: W03
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: Do not promise an exact color match, any coating's compatibility, or an unchanged warranty.
+      content_role: descriptive
+    W04:
+      source_claim_id: W04
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: Maximum guidance is not a guarantee for every width-height combination or site.
+      content_role: descriptive
+    W05:
+      source_claim_id: W05
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: Do not apply the 80 ft guidance to this mounting option.
+      content_role: descriptive
+    E01:
+      source_claim_id: E01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: Educational planning only; not installation instructions or proof of suitability.
+      content_role: educational
+    E02:
+      source_claim_id: E02
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: No promise of silence, confidentiality, or a measured improvement without applicable evidence.
+      content_role: educational
+- id: canopies
+  name: Architectural Canopies
+  status: presented_on_site
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  - https://tudelu.com/canopies
+  scope_notes: Product family has a public page; not proof of stock or suitability.
+  claim_provenance:
+    C01:
+      source_claim_id: C01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/canopies
+      limits: Does not substantiate lower cost, faster delivery, universal installation methods, or lifetime
+        durability.
+      content_role: descriptive
+    C02:
+      source_claim_id: C02
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/canopies
+      limits: Do not imply that every roof, finish, accessory, or lighting package is standard.
+      content_role: descriptive
+    R02:
+      source_claim_id: R02
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/canopies/resources
+      limits: Do not promise instant, free, permit-ready, or universally downloadable engineering documents.
+      content_role: descriptive
+    E03:
+      source_claim_id: E03
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/canopies/resources
+      limits: Do not apply another product's drawings or present a concept as construction documentation.
+      content_role: educational
+- id: pergolas
+  name: Pergolas
+  status: presented_on_site
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  - https://tudelu.com/pergolas
+  scope_notes: Product family has a public page; not proof of stock or suitability.
+  claim_provenance:
+    P01:
+      source_claim_id: P01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/pergolas
+      limits: Do not describe it as motorized, adjustable, opening, or retractable.
+      content_role: descriptive
+    P02:
+      source_claim_id: P02
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/pergolas
+      limits: Do not imply rainproof seating or year-round weather protection from an open-louver image.
+      content_role: descriptive
+    P03:
+      source_claim_id: P03
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/pergolas
+      limits: Options shown are not proof of inclusion in a particular quote.
+      content_role: descriptive
+    E04:
+      source_claim_id: E04
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/pergolas
+      limits: Do not promise all-day shade or a specific thermal result from orientation alone.
+      content_role: educational
+    E05:
+      source_claim_id: E05
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/pergolas
+      limits: No generic load rating, storm certification, or location-independent structural promise.
+      content_role: educational
+- id: sunshades
+  name: Sunshades
+  status: presented_on_site
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  - https://tudelu.com/sunshades
+  scope_notes: Product family has a public page; not proof of stock or suitability.
+  claim_provenance:
+    S01:
+      source_claim_id: S01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/sunshades
+      limits: No automatic guarantee of waterproofing, temperature reduction, UV protection, or energy
+        savings.
+      content_role: descriptive
+- id: walkways
+  name: Walkways
+  status: presented_on_site
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  - https://tudelu.com/walkways
+  scope_notes: Product family has a public page; not proof of stock or suitability.
+  claim_provenance:
+    K01:
+      source_claim_id: K01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/walkways
+      limits: Coverage intent is not a promise that users stay dry in every weather condition.
+      content_role: descriptive
+- id: drive_through
+  name: Drive-Through Systems
+  status: presented_on_site
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  - https://tudelu.com/drive-through-systems
+  scope_notes: Product family has a public page; not proof of stock or suitability.
+  claim_provenance:
+    D01:
+      source_claim_id: D01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/drive-through-systems
+      limits: Do not claim improved throughput, shorter waits, fewer accidents, or increased sales.
+      content_role: descriptive
+- id: carports
+  name: Carports
+  status: presented_on_site
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  - https://tudelu.com/carports
+  scope_notes: Product family has a public page; not proof of stock or suitability.
+  claim_provenance:
+    V01:
+      source_claim_id: V01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/carports
+      limits: Do not infer solar panels, EV charging, security, or protection from every weather hazard.
+      content_role: descriptive
+- id: architectural_elements
+  name: Architectural Elements
+  status: coming_soon
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  scope_notes: Directory marks the family as forthcoming; no launch date established.
+  claim_provenance:
+    availability.architectural_elements:
+      source_claim_id: A01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/systems
+      limits: Mention only as forthcoming, with no order, stock, installation, launch-date, or performance
+        claim. Route interest to Contact. A public product page or a navigation link does not establish
+        release status.
+- id: exterior_paneling
+  name: Exterior Paneling & Cladding
+  status: coming_soon
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  scope_notes: Directory marks the family as forthcoming; no launch date established.
+  claim_provenance:
+    availability.exterior_paneling:
+      source_claim_id: A01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/systems
+      limits: Mention only as forthcoming, with no order, stock, installation, launch-date, or performance
+        claim. Route interest to Contact. A public product page or a navigation link does not establish
+        release status.
+- id: gutters
+  name: Gutter Systems
+  status: coming_soon
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  scope_notes: Directory marks the family as forthcoming; no launch date established.
+  claim_provenance:
+    availability.gutters:
+      source_claim_id: A01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/systems
+      limits: Mention only as forthcoming, with no order, stock, installation, launch-date, or performance
+        claim. Route interest to Contact. A public product page or a navigation link does not establish
+        release status.
+- id: fencing
+  name: Fencing & Architectural Screens
+  status: coming_soon
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  scope_notes: Directory marks the family as forthcoming; no launch date established.
+  claim_provenance:
+    availability.fencing:
+      source_claim_id: A01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/systems
+      limits: Mention only as forthcoming, with no order, stock, installation, launch-date, or performance
+        claim. Route interest to Contact. A public product page or a navigation link does not establish
+        release status.
+- id: ceilings
+  name: Ceiling Systems
+  status: coming_soon
+  reviewed_on: '2026-11-04'
+  source_urls:
+  - https://tudelu.com/systems
+  scope_notes: Directory marks the family as forthcoming; no launch date established.
+  claim_provenance:
+    availability.ceilings:
+      source_claim_id: A01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/systems
+      limits: Mention only as forthcoming, with no order, stock, installation, launch-date, or performance
+        claim. Route interest to Contact. A public product page or a navigation link does not establish
+        release status.
+- id: company
+  name: Tudelü / General Planning
+  claim_provenance:
+    B01:
+      source_claim_id: B01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/about
+      limits: Describe the product focus; do not invent company history, scale, or credentials.
+      content_role: descriptive
+    R01:
+      source_claim_id: R01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/resources
+      limits: A file-request link is not an immediate download or proof that a particular format is available.
+      content_role: descriptive
+    R03:
+      source_claim_id: R03
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/resources
+      limits: Do not invent prices, discount percentages, or an instant custom quote.
+      content_role: descriptive
+    R04:
+      source_claim_id: R04
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/for-contractors
+      limits: No promise of nationwide installation, included labor, a fixed crew size, or a completion
+        date.
+      content_role: descriptive
+    E06:
+      source_claim_id: E06
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/for-owners
+      limits: A budget or schedule goal is a request, not a Tudelü commitment.
+      content_role: educational
+    E07:
+      source_claim_id: E07
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/for-architects
+      limits: A partition detail does not establish a canopy design.
+      content_role: educational
+    E08:
+      source_claim_id: E08
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/for-contractors
+      limits: Do not turn planning considerations into DIY instructions or guaranteed project outcomes.
+      content_role: educational
+  policy_metadata:
+    reviewed_on: '2026-11-04'
+    evidence_level: first_party_website_observation
+    independent_testing_performed: false
+    company_approval_record: null
+    policy_origin: Factual entries are based on the cited pages. Wording restrictions, freshness intervals,
+      and pipeline rules are editorial controls created for this request; they are not represented as
+      existing Tudelü company policies.
+    generation_authority: Only facts[].text and facts[].variants are caption allowlists.
+    unestablished_facts:
+      policy: These are not established in this file. Do not fill gaps with guesses or imply that a missing
+        fact is false. Add evidence before using them in either content mode.
+      categories:
+      - Founding year, founder biography, headquarters, factory location, or country of origin.
+      - Made-in-USA claims, employee counts, installation counts, awards, or named clients.
+      - Geographic sales coverage, local installers, distributor exclusivity, or service response times.
+      - Fire ratings, accessibility compliance, code approvals, certifications, or structural capacities.
+      - Sustainability credentials, recycled content, carbon savings, or environmental superiority.
+      - Productivity, health, learning, revenue, property-value, ROI, or energy-bill improvements.
+      - Sales offers, coupons, financing, free consultations, free samples, or limited stock.
+      - Exact operating speed, product lifespan, sound reduction, or weather-protection percentage.
+    restricted_claims_not_approved_copy:
+      defaults:
+        status: withheld_pending_evidence
+        eligible_for_generation: false
+        release_rule: A reviewer must examine the specified evidence and add narrowly scoped wording to
+          claim_registry. A disclaimer, a reviewer click, or 'may/can/up to' alone cannot make an unsupported
+          claim eligible.
+      entries:
+        acoustic_rating:
+          source_ids:
+          - walls
+          - systems
+          observation: The site lists an STC 48 option and an 8-inch double-wall MUTE construction.
+          evidence_needed: Applicable acoustic report, assembly identification, test conditions, and approved
+            wording.
+          prohibit_inferences:
+          - Complete silence
+          - 48 dB reduction in every room
+          - Guaranteed speech privacy
+        canopy_insulation:
+          source_ids:
+          - canopies
+          observation: An insulation range is published as R-12.5 to 26.
+          evidence_needed: Panel specification, thickness, units, test basis, and configuration applicability.
+          prohibit_inferences:
+          - Guaranteed temperature decrease
+          - Energy savings
+          - Whole-building R-value
+        pergola_lighting_spec:
+          source_ids:
+          - pergolas
+          observation: The page describes three lighting layouts with 3000K LEDs.
+          evidence_needed: Current component specification and the lighting included in the selected configuration.
+          prohibit_inferences:
+          - All packages include lighting
+          - Universal dimming or smart-home compatibility
+        shipping_speed:
+          source_ids:
+          - canopies
+          observation: The canopy page makes a broad rapid-shipment claim.
+          evidence_needed: Current product-specific production and shipment confirmation with exclusions
+            and timing basis.
+          prohibit_inferences:
+          - Delivery within days
+          - Guaranteed arrival
+          - No lead time
+        comparative_price:
+          source_ids:
+          - canopies
+          observation: Canopy marketing makes lower-price comparisons.
+          evidence_needed: Dated like-for-like comparison covering design, scope, freight, installation,
+            and market.
+          prohibit_inferences:
+          - Cheapest option
+          - Lower total installed cost for every project
+          - Guaranteed savings
+        lifetime_and_maintenance:
+          source_ids:
+          - canopies
+          observation: Durability and cleaning claims are stated in absolute terms.
+          evidence_needed: Applicable warranty, care instructions, exposure limits, and substantiated
+            service-life evidence.
+          prohibit_inferences:
+          - Lifetime performance
+          - No cleaning
+          - No corrosion
+          - No maintenance
+          - Permanent finish
+        patents_and_exclusivity:
+          source_ids:
+          - canopies
+          observation: The canopy page asserts patent protection and uniqueness.
+          evidence_needed: Patent identifiers, jurisdiction, status, ownership, and the exact protected
+            scope.
+          prohibit_inferences:
+          - Every component patented
+          - No equivalent exists
+          - Competitors infringe
+        installation_equipment_and_accessories:
+          source_ids:
+          - canopies
+          observation: Assembly, equipment, and fixture compatibility are described broadly.
+          evidence_needed: Approved installation scope, access plan, lifting requirements, and accessory
+            load/attachment details.
+          prohibit_inferences:
+          - No lift ever required
+          - Anyone can install it
+          - Any fixture fits
+          - No engineering needed
+        model_warranty_and_crew:
+          source_ids:
+          - wall_manual
+          - terms
+          observation: The TMV2-001 web overview lists a 10-year warranty and two installers; sale terms
+            reference a separate warranty.
+          evidence_needed: Applicable warranty document and installation plan for the exact product and
+            revision.
+          prohibit_inferences:
+          - Ten years on every system
+          - Unconditional coverage
+          - Fixed labor requirement on every site
+        control_and_safety:
+          source_ids:
+          - walls
+          observation: Wall controls, automation integration, and monitoring features are described.
+          evidence_needed: Current controls documentation, supported interfaces, and configuration-specific
+            safety documentation.
+          prohibit_inferences:
+          - Works with every smart-home platform
+          - Childproof
+          - Injury-proof
+          - Fail-safe in every condition
+        shipping_inclusions:
+          source_ids:
+          - terms
+          observation: Published sale terms exclude shipping from the purchase price.
+          evidence_needed: Current applicable quote and any explicitly approved campaign exception.
+          prohibit_inferences:
+          - Free shipping
+          - All-inclusive catalog price
+          - Installation included
+        project_proof:
+          source_ids:
+          - installations
+          - about
+          observation: Reviewed pages do not establish a verified named customer case study for reuse.
+          evidence_needed: Project record, actual installed configuration, image rights, customer permission,
+            and substantiated results.
+          prohibit_inferences:
+          - Invented completed project
+          - Fabricated testimonial
+          - Assumed client endorsement
+        ai_studio_promises:
+          source_ids:
+          - studio
+          - canopy_resources
+          observation: Public AI navigation is visible; full interactive behavior was not verified.
+          evidence_needed: Tested current workflow and evidence for each advertised capability or commercial
+            commitment.
+          prohibit_inferences:
+          - Instant permit-ready design
+          - Automatic structural approval
+          - Guaranteed price
+          - Every concept buildable
+    visual_policy:
+      same_evidence_standard_as_text: true
+      asset_types:
+      - verified_installation
+      - product_photo
+      - product_render
+      - ai_concept
+      - diagram
+      required_asset_metadata:
+      - asset_id
+      - asset_type
+      - source_or_creation_record
+      - product_family
+      - rights_status
+      rules:
+      - Do not label a render or AI-generated scene as a completed installation, customer project, or
+        before/after result.
+      - Label illustrative product renders and AI concepts clearly when they could be mistaken for installed
+        work.
+      - Use 'AI-generated concept' for AI scenes and 'Illustrative rendering' for other conceptual renders.
+      - Product-specific renders must respect known geometry, operation, materials, and supported options.
+      - Do not animate fixed pergola louvers opening or show impossible spans, attachments, or equipment.
+      - Do not show a rain-sealed open-louver roof, total sound isolation, or measured cooling without
+        evidence.
+      - A concept label does not excuse depicting an unavailable feature as a current Tudelü offering.
+      - Do not add client logos, certification marks, testimonials, or project locations without verified
+        authorization.
+      - Image and video claims must be reviewed alongside captions, overlays, and audio.
+      unknown_asset_provenance: hold_asset_or_replace
+    source_registry:
+      home:
+        url: https://tudelu.com/
+        title: Tudelü home
+        sections:
+        - Systems navigation
+        - Featured architectural systems
+      systems:
+        url: https://tudelu.com/systems
+        title: Architectural Systems
+        sections:
+        - System family descriptions
+        - Coming soon labels
+      about:
+        url: https://tudelu.com/about
+        title: About Tudelü
+        sections:
+        - Company overview
+        - Project planning
+      walls:
+        url: https://tudelu.com/partition-walls
+        title: Motorized Partition Walls
+        sections:
+        - System advantages
+        - Project planning
+        - Configuration confirmation
+      canopies:
+        url: https://tudelu.com/canopies
+        title: Architectural Canopies
+        sections:
+        - System advantages
+        - Project planning
+        - Configuration confirmation
+      pergolas:
+        url: https://tudelu.com/pergolas
+        title: Fixed-Louver Aluminum Pergolas for Outdoor Spaces
+        sections:
+        - Fixed louvers
+        - Lighting
+        - Shade planning
+        - Structural planning
+      sunshades:
+        url: https://tudelu.com/sunshades
+        title: Architectural Sunshades
+        sections:
+        - Pattern and openness
+        - Supports
+        - Project planning
+      walkways:
+        url: https://tudelu.com/walkways
+        title: Covered Walkways
+        sections:
+        - System description
+        - Route planning
+      drive_through:
+        url: https://tudelu.com/drive-through-systems
+        title: Drive-Through Systems
+        sections:
+        - System description
+        - Project brief
+      carports:
+        url: https://tudelu.com/carports
+        title: Carports
+        sections:
+        - Site fit
+        - Vehicle bays
+        - Project brief
+      resources:
+        url: https://tudelu.com/resources
+        title: Resources
+        sections:
+        - Technical documents
+        - BIM and CAD
+        - Warranty and maintenance
+        - FAQs
+      wall_resources:
+        url: https://tudelu.com/partition-walls/resources
+        title: Partition Walls Technical Resource Request
+        sections:
+        - Project brief
+        - Configuration confirmation
+      canopy_resources:
+        url: https://tudelu.com/canopies/resources
+        title: Aluminum Canopy Specifications and Resources
+        sections:
+        - Document scope
+        - Project drawings
+        - Configuration confirmation
+      wall_manual:
+        url: https://tudelu.com/installations/manual/partition-walls
+        title: TMV2 Motorized Vertical Partition System
+        sections:
+        - Technical specifications
+        - Revision note
+        limitation: Web overview reviewed; separately linked PDF not reviewed.
+      installations:
+        url: https://tudelu.com/installations
+        title: Installation Resources
+        sections:
+        - Systems overview
+        - Installation draft description
+        limitation: Do not treat this page as proof of completed customer installations.
+      terms:
+        url: https://tudelu.com/terms-conditions
+        title: Terms and Conditions of Sale
+        sections:
+        - Taxes and shipping
+        - Warranties
+        limitation: Separate referenced product warranty attachment was not reviewed.
+      contact:
+        url: https://tudelu.com/contact
+        title: Contact Tudelu
+        sections:
+        - Contact form
+        - Footer email
+      shop:
+        url: https://tudelu.com/shop
+        title: Shop
+        sections:
+        - Catalog
+        - Custom-size pricing note
+        limitation: Dynamic catalog; no SKU-level price or inventory approved by this file.
+      studio:
+        url: https://tudelu.com/design/studio
+        title: AI Project Director / Tudelu Design Studio
+        sections:
+        - Public route
+        limitation: Interactive content exposed a loading shell; no workflow was tested.
+      architects:
+        url: https://tudelu.com/for-architects
+        title: Tudelu for Architects
+        sections:
+        - Canopy resources
+        - Partition-wall documents
+        - Project brief
+      contractors:
+        url: https://tudelu.com/for-contractors
+        title: Tudelü for Contractors
+        sections:
+        - Project brief
+        - Installation scope
+      owners:
+        url: https://tudelu.com/for-owners
+        title: Tudelü for Owners and Developers
+        sections:
+        - Intended use
+        - Project brief
+    known_pipeline_limitations:
+    - Product metadata is passed to independent review, not automatically enforced as code.
+    - The current generator does not pass the post kind to caption selection. Use the education product
+      tag and an explicit educational campaign brief for non-promotional posts.
+    - Banned phrases are matched as substrings, including in negated statements.
+    - Source URLs do not establish unchanged content; expiration requires substantive re-review.
+    versioning: Versions are immutable. Renew evidence and use a new version when updating this file.
+- id: education
+  name: Non-promotional Planning
+  claim_provenance:
+    education.E01:
+      source_claim_id: E01
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: Educational planning only; not installation instructions or proof of suitability.
+      content_role: educational
+    education.E02:
+      source_claim_id: E02
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/partition-walls
+      limits: No promise of silence, confidentiality, or a measured improvement without applicable evidence.
+      content_role: educational
+    education.E03:
+      source_claim_id: E03
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/canopies/resources
+      limits: Do not apply another product's drawings or present a concept as construction documentation.
+      content_role: educational
+    education.E04:
+      source_claim_id: E04
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/pergolas
+      limits: Do not promise all-day shade or a specific thermal result from orientation alone.
+      content_role: educational
+    education.E05:
+      source_claim_id: E05
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/pergolas
+      limits: No generic load rating, storm certification, or location-independent structural promise.
+      content_role: educational
+  usage: Select product tag education for an education-only pool plus neutral company facts. Match asset
+    tags to this selection.
+- id: contact
+  name: Contact Tudelü
+  claim_provenance:
+    R05:
+      source_claim_id: R05
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/contact
+      limits: Do not add a phone number, address, response-time guarantee, or free-service promise.
+      content_role: descriptive
+- id: design_studio
+  name: AI Design Studio
+  claim_provenance:
+    R06:
+      source_claim_id: R06
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/
+      - https://tudelu.com/design/studio
+      limits: Promote exploration only; no claim of engineering approval, accurate pricing, or guaranteed
+        manufacturability.
+      content_role: descriptive
+- id: shop
+  name: Shop Designs
+  claim_provenance:
+    R07:
+      source_claim_id: R07
+      reviewed_on: '2026-11-04'
+      source_urls:
+      - https://tudelu.com/resources
+      - https://tudelu.com/shop
+      limits: Do not equate a listing with stock, shipment readiness, an all-inclusive price, or a confirmed
+        order.
+      content_role: descriptive
+brand_voice: 'Clear, calm, concrete, design-aware, and useful. This is a website-supported
+
+  snapshot reviewed 2026-11-04, not independent testing or a new warranty. Select only
+
+  exact text or variants from facts. Treat the qualifications within each sentence as
+
+  inseparable. Do not paraphrase, remove conditions, turn maximums into universal
+
+  capabilities, or transfer features between products or mounting arrangements.
+
+
+  Both promotional and non-promotional posts use the same evidence standard.
+
+  Promotional content may introduce a supported feature; it need not promise an
+
+  outcome. Non-promotional content should favor E-prefixed educational facts, planning
+
+  questions, and the education product tag. Avoid sales CTAs for educational content.
+
+  The contact, shop, and design_studio tags contain optional promotional destinations.
+
+
+  Do not infer performance from images. No invented prices, discounts, delivery times,
+
+  warranties, statistics, testimonials, client projects, certifications, patents,
+
+  country-of-origin claims, sustainability claims, business outcomes, or superiority.
+
+  No absolute sound isolation, privacy, weather protection, durability, maintenance,
+
+  installation, or automation-compatibility promises. Fixed pergola louvers do not
+
+  rotate or retract. Open louvers do not form a waterproof roof. MUTE''s side-mounted
+
+  maximum is separate from its general dimensional guidance.
+
+
+  Do not imply that illustrated lighting, supports, finishes, accessories, installation,
+
+  or engineering documents are included with every order. Do not describe forthcoming
+
+  product families as available to order. No release date is approved. Qualifying a
+
+  claim with ''may'', ''can'', or ''up to'' does not supply missing evidence.
+
+
+  Product renders and AI concepts are illustrative, never proof of completed projects,
+
+  customer endorsement, structural feasibility, or measured performance. Reject
+
+  misleading text, images, overlays, video, or claim combinations. Check the entire
+
+  post, not only literal sentences. A disclaimer cannot repair an unsupported promise.
+
+  If evidence or the applicable source is missing, stale, contradictory, or unavailable,
+
+  omit the claim or hold the post. Recheck affected sources before renewing validity.
+
+  Never use the prohibited observations in product metadata as approved caption text.'
+banned_phrases:
+- 100% soundproof
+- completely soundproof
+- total silence
+- guaranteed privacy
+- maintenance-free
+- maintenance free
+- lasts a lifetime
+- lasts forever
+- never rusts
+- never needs cleaning
+- guaranteed savings
+- guaranteed ROI
+- lowest price
+- cheapest
+- best in class
+- beats our competitors
+- ships in days
+- ships immediately
+- arrives in days
+- installs in hours
+- no engineering needed
+- no lifting equipment
+- any fixture
+- hurricane-proof
+- hurricane proof
+- childproof
+- injury-proof
+- permit-ready
+- motorized pergola roof
+- retractable pergola roof
+- waterproof pergola
+- free shipping
+- unconditional warranty
+- customer says
+required_disclaimers: []
+canonical_urls:
+- https://tudelu.com/about
+- https://tudelu.com/canopies
+- https://tudelu.com/canopies/resources
+- https://tudelu.com/carports
+- https://tudelu.com/contact
+- https://tudelu.com/design/studio
+- https://tudelu.com/drive-through-systems
+- https://tudelu.com/for-architects
+- https://tudelu.com/for-contractors
+- https://tudelu.com/for-owners
+- https://tudelu.com/partition-walls
+- https://tudelu.com/pergolas
+- https://tudelu.com/resources
+- https://tudelu.com/shop
+- https://tudelu.com/sunshades
+- https://tudelu.com/systems
+- https://tudelu.com/walkways
+hashtags:
+  linkedin:
+  - Tudelu
+  instagram:
+  - Tudelu
+  facebook:
+  - Tudelu
+  x:
+  - Tudelu
+  tiktok:
+  - Tudelu
+facts:
+- id: B01
+  kind: claim
+  product: company
+  text: Tudelü presents architectural systems for adaptable interior and outdoor spaces.
+  variants:
+  - Tudelü offers architectural systems for interior and outdoor spaces.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/about
+- id: W01
+  kind: claim
+  product: partition_walls
+  text: Tudelü motorized partitions divide rooms and retract overhead without a floor track; ceiling and
+    support requirements need project assessment.
+  variants:
+  - Motorized partitions store overhead without a floor track. Ceiling and support requirements need project
+    assessment.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/systems
+- id: W02
+  kind: claim
+  product: partition_walls
+  text: Partition housing and side guides may be recessed or surface-mounted, subject to the selected
+    installation.
+  variants:
+  - Recessed or exposed partition details depend on the selected installation.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: W03
+  kind: claim
+  product: partition_walls
+  text: The partition surface is paintable; confirm the coating and finish for the selected system.
+  variants:
+  - A paintable partition surface offers finish choices. Confirm the coating for the selected system.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: W04
+  kind: claim
+  product: partition_walls
+  text: Tudelü lists MUTE dimensions up to 80 ft wide and 12 ft high; confirm the size combination and
+    supports for the selected configuration.
+  variants:
+  - 'MUTE: up to 80 ft wide and 12 ft high, subject to confirmation of the size combination and supports.'
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: W05
+  kind: claim
+  product: partition_walls
+  text: The side-mounted MUTE option is listed for openings up to 20 ft wide; confirm the mounting arrangement
+    and supporting structure.
+  variants:
+  - 'Side-mounted MUTE: up to 20 ft wide, subject to confirmation of mounting and supporting structure.'
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: C01
+  kind: claim
+  product: canopies
+  text: Tudelü describes a modular canopy system with prefinished aluminum extrusions and concealed mechanical
+    connections.
+  variants:
+  - Prefinished aluminum extrusions and concealed connections form the modular Tudelü canopy system.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/canopies
+- id: C02
+  kind: claim
+  product: canopies
+  text: Canopy options include integrated lighting and printed surface treatments; confirm availability
+    and included components for your design.
+  variants:
+  - Discuss canopy lighting and printed finishes; availability and included components depend on the selected
+    design.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/canopies
+- id: P01
+  kind: claim
+  product: pergolas
+  text: Tudelü's published aluminum pergola offering uses fixed louvers that do not rotate or retract.
+  variants:
+  - Tudelü pergolas use fixed louvers, which stay in position rather than rotating or retracting.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/pergolas
+- id: P02
+  kind: claim
+  product: pergolas
+  text: Open louvers provide shade but do not form a waterproof roof; confirm an appropriate configuration
+    if weather cover is required.
+  variants:
+  - Open louvers provide shade, not a waterproof roof. Confirm the configuration for your weather-cover
+    needs.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/pergolas
+- id: P03
+  kind: claim
+  product: pergolas
+  text: Tudelü presents integrated pergola lighting options; confirm the selected arrangement, included
+    components, and electrical scope.
+  variants:
+  - Pergola lighting is a design option. Confirm the arrangement, inclusions, and electrical scope.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/pergolas
+- id: S01
+  kind: claim
+  product: sunshades
+  text: Sunshade planning considers louver pattern, spacing, supports, finishes, and optional lighting;
+    performance depends on the selected design.
+  variants:
+  - Plan sunshade patterns, spacing, supports, finishes, and optional lighting around the project.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/sunshades
+- id: K01
+  kind: claim
+  product: walkways
+  text: Covered walkway planning brings the pedestrian route, supports, lighting, and drainage into one
+    design discussion.
+  variants:
+  - Plan a covered walkway around the route, supports, lighting, and drainage.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/walkways
+- id: D01
+  kind: claim
+  product: drive_through
+  text: Drive-through systems are planned around vehicle movement, service locations, clearances, lighting,
+    and drainage.
+  variants:
+  - Start a drive-through brief with vehicle movement, service points, and required clearances.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/drive-through-systems
+- id: V01
+  kind: claim
+  product: carports
+  text: Carport planning considers parking arrangements, vehicle access, supports, lighting, and drainage.
+  variants:
+  - Start a carport brief with parking bays, vehicle access, and support locations.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/carports
+- id: R01
+  kind: claim
+  product: company
+  text: Tudelü provides resource guides and ways to request specifications, BIM, and CAD files; confirm
+    availability and revision for your system.
+  variants:
+  - Request technical resources for your selected system; confirm file availability and revision.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/resources
+- id: R02
+  kind: claim
+  product: canopies
+  text: Canopy shop and structural drawings follow the accepted-design process; general resources are
+    not project-specific construction documents.
+  variants:
+  - Canopy shop and structural drawings follow the accepted-design process.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/canopies/resources
+- id: R03
+  kind: claim
+  product: company
+  text: Pricing depends on the project; custom Tudelü systems receive formal quotes after engineering
+    assessment.
+  variants:
+  - Custom-system pricing follows engineering assessment and a formal project quote.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/resources
+- id: R04
+  kind: claim
+  product: company
+  text: Confirm installation availability and scope with Tudelü for your project location.
+  variants:
+  - Installation availability and scope require confirmation for the project location.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/for-contractors
+- id: R05
+  kind: claim
+  product: contact
+  text: Contact Tudelü through its website to discuss your project.
+  variants:
+  - Discuss your project with Tudelü.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/contact
+- id: R06
+  kind: claim
+  product: design_studio
+  text: Explore the Tudelü AI Design Studio through the website; confirm the final configuration through
+    project assessment.
+  variants:
+  - Explore the Tudelü AI Design Studio. Final configurations require project assessment.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/design/studio
+- id: R07
+  kind: claim
+  product: shop
+  text: Browse released designs through Shop Designs; a listing does not confirm stock, shipment timing,
+    or installation scope.
+  variants:
+  - Browse released designs; confirm availability, timing, and scope for your project.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/shop
+- id: E01
+  kind: claim
+  product: partition_walls
+  text: Planning a divided room? Sketch both layouts and coordinate circulation, ceiling space, structure,
+    and controls.
+  variants:
+  - Sketch both open and divided room layouts, including circulation, ceiling space, and controls.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: education.E01
+  kind: claim
+  product: education
+  text: Planning a divided room? Sketch both layouts and coordinate circulation, ceiling space, structure,
+    and controls.
+  variants:
+  - Sketch both open and divided room layouts, including circulation, ceiling space, and controls.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: E02
+  kind: claim
+  product: partition_walls
+  text: Acoustic planning includes the partition and sound paths through surrounding construction; a wall
+    alone does not establish room performance.
+  variants:
+  - Include surrounding construction and sound paths in the acoustic brief.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: education.E02
+  kind: claim
+  product: education
+  text: Acoustic planning includes the partition and sound paths through surrounding construction; a wall
+    alone does not establish room performance.
+  variants:
+  - Include surrounding construction and sound paths in the acoustic brief.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/partition-walls
+- id: E03
+  kind: claim
+  product: canopies
+  text: Use canopy documents for the selected configuration; supports and connections need site-specific
+    project-team assessment.
+  variants:
+  - Match canopy documents to the configuration and assessment supports and connections for the site.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/canopies/resources
+- id: education.E03
+  kind: claim
+  product: education
+  text: Use canopy documents for the selected configuration; supports and connections need site-specific
+    project-team assessment.
+  variants:
+  - Match canopy documents to the configuration and assessment supports and connections for the site.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/canopies/resources
+- id: E04
+  kind: claim
+  product: pergolas
+  text: When planning shade, record site orientation and the times you intend to use the space.
+  variants:
+  - Start a shade brief with site orientation and intended use times.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/pergolas
+- id: education.E04
+  kind: claim
+  product: education
+  text: When planning shade, record site orientation and the times you intend to use the space.
+  variants:
+  - Start a shade brief with site orientation and intended use times.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/pergolas
+- id: E05
+  kind: claim
+  product: pergolas
+  text: Wind and snow requirements depend on the site and configuration and need assessment by the responsible
+    project team.
+  variants:
+  - Confirm site-specific wind and snow requirements with the project team.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/pergolas
+- id: education.E05
+  kind: claim
+  product: education
+  text: Wind and snow requirements depend on the site and configuration and need assessment by the responsible
+    project team.
+  variants:
+  - Confirm site-specific wind and snow requirements with the project team.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/pergolas
+- id: E06
+  kind: claim
+  product: company
+  text: A useful project brief brings together intended use, site information, drawings, budget objectives,
+    and schedule goals.
+  variants:
+  - Start a project brief with intended use, site information, drawings, and budget and schedule goals.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/for-owners
+- id: E07
+  kind: claim
+  product: company
+  text: Request technical resources for the exact system, configuration, file format, and revision being
+    considered.
+  variants:
+  - Match each technical resource to the system, configuration, format, and revision.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/for-architects
+- id: E08
+  kind: claim
+  product: company
+  text: Clarify site access, current drawings, installation responsibilities, and the requested delivery
+    sequence before finalizing a project brief.
+  variants:
+  - Clarify site access, installation responsibilities, drawings, and delivery sequencing.
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-12-04T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/for-contractors
+- id: availability.architectural_elements
+  kind: claim
+  product: architectural_elements
+  text: Tudelü lists Architectural Elements as coming soon; no launch date or ordering availability is
+    established here.
+  variants:
+  - 'Architectural Elements: listed as coming soon, with no confirmed launch date or ordering availability.'
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-11-11T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/systems
+- id: availability.exterior_paneling
+  kind: claim
+  product: exterior_paneling
+  text: Tudelü lists Exterior Paneling & Cladding as coming soon; no launch date or ordering availability
+    is established here.
+  variants:
+  - 'Exterior Paneling & Cladding: listed as coming soon, with no confirmed launch date or ordering availability.'
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-11-11T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/systems
+- id: availability.gutters
+  kind: claim
+  product: gutters
+  text: Tudelü lists Gutter Systems as coming soon; no launch date or ordering availability is established
+    here.
+  variants:
+  - 'Gutter Systems: listed as coming soon, with no confirmed launch date or ordering availability.'
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-11-11T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/systems
+- id: availability.fencing
+  kind: claim
+  product: fencing
+  text: Tudelü lists Fencing & Architectural Screens as coming soon; no launch date or ordering availability
+    is established here.
+  variants:
+  - 'Fencing & Architectural Screens: listed as coming soon, with no confirmed launch date or ordering
+    availability.'
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-11-11T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/systems
+- id: availability.ceilings
+  kind: claim
+  product: ceilings
+  text: Tudelü lists Ceiling Systems as coming soon; no launch date or ordering availability is established
+    here.
+  variants:
+  - 'Ceiling Systems: listed as coming soon, with no confirmed launch date or ordering availability.'
+  valid_from: '2026-11-04T00:00:00-05:00'
+  valid_until: '2026-11-11T00:00:00-05:00'
+  amount: null
+  currency: null
+  url: https://tudelu.com/systems
+visual_guidance:
+  version: tudelu-builder-visual-2026-11-16-v1
+  reviewed_on: '2026-11-16'
+  purpose: Product appearance and motion constraints adapted from the Tudelu AI Builder for social images
+    and videos. These guide depictions, not structural certification, availability, prices, installation
+    instructions or additional caption claims. Caption claims still require approved fact IDs. Only the
+    product profiles below are configured for generation.
+  sources:
+  - id: assistant_rules
+    repository: https://github.com/tudelu-system/tudelu-frontend
+    commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+    path: apps/canopy-designer/server/assistant/rules.js
+    sha256: b7c86b340fa3a57df503cabda5646edca7a012a2dd7d217fc157c278bbe58a9a
+  - id: product_rules
+    repository: https://github.com/tudelu-system/tudelu-frontend
+    commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+    path: apps/canopy-designer/PRODUCT-RULES.md
+    sha256: 02ee58c86500a64d1ae81b0cf61736fc14ce58b8bc34b2e4721155aa1e50f578
+  - id: builder_products
+    repository: https://github.com/tudelu-system/tudelu-frontend
+    commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+    path: apps/canopy-designer/skill-sources/tudelu-project-planning/references/builder-products.md
+    sha256: b25bed376a7262ba5a0f926fc43cc3bb16c4de67b2356ff9c3d63c3ac7d1e9f3
+  - id: product_families
+    repository: https://github.com/tudelu-system/tudelu-frontend
+    commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+    path: apps/canopy-designer/skill-sources/tudelu-project-planning/references/product-product-families.md
+    sha256: 3e93406601d54725378b4753080e34aafeb93641ace352b703c0fe574ceb732b
+  - id: product_scope
+    repository: https://github.com/tudelu-system/tudelu-frontend
+    commit: f9b43c223fdb11afe5e95573a346dabdce8ba861
+    path: apps/canopy-designer/skill-sources/tudelu-project-planning/references/product-scope-and-boundaries.md
+    sha256: 348e9752df6e6f9efce01924c51da23822a7c7753cc8f36cdf48efb86fb74f27
+  global_rules:
+  - id: builder.authority
+    instruction: Apply these product constraints before website examples, creative ideas, reference-image
+      descriptions or earlier AI generations. A generated picture never establishes a new product capability.
+      Use current company media for appearance only when it agrees with the matching product rules. Do
+      not invent unsupported configurations to satisfy an idea.
+    source_ids:
+    - assistant_rules
+    - product_families
+    - product_scope
+  - id: builder.geometry
+    instruction: Fascia frames are straight aluminum extrusions with crisp mitered polygon corners and
+      constant cross-sections. Do not bend, stretch, warp or curve the fascia, float members, leave disconnected
+      ends, or overlap solid parts. Different straight-sided footprints are possible. A photorealistic
+      depiction is not a parts-fit or engineering approval.
+    source_ids:
+    - product_rules
+    - assistant_rules
+  - id: builder.connections
+    instruction: Louvers connect physically to the fascia or flush to other frame-connected louvers; each
+      piece has a continuous connection to the frame. Freestanding describes the supports, not permission
+      for floating roof members. Native social depictions keep this connected default; detached experimental
+      concepts are outside this profile.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: builder.materials
+    instruction: Preserve aluminum profile proportions and mechanically assembled connections. Wood Look
+      is a finish on aluminum components, not timber construction. Use the selected finish; absent a selection
+      use Black. Standard color directions are Black, White, Silver, Brass, Wood Look and Charcoal Grey.
+      Brass is not an exact gold match. Color does not establish stock. Stainless hanger rods and fittings
+      remain stainless.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: builder.options
+    instruction: Add only supported, specifically selected accessories. Crown is sharp-edged stepped trim;
+      Tube is a square-tube detail; Channel is C-channel trim. Crown and Tube can take the one-inch LED
+      diffuser; Channel is not that lighting detail. Recessed downlights sit in insulated panels facing
+      downward, in the exposed lower panels of a double roof. Do not invent hanging fans, heaters or decorative
+      fixture mounts.
+    source_ids:
+    - assistant_rules
+    - builder_products
+    - product_families
+  - id: builder.drainage
+    instruction: Supported drainage directions are scuppers, building tie-in outlets, through-post drainage
+      and separate Leader downspouts. Through-post drainage uses the post itself, not an invented internal
+      pipe. The modeled Leader is a straight tube over its outlet; do not invent elbows, mounts or discharge
+      connections. Roof-panel interlocks join side-by-side, never end-to-end. Do not invent panel end
+      splices.
+    source_ids:
+    - assistant_rules
+    - product_families
+  - id: builder.scope
+    instruction: Show plausible product geometry without implying verified spans, load capacity, anchoring,
+      weather ratings, safety certification or site approval. A custom scene is not evidence of a completed
+      customer project. Do not depict the coming-soon families (architectural elements, exterior cladding,
+      standalone gutters, fencing/screens and ceilings) as released products; they have no approved visual
+      profile in this version.
+    source_ids:
+    - assistant_rules
+    - product_families
+    - product_scope
+  products:
+  - product_id: partition_walls
+    name: Retractable Partition Walls
+    aliases:
+    - Retractable Partition Wall
+    - Partition Walls
+    - Partition Wall
+    - MUTE
+    - MUTE system
+    - 48STC MUTE system
+    prompt_cue: 'Tudelu MUTE: a seamless fabric/composite partition with a continuous unsegmented surface,
+      overhead housing and side guides, an uninterrupted floor, and vertical ceiling retraction. Preserve
+      this geometry throughout the shot.'
+    rules:
+    - id: mute.form
+      instruction: Depict the current MUTE ceiling-retracting fabric/composite partition, with a seamless
+        zero-panel surface. Include plausible overhead housing and side guides; exposed or recessed housing
+        depends on the reference configuration. No floor track. Never substitute glass sliding doors,
+        rigid stacking panels, accordion walls, folding screens, a roll-up metal shutter or a portable
+        room divider.
+      source_ids:
+      - assistant_rules
+      - product_families
+    - id: mute.motion
+      instruction: If movement is requested, the partition deploys downward from its overhead housing
+        and retracts upward to the ceiling. It does not slide sideways, stack at a jamb or pivot open.
+        A static scene may show it deployed or retracted; do not invent a visible motor mechanism, integral
+        pass door or emergency-opening behavior.
+      source_ids:
+      - assistant_rules
+      - product_families
+    - id: mute.finish
+      instruction: Rigid frame parts are Black or White. Tudelu Composite fabric directions are Snow,
+        Sand, Stone and Stormcloud; default to a plain neutral surface. Paintability is not permission
+        to invent released wood-veneer or printed fabric collections. Do not imply guaranteed silence
+        or room privacy through visual annotations.
+      source_ids:
+      - assistant_rules
+      - product_families
+  - product_id: canopies
+    name: Architectural Canopies
+    aliases:
+    - Architectural Canopy
+    - Canopies
+    - Canopy
+    - Tudelu Canopy
+    prompt_cue: Prefinished aluminum canopy, crisp straight mitered fascia, consistent extrusion sections
+      and physically seated joints. Maintain the selected roof and support arrangement, with believable
+      proportions and continuous connections.
+    rules:
+    - id: canopy.frame
+      instruction: Use modular prefinished aluminum, mechanically assembled, with 6-inch, 8-inch or 8-inch
+        Pro fascia proportions. Pro and heavy name the same family; use Pro in customer wording. Footprints
+        use straight miter-cut pieces, never curved fascia, timber beams or a generic fabric awning. Width
+        follows the wall; projection extends out from the wall.
+      source_ids:
+      - assistant_rules
+      - builder_products
+      - product_rules
+    - id: canopy.roof
+      instruction: The default canopy roof uses 2-inch insulated interlocking panels and a flat underside.
+        Glass, printed-finish and double-roof configurations require that selection; do not add them automatically.
+        Use real panel seams and continuous supported runs rather than invented end splices or a generic
+        shingle roof.
+      source_ids:
+      - assistant_rules
+      - product_families
+    - id: canopy.supports
+      instruction: Supported arrangements include building attachment, suspended hanger rods, freestanding
+        aluminum posts and cantilever brackets, sometimes combined. Posts use 4x4 or 5x5 profiles. Preserve
+        the requested supported arrangement and use reference-specific connections. Do not float the canopy
+        or substitute rods for requested cantilevers. Support appearance does not establish structural
+        adequacy.
+      source_ids:
+      - assistant_rules
+      - builder_products
+  - product_id: pergolas
+    name: Pergolas
+    aliases:
+    - Pergola
+    - Tudelu Pergola
+    prompt_cue: Tudelu aluminum pergola with fixed stationary louvers physically connected within a straight
+      mitered fascia frame, consistent member sections and grounded aluminum supports. Preserve its support
+      and roof configuration while the camera moves.
+    rules:
+    - id: pergola.fixed_louvers
+      instruction: Fixed louvers only. Never show motorized, rotating, opening, closing or retractable
+        roof blades, despite the older motorized-roof website example. Fixed installation tilt is distinct
+        from operation. Typical modeled members use 1x3 or 2x3 aluminum profiles; horizontal, vertical,
+        diagonal and connected patterns are possible.
+      source_ids:
+      - assistant_rules
+      - product_families
+    - id: pergola.roof
+      instruction: Start with an open louver roof. Add panels or glass only when explicitly selected.
+        Open louvers pass rain and must not be depicted as a watertight closed roof. Round and oval profiles
+        need confirmation and are outside the default native visual profile. All louver pieces remain
+        physically connected.
+      source_ids:
+      - assistant_rules
+      - product_families
+    - id: pergola.supports
+      instruction: The native standard is a standalone post-supported system, using shared canopy components.
+        The preliminary default is a post about every 10 feet; a 20 by 12 foot example has six posts,
+        not an unlimited clear span. Building-attached variants need a matching reviewed configuration;
+        do not just attach a standalone frame to a facade. Avoid exact structural or site claims from
+        a concept image.
+      source_ids:
+      - assistant_rules
+      - builder_products
+  - product_id: sunshades
+    name: Sunshades
+    aliases:
+    - Sunshade
+    - Window Sunshade
+    - Window Sunshades
+    - Tudelu Sunshade
+    prompt_cue: An open aluminum sunshade with fixed stationary shading louvers and continuous physical
+      connections, consistent profile sections and correctly seated supports. Its open louver surface
+      casts patterned shade while the geometry stays fixed.
+    rules:
+    - id: sunshade.fascia
+      instruction: Default to the canopy-platform fascia frame with fixed shading louvers and hanger rods,
+        or fitted cantilevers when selected. Keep its sunshade identity; do not replace it with a solid
+        waterproof canopy, fabric awning, motorized blind or detached floating louvers. Louvers connect
+        to the frame.
+      source_ids:
+      - product_families
+      - builder_products
+    - id: sunshade.ring
+      instruction: Only when explicitly selected, the fascia-less version is a closed ring of 2x3 louvers
+        with Flat L corners, a louver-only roof and posts. This variant has no hanger rods, panels, drainage,
+        lighting, add-ons or cantilevers. Never combine fascia-less geometry with those unsupported accessories.
+      source_ids:
+      - builder_products
+      - product_families
+  - product_id: walkways
+    name: Walkways
+    aliases:
+    - Walkway
+    - Covered Walkway
+    - Covered Walkways
+    prompt_cue: A covered pedestrian walkway using the Tudelu prefinished aluminum canopy frame, straight
+      mitered fascia, consistent sections, a supported roof and connected supports. Keep the passage clearly
+      pedestrian in purpose and scale.
+    rules:
+    - id: walkway.assembly
+      instruction: Covered walkways use the canopy frame, roof and support components. Apply the canopy
+        material, straight-frame, roof-panel and support rules while retaining the pedestrian route purpose.
+        Do not substitute a generic tensile tunnel or invent a clear-span, drainage or all-weather performance
+        rating.
+      source_ids:
+      - builder_products
+      - product_families
+      - assistant_rules
+  - product_id: drive_through
+    name: Drive-Through Systems
+    aliases:
+    - Drive-Through System
+    - Drive Through
+    - Drive-Through
+    - Drive Through Systems
+    - Drive-Through Canopy
+    prompt_cue: A Tudelu prefinished aluminum canopy shelter over a vehicle circulation lane, straight
+      mitered fascia, consistent profile sections and connected roof supports. Preserve a clear lane and
+      the selected canopy geometry.
+    rules:
+    - id: drive_through.assembly
+      instruction: Use the shared canopy frame, roof and measured connections, applying the canopy material,
+        frame, roof and support rules. Depict a moving-traffic lane rather than parked bays. Keep columns
+        out of the depicted lane. Do not invent traffic equipment, clearance certifications, code approval
+        or throughput claims.
+      source_ids:
+      - builder_products
+      - product_families
+      - assistant_rules
+  - product_id: carports
+    name: Carports
+    aliases:
+    - Carport
+    - Carport Canopy
+    - Tudelu Carport
+    prompt_cue: A Tudelu aluminum canopy shelter for parked vehicle bays, with straight mitered fascia,
+      consistent extrusion sections, a supported canopy roof and connected aluminum supports. Keep parked-bay
+      purpose and believable vehicle scale.
+    rules:
+    - id: carport.assembly
+      instruction: 'Carports use the canopy frame, roof and supports: apply the canopy material, straight-frame,
+        roof and support rules while retaining parked-bay purpose. Do not invent a solar-panel roof, EV
+        charger, security system, structural capacity or guarantee of protection from every weather hazard.'
+      source_ids:
+      - builder_products
+      - product_families
+      - assistant_rules

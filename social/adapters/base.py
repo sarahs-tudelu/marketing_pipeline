@@ -63,10 +63,15 @@ def error_for(response, body, irreversible=False):
         return PublishError("transient", "Platform rate limit", delay)
     if status == 401 or code in {190, "access_token_invalid"}:
         return PublishError("auth", "Platform credentials expired or invalid")
+    # Words are read only from error responses: Pinterest's upload form has a field named "policy".
+    failed = status >= 400 or bool(error and code != "ok")
     if (
         status == 403
         or code in {368, 10, 200}
-        or any(term in serialized for term in ("policy", "spam_risk", "suspended", "banned", "warning"))
+        or (
+            failed
+            and any(term in serialized for term in ("policy", "spam_risk", "suspended", "banned", "warning"))
+        )
     ):
         return PublishError("policy", "Platform policy/permission rejection; inspect platform dashboard")
     if status >= 500:
@@ -112,6 +117,12 @@ class BaseAdapter:
             )
             if self.s.tiktok_transfer == "url":
                 required = required and bool(self.s.tiktok_verified_url_prefix)
+        if self.platform == "pinterest":
+            required = required and bool(
+                self.s.pinterest_board_id
+                and self.s.pinterest_client_id
+                and self.s.pinterest_client_secret.get_secret_value()
+            )
         return bool(required)
 
     def headers(self):
@@ -314,6 +325,7 @@ class BaseAdapter:
             "api.linkedin.com",
             "api.x.com",
             "open.tiktokapis.com",
+            "api.pinterest.com",
         }
         if p.scheme != "https" or not p.hostname:
             raise PublishError("validation", "Official API requires HTTPS")
@@ -329,9 +341,19 @@ class BaseAdapter:
                 and p.path.startswith("/video-upload/")
             ):
                 raise PublishError("validation", "Refusing to send credentials outside official API hosts")
-        if not authorized and not any(
-            p.hostname == h or p.hostname.endswith("." + h)
-            for h in ("linkedin.com", "licdn.com", "tiktokapis.com")
+        # Pinterest returns a presigned S3 form for video bytes; it never receives the token.
+        pinterest_upload = (
+            self.platform == "pinterest"
+            and p.hostname.startswith("pinterest-media-upload.")
+            and p.hostname.endswith(".amazonaws.com")
+        )
+        if (
+            not authorized
+            and not pinterest_upload
+            and not any(
+                p.hostname == h or p.hostname.endswith("." + h)
+                for h in ("linkedin.com", "licdn.com", "tiktokapis.com")
+            )
         ):
             raise PublishError("validation", "Upload URL outside official platform hosts")
 

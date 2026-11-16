@@ -359,7 +359,7 @@ def test_media_queue_page_updates_in_place(db, settings):
             await playwright.expect(page.locator("#media-queue .status")).to_have_text("complete", timeout=8000)
             await playwright.expect(page.locator("#media-queue .loading-spinner")).to_be_visible()
             advance_queue(db, settings)
-            await playwright.expect(page.locator("#media-queue")).to_contain_text("scheduled", timeout=8000)
+            await playwright.expect(page.locator("#media-queue")).to_contain_text("awaiting review", timeout=8000)
             await playwright.expect(page.locator("#media-queue .loading-spinner")).to_have_count(0)
             await browser.close()
 

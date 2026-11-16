@@ -1,6 +1,13 @@
-from .platforms import Facebook, Instagram, LinkedIn, TikTok, X
+from .platforms import Facebook, Instagram, LinkedIn, Pinterest, TikTok, X
 
-ADAPTERS = {"facebook": Facebook, "instagram": Instagram, "linkedin": LinkedIn, "tiktok": TikTok, "x": X}
+ADAPTERS = {
+    "facebook": Facebook,
+    "instagram": Instagram,
+    "linkedin": LinkedIn,
+    "pinterest": Pinterest,
+    "tiktok": TikTok,
+    "x": X,
+}
 
 
 def adapter(settings, db, post, client=None):

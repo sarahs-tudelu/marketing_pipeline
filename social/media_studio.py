@@ -10,7 +10,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import case, select, update
 
-from .config import PLATFORMS, profiles
+from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
 from .db import now, uid
 from .idea_plan import END_CARD_SECONDS, MAX_CLIPS, MIN_CLIP_SECONDS, Shot
 from .lifecycle import transition
@@ -19,7 +19,7 @@ from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
 from .provider_errors import ProviderError
 from .recovery import runway_failure
-from .renditions import image_rendition, logo_card, video_rendition, video_sequence
+from .renditions import fitted_size, image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, payload_for
 from .storage import ingest, storage
@@ -60,6 +60,9 @@ class CreativeBrief(BaseModel):
     shots: list[Shot] = Field(default_factory=list, max_length=MAX_CLIPS)
     # Company logo image appended as a short end card after the generated clips.
     end_card_asset_id: str = Field(default="", max_length=64)
+    # Post the admin's own photo or video as it is: no Runway request, only a platform-sized copy.
+    # reference_ids holds that photo or video and audio_reference_ids an optional soundtrack.
+    as_uploaded: bool = False
 
     @field_validator("rights")
     @classmethod
@@ -80,8 +83,21 @@ class CreativeBrief(BaseModel):
             raise ValueError("Campaign, prompt and usage rights cannot be blank")
         if len(set(self.platforms)) != len(self.platforms) or set(self.platforms) - set(PLATFORMS):
             raise ValueError("Select distinct supported platforms")
+        if set(self.platforms) & REAL_MEDIA_ONLY:
+            raise ValueError(
+                "Pinterest only posts real photos and videos from Google Drive. Create Pinterest posts from "
+                "Post from library media instead."
+            )
         if self.operation == "audio" and self.create_posts:
             raise ValueError("Save audio to the library, or add it as a video soundtrack")
+        if self.as_uploaded:
+            if self.operation not in {"image", "video"} or len(self.reference_ids) != 1:
+                raise ValueError("Posting your media as it is takes one photo or one video")
+            if self.shots or self.audio_prompt.strip() or len(self.audio_reference_ids) > 1:
+                raise ValueError("Your own media is posted without generated clips or music")
+            if self.operation == "image" and (self.audio_reference_ids or self.end_card_asset_id):
+                raise ValueError("A photo can't carry a soundtrack or a logo end card")
+            return self
         if self.operation == "audio" and len(set(self.reference_ids + self.audio_reference_ids)) > 3:
             raise ValueError("Audio generation accepts at most three reference bites in total")
         if self.operation == "image" and "tiktok" in self.platforms and self.create_posts:
@@ -217,6 +233,8 @@ def validate_sources(db, brief, *, live=False):
                 "Upload the logo as Public, or choose Not public."
             )
     visual = [a for a in sources if a.id in brief.reference_ids]
+    if brief.as_uploaded:
+        return _uploaded_sources(brief, visual, sources)
     expected = {"image": "image/", "video": "image/", "video_edit": "video/", "audio": "audio/"}
     if brief.operation in expected and any(
         not a.media["mime"].startswith(expected[brief.operation]) for a in visual
@@ -235,9 +253,29 @@ def validate_sources(db, brief, *, live=False):
     return sources
 
 
+def _uploaded_sources(brief, visual, sources):
+    """Checks for posting the admin's own media as it is."""
+    from .provenance import requires_ai_review
+
+    if len(visual) != 1 or not visual[0].media["mime"].startswith(brief.operation + "/"):
+        raise ValueError(f"Choose one {'photo' if brief.operation == 'image' else 'video'} to post as it is")
+    if any(requires_ai_review(a) for a in sources):
+        raise ValueError("Only real media can be posted as it is. Use AI-made media as a reference instead.")
+    if brief.operation == "video":
+        card = END_CARD_SECONDS if brief.end_card_asset_id else 0
+        length = visual[0].media["duration"]
+        if brief.duration - card > length + 0.1:
+            raise ValueError(
+                f"Your video is {length:.0f} seconds long. Choose a length of at most {int(length + card)} seconds."
+            )
+    return sources
+
+
 def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None):
     brief = CreativeBrief.model_validate(brief)
     sources = validate_sources(db, brief, live=any(settings.wants_live(p, db.get(Account, p)) for p in brief.platforms))
+    if brief.as_uploaded:
+        return _queue_uploaded(db, settings, brief, snapshot)
     if settings.ai_mode == "live" and not settings.runway_api_key.get_secret_value():
         raise ValueError("RUNWAY_API_KEY is missing. Fill in .env and restart web/worker.")
     if (
@@ -353,6 +391,40 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             platform=platform,
             brief=values,
             state="planned" if brief.workflow == "next" and not campaign else "queued",
+        )
+        db.add(job)
+        result.append(job)
+    db.flush()
+    return result
+
+
+def _queue_uploaded(db, settings, brief, snapshot):
+    """One job per platform that fits the admin's own media to the platform; Runway is never called."""
+    batch = uid()
+    result = []
+    for platform in brief.platforms:
+        profile = profiles(settings)[platform]
+        if brief.operation == "video" and brief.duration > profile.max_duration:
+            raise ValueError(f"{platform}: choose a duration of at most {profile.max_duration:g} seconds")
+        if brief.operation == "image" and platform == "tiktok":
+            raise ValueError("TikTok requires video; untick TikTok to post a photo")
+        values = brief.model_dump() | {
+            "generation_prompt": "",
+            "concept": "",
+            "direction": "",
+            "website_snapshot": snapshot or {},
+            "seed": 0,
+            "execution_mode": settings.ai_mode,
+            "end_card": {"asset_id": brief.end_card_asset_id, "seconds": END_CARD_SECONDS}
+            if brief.end_card_asset_id
+            else None,
+        }
+        job = MediaJob(
+            batch_key=f"{batch}:{platform}",
+            platform=platform,
+            brief=values,
+            state="planned" if brief.workflow == "next" else "queued",
+            source_asset_ids=brief.reference_ids + brief.audio_reference_ids,
         )
         db.add(job)
         result.append(job)
@@ -507,6 +579,69 @@ def _save_output(db, settings, job, data):
     db.commit()
 
 
+def _uploaded_copy(db, settings, job, first, originals):
+    """The platform copy of the admin's own photo or video, with an uploaded soundtrack and logo card."""
+    from .gate import media_errors
+
+    brief = job.brief
+    profile = profiles(settings)[job.platform]
+    sound = next((a for a in originals if a.media["mime"].startswith("audio/")), None)
+    soundtrack = None
+    if sound:
+        soundtrack = storage(settings).read(sound.storage_key)
+        if hashlib.sha256(soundtrack).hexdigest() != sound.checksum:
+            raise ValueError("Soundtrack integrity failed before creating the video")
+    end_card = brief.get("end_card") if brief["operation"] == "video" else None
+    logo = db.get(Asset, end_card["asset_id"]) if end_card else None
+    if end_card and not logo:
+        raise ValueError("The end-card logo is missing from the asset library; upload it and create the post again")
+    data, extension = fitted_copy(
+        settings,
+        first,
+        profile,
+        job.platform,
+        duration=brief["duration"],
+        soundtrack=soundtrack,
+        logo=logo,
+        card_seconds=end_card["seconds"] if end_card else 0,
+    )
+    used = [a for a in [first, sound, logo] if a]
+    end_card_tag = {
+        "asset_id": logo.id,
+        "checksum": logo.checksum,
+        "seconds": end_card["seconds"],
+        "note": "The final seconds show Tudelu's official logo, supplied as company media and added by the app.",
+    } if logo else None
+    result = ingest(
+        db,
+        settings,
+        data,
+        f"{job.platform}-{job.id}.{extension}",
+        source=first.source,
+        rights=combined_rights(first.rights, [a for a in [sound, logo] if a]),
+        owner=first.owner,
+        rights_expire_at=min([a.rights_expire_at for a in used if a.rights_expire_at], default=None),
+        customer_permission=first.customer_permission,
+        permission_reference=first.permission_reference,
+        demo_only=any(a.demo_only for a in used),
+        tags=first.tags
+        | {
+            "source_asset_ids": [a.id for a in used],
+            "rendition": {"platform": job.platform, "original_asset_id": first.id},
+            "media_job_id": job.id,
+            "as_uploaded": True,
+            "generated_audio": False,
+            "creative_brief": {"prompt": brief["prompt"], "kind": brief["kind"], "concept": ""},
+            **({"soundtrack_asset_id": sound.id} if sound else {}),
+            **({"end_card": end_card_tag} if end_card_tag else {}),
+        },
+    )
+    errors = media_errors([result], profile, job.platform)
+    if errors:
+        raise ValueError(f"Your media doesn't fit {job.platform.title()}: " + ", ".join(errors))
+    return result
+
+
 def _finish(db, settings, job):
     from .visual_context import ensure_visual_summary
 
@@ -522,6 +657,8 @@ def _finish(db, settings, job):
         result = db.get(Asset, job.output_asset_id)
     elif brief["operation"] == "audio":
         result = first
+    elif brief.get("as_uploaded"):
+        result = _uploaded_copy(db, settings, job, first, originals)
     else:
         profile = profiles(settings)[job.platform]
         data = storage(settings).read(first.storage_key)
@@ -620,6 +757,7 @@ def _finish(db, settings, job):
             brief["product"],
             brief["kind"],
             commit=False,
+            human_review_required=not bool(job.campaign_id),
         )
         job.post_id = post.id
         replaced = brief.get("replaces")
@@ -635,6 +773,82 @@ def _finish(db, settings, job):
             )
     job.state, job.error = "complete", ""
     db.commit()
+
+
+def fitted_copy(
+    settings, asset, profile, platform, *, duration=None, soundtrack=None, logo=None, card_seconds=0
+):
+    """Bytes and file extension of a platform copy of real media, keeping its own shape.
+
+    Media too small for the platform is padded to the platform's size instead. Video keeps its own
+    sound unless a soundtrack is given, and can end on the logo card.
+    """
+    data = storage(settings).read(asset.storage_key)
+    if hashlib.sha256(data).hexdigest() != asset.checksum:
+        raise ValueError(f"{asset.original_name} changed in storage; upload it again")
+    media = asset.media
+    if media["mime"].startswith("image/"):
+        size = fitted_size(
+            media["width"], media["height"], profile.image_width, profile.image_height,
+            profile.image_min_ratio, profile.image_max_ratio,
+        )
+        if size[0] < profile.min_width or size[1] < profile.min_height:
+            size = (profile.image_width, profile.image_height)
+        return image_rendition(data, *size, source=asset.source, generator=asset.generator), "jpg"
+    size = fitted_size(
+        media["width"], media["height"], profile.video_width, profile.video_height,
+        profile.video_min_ratio, profile.video_max_ratio,
+    )
+    # Facebook Reels need at least 540x960 in either orientation.
+    small = size[0] < profile.min_width or size[1] < profile.min_height or (
+        platform == "facebook" and (min(size) < 540 or max(size) < 960)
+    )
+    if small:
+        size = (profile.video_width, profile.video_height)
+    # The requested length includes the logo card; the footage never runs past the video's own end.
+    total = min(duration or media.get("duration", 0), profile.max_duration)
+    footage = min(total - (card_seconds if logo else 0), media.get("duration", 0))
+    if logo is None:
+        return video_rendition(data, *size, footage, soundtrack), "mp4"
+    logo_data = storage(settings).read(logo.storage_key)
+    if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
+        raise ValueError("Logo integrity failed before creating the end card")
+    card = logo_card(logo_data, *size, card_seconds)
+    return video_sequence([(data, 0, footage), (card, 0, card_seconds)], *size, soundtrack), "mp4"
+
+
+def platform_copy(db, settings, asset, platform):
+    """Use real media as it is when the platform accepts it, otherwise a resized copy linked to it."""
+    from .gate import media_errors
+
+    profile = profiles(settings)[platform]
+    if not media_errors([asset], profile, platform):
+        return asset
+    if asset.media.get("duration", 0) > profile.max_duration + 0.1:
+        raise ValueError(
+            f"{asset.original_name} is longer than {profile.max_duration:g} seconds. Trim it, import it again "
+            "and create the post from the shorter video."
+        )
+    data, extension = fitted_copy(settings, asset, profile, platform)
+    copy = ingest(
+        db,
+        settings,
+        data,
+        f"{platform}-{asset.id}.{extension}",
+        source=asset.source,
+        rights=asset.rights,
+        owner=asset.owner,
+        rights_expire_at=asset.rights_expire_at,
+        customer_permission=asset.customer_permission,
+        permission_reference=asset.permission_reference,
+        demo_only=asset.demo_only,
+        tags=asset.tags
+        | {"source_asset_ids": [asset.id], "rendition": {"platform": platform, "original_asset_id": asset.id}},
+    )
+    errors = media_errors([copy], profile, platform)
+    if errors:
+        raise ValueError(f"{asset.original_name} can't be fitted for {platform.title()}: " + ", ".join(errors))
+    return copy
 
 
 def needs_prompt(job):
@@ -705,11 +919,19 @@ def process_jobs(db, settings, provider=None):
                     context={"stored": True},
                 )
                 validate_sources(db, brief, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+                if brief.as_uploaded:
+                    job.state = "rendering"
+                    db.commit()
+                    _finish(db, settings, job)
+                    continue
                 if needs_prompt(job):
                     # Written once and saved before any paid request; resume reuses it.
                     job.brief = job.brief | write_prompt(db, settings, job)
                     db.commit()
                 save_segment_prompt(db, job)
+                from .product_rules import enforce_job_prompt
+
+                enforce_job_prompt(db, job)
                 if job.brief["execution_mode"] == "fixture":
                     from .seed import seed_media
 

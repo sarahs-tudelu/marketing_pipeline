@@ -209,8 +209,9 @@ def edit_asset(db, asset, values, *, original_name, expected_revision, actor):
         setattr(asset, key, values[key])
     for post in affected:
         post.approved_digest = ""
+        post.human_approved_digest = ""
         post.ai_disclosure = any(requires_ai_review(db.get(Asset, key)) for key in post.asset_ids)
-        if post.status in {"generated", "checked", "approved", "scheduled"}:
+        if post.status in {"generated", "checked", "approved", "scheduled", "awaiting_review"}:
             transition(db, post, "held", f"Media details changed for {asset.id}; recheck required", actor)
             post.scheduled_at, post.next_attempt_at = None, None
     db.add(AssetEdit(asset_id=asset.id, actor=actor[:200], before=before, after=after))

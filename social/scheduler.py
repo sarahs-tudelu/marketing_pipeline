@@ -73,6 +73,13 @@ def schedule(db, settings, post, earliest=None):
     if post.status != "approved":
         db.rollback()
         raise PostConflict("This post has already changed status. Refresh its page to see its schedule.")
+    from .human_review import human_approval_current
+
+    if not human_approval_current(db, post):
+        transition(db, post, "awaiting_review", "Content changed; human review required")
+        post.human_approved_digest = ""
+        db.commit()
+        raise PostConflict("Review and approve this media and caption before scheduling.")
     from .adapters import adapter
 
     selected = adapter(settings, db, post)

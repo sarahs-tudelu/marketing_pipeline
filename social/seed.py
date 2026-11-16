@@ -4,7 +4,7 @@ import av
 from PIL import Image, ImageDraw
 from sqlalchemy import select
 
-from .config import PLATFORMS
+from .config import PLATFORMS, REAL_MEDIA_ONLY
 from .facts import load_facts
 from .gate import run_gate
 from .models import Account, Asset, Post, RequestRecord
@@ -67,11 +67,12 @@ def demo(db, settings):
     if existing:
         return report(db, existing)
     posts = []
-    for platform in PLATFORMS:
+    # Pinterest posts only real Google Drive media, which the generated demo media is not.
+    for platform in [p for p in PLATFORMS if p not in REAL_MEDIA_ONLY]:
         asset = next(
             a for a in assets if a.media["mime"].startswith("video/" if platform == "tiktok" else "image/")
         )
-        post = draft(db, platform, "Pipeline demonstration", [asset.id], facts.id, product="demo")
+        post = draft(db, platform, "Pipeline demonstration", [asset.id], facts.id, product="demo", human_review_required=False)
         generate(db, settings, post)
         run_gate(db, settings, post)
         if post.status != "approved":

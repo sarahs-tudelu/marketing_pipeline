@@ -49,6 +49,7 @@ CHECKS = {
     "rights": ("Media rights or customer permission are missing or expired.", "media"),
     "media": ("The media doesn't meet this platform's format limits.", "media"),
     "provenance_integrity": ("The media file changed after it was saved.", "media"),
+    "drive_media": ("This platform only posts real photos and videos from Google Drive.", "replace"),
     "duplicates": ("The caption is too similar to another recent post.", "caption"),
     "audio_review": ("The audio check found a problem with the sound.", "music"),
     "vision_review": ("The visual check found a problem in the picture.", "visual"),
@@ -64,6 +65,7 @@ FIXES = {
     "music": "Regenerate the music below.",
     "media": "Correct the media details, then recheck the post.",
     "recheck": "Correct the cause, then recheck the post.",
+    "replace": "Reject this post, then create it again from a real photo or video imported from Google Drive.",
 }
 
 

@@ -28,6 +28,11 @@ OAUTH = {
         "token": "https://open.tiktokapis.com/v2/oauth/token/",
         "scope": "user.info.basic,video.upload",
     },
+    "pinterest": {
+        "authorize": "https://www.pinterest.com/oauth/",
+        "token": "https://api.pinterest.com/v5/oauth/token",
+        "scope": "boards:read,pins:read,pins:write,user_accounts:read",
+    },
 }
 
 
@@ -37,6 +42,7 @@ def ready(settings, platform):
         and getattr(settings, platform + "_client_id")
         and getattr(settings, platform + "_client_secret").get_secret_value()
         and settings.token_encryption_key.get_secret_value()
+        and (platform != "pinterest" or settings.pinterest_board_id)
     )
 
 
@@ -89,6 +95,9 @@ def token_call(settings, platform, data, client=None):
     if platform == "x":
         auth = httpx.BasicAuth(client_id, secret)
         data["client_id"] = client_id
+    elif platform == "pinterest":
+        # Pinterest takes the client credentials only as HTTP Basic auth.
+        auth = httpx.BasicAuth(client_id, secret)
     else:
         data["client_key" if platform == "tiktok" else "client_id"] = client_id
         data["client_secret"] = secret
@@ -99,8 +108,8 @@ def token_call(settings, platform, data, client=None):
     payload = response.json()
     if payload.get("error") or not payload.get("access_token") or not payload.get("expires_in"):
         raise ValueError("Token response is invalid")
-    if platform == "x" and not payload.get("refresh_token"):
-        raise ValueError("X offline.access refresh token missing")
+    if platform in {"x", "pinterest"} and not payload.get("refresh_token"):
+        raise ValueError(f"{platform.title()} did not return a refresh token; reconnect the account")
     return payload
 
 
@@ -167,6 +176,8 @@ def callback(db, settings, platform, state, code, browser_nonce, client=None):
         external_id = identity["data"]["id"]
     elif platform == "tiktok":
         external_id = identity["data"]["user"]["open_id"]
+    elif platform == "pinterest":
+        external_id = identity["user"]["id"]
     else:
         owner = "urn:li:organization:" + settings.linkedin_organization_id
         if not settings.linkedin_organization_id or not any(

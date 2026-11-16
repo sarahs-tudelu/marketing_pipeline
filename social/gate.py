@@ -8,13 +8,13 @@ import httpx
 from sqlalchemy import func, select
 
 from .audio_review import review_audio
-from .config import profiles
+from .config import REAL_MEDIA_ONLY, profiles
 from .db import now, uid
 from .facts import Facts, active, caption_fact_ids, composed, content_digest, part_fact_ids, render
 from .image_provenance import verify_asset_metadata
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
-from .provenance import asset_source_error, asset_type, requires_ai_review
+from .provenance import asset_source_error, asset_type, real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 from .security import public_url
@@ -255,6 +255,8 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         return current and not private and not missing and not unpermitted, details
 
     check("rights", rights)
+    if post.platform in REAL_MEDIA_ONLY:
+        check("drive_media", lambda: (not (error := real_drive_media_error(db, assets)), {"reason": error}))
     check("media", lambda: (not (errors := media_errors(assets, profile, post.platform)), {"errors": errors}))
     check(
         "provenance_integrity",
@@ -365,9 +367,19 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
             return True, {"reason": "Company media; AI vision check not required"}
         result = providers.vision(assets, context)
         approved = {text for f in selected for text in [f.text, *f.variants]}
-        return result.passed and not (
+        product_reviewed = not result.product_mismatches and (
+            not facts.visual_guidance or result.product_rules_version == facts.visual_guidance.version
+        )
+        details = result.model_dump() | {
+            "product_rules_checked": bool(product_reviewed), "review_scope": "media_only",
+        }
+        if not product_reviewed:
+            details["reasons"] = list(result.reasons) + result.product_mismatches
+            if facts.visual_guidance and result.product_rules_version != facts.visual_guidance.version:
+                details["reasons"].append("Visual review did not confirm the selected Builder product rules.")
+        return result.passed and product_reviewed and not (
             result.garbled_text or result.misused_logos or result.unexpected_people
-        ) and all(c in approved for c in result.visible_claims), result.model_dump()
+        ) and all(c in approved for c in result.visible_claims), details
 
     check("audio_review", lambda: review_audio(db, settings, assets, context, facts, at, providers))
     audio_check = results[-1]
@@ -395,7 +407,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     return results, assets
 
 
-def run_gate(db, settings, post, **kwargs):
+def run_gate(db, settings, post, *, human_actor=None, **kwargs):
     lock_post(db, post)
     if post.status != "generated":
         db.rollback()
@@ -404,9 +416,15 @@ def run_gate(db, settings, post, **kwargs):
     transition(db, post, "checked", "Automated checks completed")
     failures = [c.name for c in results if not c.passed]
     if failures:
+        post.human_approved_digest = ""
         transition(db, post, "held", ", ".join(failures))
     else:
         post.approved_digest = content_digest(post, assets)
-        transition(db, post, "approved", "All checks passed")
+        if human_actor:
+            post.human_approved_digest = post.approved_digest
+        if post.human_review_required and post.human_approved_digest != post.approved_digest:
+            transition(db, post, "awaiting_review", "All checks passed; waiting for human review")
+        else:
+            transition(db, post, "approved", "Human approved this media and caption; all checks passed" if human_actor else "All checks passed", human_actor or "pipeline")
     db.commit()
     return results

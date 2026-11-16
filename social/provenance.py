@@ -37,3 +37,25 @@ def asset_type(asset):
     return (asset.tags or {}).get("asset_type") or (
         "ai_concept" if asset.source in {"ai_generated", "ai_edited"} else None
     )
+
+
+def real_drive_media_error(db, assets):
+    """Why media can't go to a real-media-only platform such as Pinterest, or "" when it can.
+
+    Every asset and everything it was made from must be real (no AI generation or editing), and the
+    originals must have been imported from Google Drive. Resized platform copies count as the original.
+    """
+    from .asset_edit import ancestry
+
+    sources, missing = ancestry(db, assets)
+    if missing:
+        return "Media this post was made from is missing from the asset library."
+    if any(requires_ai_review(a) for a in sources):
+        return "Pinterest only posts real photos and videos, and this media was made or edited with AI."
+    originals = [a for a in sources if "rendition" not in (a.tags or {})]
+    if not originals or not all((a.tags or {}).get("google_drive_file_id") for a in originals):
+        return (
+            "Pinterest only posts photos and videos imported from Google Drive. Import them through "
+            "Asset library → Automatic Google Drive imports, then create the post from them."
+        )
+    return ""

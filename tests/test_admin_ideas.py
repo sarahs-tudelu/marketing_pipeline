@@ -45,11 +45,11 @@ def test_next_post_idea_waits_for_automation_and_is_consumed_once(db, settings):
             advance_queue(db, settings)
         db.refresh(job)
         assert job.state == "complete" and job.post_id
-        assert db.get(Post, job.post_id).status == "scheduled"
+        assert db.get(Post, job.post_id).status == "awaiting_review"
         activate_planned_jobs(db, settings)
         assert len(db.scalars(select(MediaJob)).all()) == 1
         assert len(db.scalars(select(Post)).all()) == 1
-        assert client.get("/api/media-jobs").json()[0]["post_status"] == "scheduled"
+        assert client.get("/api/media-jobs").json()[0]["post_status"] == "awaiting_review"
 
 
 def test_create_now_runs_full_workflow_with_automation_off_but_leaves_other_drafts(db, settings, assets, monkeypatch):
@@ -71,7 +71,7 @@ def test_create_now_runs_full_workflow_with_automation_off_but_leaves_other_draf
     db.refresh(unrelated)
     assert unrelated.status == "draft"
     result = db.get(Post, job.post_id)
-    assert result.status == "scheduled" and result.caption and result.dry_run
+    assert result.status == "awaiting_review" and result.caption and result.dry_run
     assert db.get(Asset, job.output_asset_id).media["visual_summary"]
     assert not result.remote_id and result.published_at is None
 

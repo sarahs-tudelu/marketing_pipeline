@@ -3,14 +3,14 @@ from datetime import timedelta
 
 from sqlalchemy import select, update
 
-from .config import PLATFORMS, profiles
+from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
 from .db import now
 from .facts import Facts, active, caption_fact_ids, content_digest, render
 from .gate import evaluate, run_gate
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Account, Asset, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import alert, event
-from .provenance import requires_ai_review
+from .provenance import real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 from .recovery import CAPTION_FAILED, caption_error
@@ -25,13 +25,15 @@ def bootstrap(db):
     db.commit()
 
 
-def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="promotional", *, commit=True):
+def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="promotional", *, commit=True, human_review_required=True):
     if platform not in PLATFORMS or kind not in {"promotional", "non_promotional"}:
         raise ValueError("Invalid platform/content kind")
     if not asset_ids or any(not db.get(Asset, id) for id in asset_ids) or not db.get(FactSheet, facts_id):
         raise ValueError("Select existing assets and facts version")
     if any(db.get(Asset, id).media["mime"].startswith("audio/") for id in asset_ids):
         raise ValueError("Audio must be combined with a video in Media Studio before creating a post")
+    if platform in REAL_MEDIA_ONLY and (error := real_drive_media_error(db, [db.get(Asset, i) for i in asset_ids])):
+        raise ValueError(error)
     post = Post(
         platform=platform,
         campaign=campaign,
@@ -39,6 +41,7 @@ def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="
         facts_id=facts_id,
         product=product,
         kind=kind,
+        human_review_required=human_review_required,
     )
     db.add(post)
     db.flush()
@@ -50,7 +53,7 @@ def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="
     return post
 
 
-def generate(db, settings, post, providers=None):
+def generate(db, settings, post, providers=None, *, revision_request="", previous_caption=""):
     lock_post(db, post)
     if post.status != "draft":
         db.rollback()
@@ -77,6 +80,8 @@ def generate(db, settings, post, providers=None):
         "product": post.product,
         "profile": profile.model_dump(),
         "campaign": post.campaign,
+        "revision_request": revision_request,
+        "previous_caption": previous_caption,
         "assets": [{"id": a.id, "source": a.source, "tags": a.tags} for a in assets],
         "creative_brief": [a.tags.get("creative_brief", {}) for a in assets],
         "facts": [
@@ -126,9 +131,10 @@ def generate(db, settings, post, providers=None):
     try:
         from .visual_context import current_summary, ensure_visual_summary
 
-        # Uploaded AI media gets observed context too, regardless of generator vendor.
+        # Uploaded AI media gets observed context too, regardless of generator vendor. Real-media-only
+        # platforms describe what the photo or video shows, since no generation prompt exists.
         for asset in assets:
-            if requires_ai_review(asset):
+            if requires_ai_review(asset) or post.platform in REAL_MEDIA_ONLY:
                 ensure_visual_summary(db, settings, asset)
         context["visual_context"] = [
             {"asset_id": a.id, **summary}
@@ -167,26 +173,37 @@ def generate(db, settings, post, providers=None):
     return post
 
 
-def rewrite_caption(db, settings, post, actor):
+def rewrite_caption(db, settings, post, actor, revision_request=""):
     """Write a fresh caption for a held post, keeping its media, then run the checks again."""
     lock_post(db, post)
-    if post.status != "held":
+    if post.status not in {"held", "awaiting_review"}:
         db.rollback()
-        raise PostConflict("Only a held post can get a new caption. Refresh its page to see its status.")
+        raise PostConflict("Stop scheduled delivery before changing a caption.")
+    from .human_review import require_no_replacement
+
+    require_no_replacement(db, post)
+    revision_request = str(revision_request or "").strip()
+    if len(revision_request) > 2000:
+        raise ValueError("Keep caption change instructions under 2000 characters")
+    previous_caption = post.caption
+    post.human_review_required, post.human_approved_digest = True, ""
     post.approved_digest = ""
-    transition(db, post, "draft", "New caption requested", actor)
-    db.commit()
-    generate(db, settings, post)
+    transition(db, post, "draft", "New caption requested" + (": " + revision_request if revision_request else ""), actor)
+    generate(db, settings, post, revision_request=revision_request, previous_caption=previous_caption)
     if post.status == "generated":
         run_gate(db, settings, post)
     return post
 
 
 def delete_draft(db, post, actor):
+    from .human_review import lock_delivery, require_no_replacement, require_unpublished
+
+    lock_delivery(db)
     lock_post(db, post)
-    if post.status != "draft":
-        db.rollback()
-        raise PostConflict("Only draft posts can be deleted. Refresh to see this post's current status.")
+    require_unpublished(db, post)
+    require_no_replacement(db, post)
+    post.scheduled_at, post.next_attempt_at = None, None
+    post.approved_digest, post.human_approved_digest = "", ""
     transition(db, post, "deleted", "Draft deleted", actor)
     db.commit()
 
@@ -209,6 +226,9 @@ def publish_due(db, settings, at=None, client=None):
         db.execute(update(Control).where(Control.id == 1).values(revision=Control.revision + 1))
         db.refresh(candidate)
         post = candidate
+        if post.status not in {"scheduled", "publishing"}:
+            db.rollback()
+            continue
         account = db.get(Account, post.platform)
         if db.get(Control, 1).killed or account.paused or (
             not post.dry_run and account.live_enabled is False
@@ -252,6 +272,8 @@ def publish_due(db, settings, at=None, client=None):
                 failed = [c.name for c in checks if not c.passed]
                 if content_digest(post, assets) != post.approved_digest:
                     failed.append("approval_digest_changed")
+                if post.human_review_required and content_digest(post, assets) != post.human_approved_digest:
+                    failed.append("human_approval_required")
                 if failed:
                     transition(db, post, "held", "Pre-publish checks: " + ", ".join(failed))
                     db.commit()

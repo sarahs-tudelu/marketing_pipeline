@@ -57,6 +57,11 @@ def redact(value):
                 "fbuploader_video_file_chunk",
                 "client_secret",
                 "system_token",
+                # Pinterest's presigned video upload form.
+                "policy",
+                "x-amz-signature",
+                "x-amz-credential",
+                "x-amz-security-token",
             }
             else redact(v)
             for k, v in value.items()

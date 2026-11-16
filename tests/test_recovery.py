@@ -121,12 +121,12 @@ def test_failed_caption_is_explained_and_can_be_written_again(db, settings, fact
         assert written.status_code == 200 and str(written.url).endswith(f"/posts/{post.id}")
         assert 'id="post-held"' not in written.text
     db.refresh(post)
-    assert post.caption and post.status == "approved" and calls == ["instagram", "instagram"]
+    assert post.caption and post.status == "awaiting_review" and calls == ["instagram", "instagram"]
     assert reasons(db, post)[-4:] == [
         "New caption requested",
         "Caption provider: fixture",
         "Automated checks completed",
-        "All checks passed",
+        "All checks passed; waiting for human review",
     ]
 
 
@@ -314,7 +314,7 @@ def test_recovery_panels_in_browser(db, settings, facts, logo, monkeypatch, tmp_
             async with page.expect_navigation():
                 await held.get_by_role("button", name="Write the caption again").click()
             await playwright.expect(page.locator("#post-held")).to_have_count(0)
-            await playwright.expect(page.locator(".status.approved")).to_be_visible()
+            await playwright.expect(page.locator(".status.awaiting_review")).to_be_visible()
             await page.goto("http://studio.test/admin/media-queue")
             card = page.locator(f'[data-job-id="{job.id}"]')
             await playwright.expect(card).to_contain_text("Runway's content moderation declined it.")

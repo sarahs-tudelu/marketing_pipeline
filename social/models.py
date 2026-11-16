@@ -106,6 +106,8 @@ class Post(Base):
     embedding: Mapped[list] = mapped_column(JSON, default=list)
     embedding_model: Mapped[str] = mapped_column(String(100), default="")
     approved_digest: Mapped[str] = mapped_column(String(64), default="")
+    human_review_required: Mapped[bool] = mapped_column(Boolean, default=True)
+    human_approved_digest: Mapped[str] = mapped_column(String(64), default="")
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)

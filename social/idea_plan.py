@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from .db import now
 from .facts import Facts, active
 from .models import FactSheet
+from .product_rules import context_for, profile_for
 from .provider_errors import ProviderError
 
 END_CARD_SECONDS = 3
@@ -99,6 +100,8 @@ class IdeaPlan(BaseModel):
     available_systems: list[str] = Field(default_factory=list, max_length=60)
     notes: list[str] = Field(default_factory=list, max_length=20)
     planner: str = ""
+    # The admin's own photo or video is posted as it is; nothing is generated.
+    as_uploaded: bool = False
 
     @field_validator("title", mode="before")
     @classmethod
@@ -137,6 +140,10 @@ PLANNER_INSTRUCTIONS = (
     "end_card: true when the idea asks for the logo or brand at the end of a video. The generator never draws "
     "logos; the app appends the official uploaded logo as an end card. "
     "kind: use requested_style unless it is auto; introductions, launches and offers are promotional. "
+    "When catalog.visual_guidance is present, use only its product profiles and obey their global and "
+    "product rules, even if a website example or idea conflicts. Fixed pergola louvers do not operate; "
+    "use camera motion to show them. Explain any unsupported request in notes. This guidance is for "
+    "depiction, not engineering certification or new caption claims. "
     "available_systems: every system the catalog shows as currently offered (not 'Coming soon'). "
     "title: a short internal post name, at most 60 characters. "
     "notes: 2-6 short plain-language notes on how you read the idea, for example "
@@ -237,10 +244,13 @@ def catalog_for(db, facts_id, snapshot, product):
         p.get("name") for p in (facts.products if facts else []) if isinstance(p, dict) and p.get("name")
     ]
     at = now()
+    if facts and facts.visual_guidance:
+        products = [p.name for p in facts.visual_guidance.products]
     return {
         "website": {k: snapshot.get(k) for k in ("url", "text", "image_descriptions") if snapshot.get(k)},
         "products": facts.products if facts else [],
         "product_names": products,
+        "visual_guidance": context_for(facts.visual_guidance) if facts else None,
         "facts": [f.text for f in facts.facts if active(f, at) and f.product in {product, "company"}][:20]
         if facts
         else [],
@@ -334,7 +344,7 @@ def plan_idea(
             "end_card_seconds": END_CARD_SECONDS,
             "max_clips": MAX_CLIPS,
             "explicit_signals": signals,
-            "catalog": {k: catalog[k] for k in ("website", "products", "facts")},
+            "catalog": {k: catalog[k] for k in ("website", "products", "facts", "visual_guidance")},
         }
         try:
             plan = IdeaPlan.model_validate(Claude(settings).call(PLANNER_INSTRUCTIONS, context))
@@ -347,7 +357,7 @@ def plan_idea(
         plan.planner = settings.anthropic_model
     else:
         plan = _rule_plan(idea, signals, catalog, product, has_video_reference)
-    return finalize(
+    result = finalize(
         plan,
         signals,
         idea,
@@ -356,6 +366,15 @@ def plan_idea(
         has_video_reference,
         _grounding(catalog, product),
     )
+    if catalog["visual_guidance"]:
+        from .product_rules import VisualGuidance
+
+        guidance = VisualGuidance.model_validate(catalog["visual_guidance"])
+        for shot in result.shots:
+            if shot.system:
+                profile_for(guidance, shot.system)
+        result.available_systems = [p.name for p in guidance.products]
+    return result
 
 
 def finalize(plan, signals, idea, requested_format, requested_style, has_video_reference, grounding):
@@ -429,6 +448,62 @@ def finalize(plan, signals, idea, requested_format, requested_style, has_video_r
     )
 
 
+def uploaded_plan(idea, uploads, *, requested_style="auto"):
+    """A plan for posting the admin's own photo or video as it is. Only the caption is written by AI."""
+    visual = [a for a in uploads if not a.media["mime"].startswith("audio/")]
+    audio = [a for a in uploads if a.media["mime"].startswith("audio/")]
+    if len(visual) != 1:
+        raise ValueError(
+            "To post your media as it is, add one photo or one video, plus an audio file for its sound if "
+            "you like. To use several photos, choose Use it as a starting point for new AI media."
+        )
+    if len(audio) > 1:
+        raise ValueError("Add at most one audio file; it becomes the video's soundtrack")
+    media = visual[0].media
+    video = media["mime"].startswith("video/")
+    if audio and not video:
+        raise ValueError("A photo can't carry sound. Add a video, or untick the audio file.")
+    signals = read_signals(idea)
+    notes = []
+    end_card = video and signals["end_card"]
+    duration = 10
+    if video:
+        length = int(media.get("duration", 0))
+        if length < 3:
+            raise ValueError("Your video needs to be at least 3 seconds long")
+        footage = min(length, 90 - (END_CARD_SECONDS if end_card else 0))
+        if footage < length:
+            notes.append(f"Your video is {length} seconds long, so the post uses its first {footage} seconds.")
+        if signals["seconds"] and signals["seconds"] - (END_CARD_SECONDS if end_card else 0) < footage:
+            footage = max(MIN_CLIP_SECONDS, signals["seconds"] - (END_CARD_SECONDS if end_card else 0))
+            notes.append(f"Length set to {signals['seconds']} seconds as written in your idea.")
+        duration = footage + (END_CARD_SECONDS if end_card else 0)
+        if signals["soundtrack"] and not audio:
+            notes.append(
+                "Music isn't generated for your own video. It keeps its own sound unless you add an audio file."
+            )
+        if audio:
+            notes.append(f"{audio[0].original_name} replaces the video's own sound.")
+    elif signals["soundtrack"] or signals["end_card"] or signals["video"]:
+        notes.append("Your photo is posted as a photo, so it can't carry music, motion or a logo end card.")
+    kind = (
+        requested_style
+        if requested_style != "auto"
+        else "non_promotional"
+        if signals["editorial"]
+        else "promotional"
+    )
+    return IdeaPlan(
+        title=default_title(idea),
+        operation="video" if video else "image",
+        duration=max(3, min(90, duration)),
+        kind=kind,
+        end_card=end_card,
+        notes=notes,
+        as_uploaded=True,
+    )
+
+
 def logo_assets(assets, *, live=False):
     """Image assets that can serve as the logo end card, explicitly tagged logos first."""
     at = now()
@@ -476,6 +551,11 @@ def _platform_names(platforms):
 def plan_summary(plan, platforms):
     """One plain sentence describing what will be made."""
     where = _platform_names(platforms)
+    if plan.as_uploaded:
+        if plan.operation == "image":
+            return f"Your photo, posted as it is, for {where}."
+        tail = f" and a {END_CARD_SECONDS}-second logo end card" if plan.end_card else ""
+        return f"Your video, posted as it is ({plan.duration} seconds{tail}), for {where}."
     if plan.operation == "image":
         return f"One image for {where}."
     if plan.operation == "video_edit":
@@ -499,6 +579,11 @@ def plan_summary(plan, platforms):
 
 def work_summary(plan, platforms):
     """What Runway is asked to generate, so cost is visible before anything starts."""
+    if plan.as_uploaded:
+        return (
+            "Nothing is sent to Runway. Each platform gets a copy of your media sized for it, and the original "
+            "stays unchanged in the asset library. AI writes the caption, and the usual checks run."
+        )
     count = max(1, len(platforms))
     each = "per platform" if count > 1 else "in total"
     if plan.operation == "image":

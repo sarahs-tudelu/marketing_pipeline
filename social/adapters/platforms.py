@@ -570,3 +570,110 @@ class TikTok(BaseAdapter):
         if status["data"]["status"] not in {"SEND_TO_USER_INBOX", "PUBLISH_COMPLETE"}:
             raise Deferred(30)
         return PublishResult(info["publish_id"], "", "awaiting_manual")
+
+
+class Pinterest(BaseAdapter):
+    """Pins on the configured board. The gate lets only real Google Drive photos and videos through."""
+
+    platform = "pinterest"
+    base = "https://api.pinterest.com/v5"
+
+    def delivery_result(self, body, headers):
+        remote = str(body.get("id", ""))
+        if not (re.fullmatch(r"\d{1,40}", remote) or (self.dry and remote.startswith("dry-"))):
+            raise PublishError(
+                "ambiguous", "Pinterest did not return a Pin ID; check the board before retrying"
+            )
+        return PublishResult(
+            remote, "" if self.dry else f"https://www.pinterest.com/pin/{remote}/", "published"
+        )
+
+    def validate_credentials(self):
+        user = self.direct("GET", f"{self.base}/user_account")
+        board_id = self.s.pinterest_board_id
+        if not re.fullmatch(r"\d{1,40}", board_id):
+            raise ValueError("PINTEREST_BOARD_ID must be the board's numeric ID")
+        board = self.direct("GET", f"{self.base}/boards/{board_id}")
+        owner = (board.get("owner") or {}).get("username")
+        if str(board.get("id")) != board_id or (owner and owner != user.get("username")):
+            raise ValueError("The configured Pinterest board doesn't belong to the connected account")
+        return {"user": user, "board": {k: board.get(k) for k in ("id", "name", "privacy")}}
+
+    def get_status(self, remote_id):
+        return self.direct("GET", f"{self.base}/pins/{remote_id}")
+
+    def _publish(self):
+        from ..gate import URL_RE
+
+        asset = self.assets()[0]
+        if asset.media["mime"].startswith("video/"):
+            media_source = self._video_source(asset)
+        else:
+            url = self.store.url(asset.storage_key)
+            if not self.dry:
+                public_url(url)
+            media_source = {"source_type": "image_url", "url": url}
+        body = {
+            "board_id": self.s.pinterest_board_id or "DRY_BOARD",
+            "description": self.post.caption,
+            "media_source": media_source,
+        }
+        # The Pin opens the first approved link in the caption; the gate already checked it.
+        if links := URL_RE.findall(self.post.caption):
+            body["link"] = links[0]
+        result, headers = self.request(
+            "publish",
+            "POST",
+            f"{self.base}/pins",
+            json=body,
+            fake={"id": f"dry-pin-{self.post.id}"},
+            irreversible=True,
+        )
+        return self.delivery_result(result, headers)
+
+    def _video_source(self, asset):
+        """Register the upload, send the bytes to Pinterest's presigned form, then wait for processing."""
+        registered, _ = self.request(
+            "media-register",
+            "POST",
+            f"{self.base}/media",
+            json={"media_type": "video"},
+            fake={
+                "media_id": "1",
+                "media_type": "video",
+                "upload_url": "https://pinterest-media-upload.s3-accelerate.amazonaws.com/",
+                "upload_parameters": {"key": "dry-run"},
+            },
+        )
+        media_id = str(registered.get("media_id", ""))
+        if not re.fullmatch(r"\d{1,40}", media_id):
+            raise PublishError("validation", "Pinterest did not return a media ID for the video")
+        fields = {str(k): str(v) for k, v in (registered.get("upload_parameters") or {}).items()}
+        self.request(
+            "media-upload",
+            "POST",
+            str(registered.get("upload_url", "")),
+            data=fields,
+            files={"file": (asset.original_name, self.store.read(asset.storage_key), asset.media["mime"])},
+            authorized=False,
+        )
+        status, _ = self.request(
+            "media-status",
+            "GET",
+            f"{self.base}/media/{media_id}",
+            volatile=True,
+            fake={"media_id": media_id, "media_type": "video", "status": "succeeded"},
+        )
+        if status.get("status") == "failed":
+            raise PublishError(
+                "validation",
+                "Pinterest could not process the video. It needs to be an MP4, MOV or M4V of at least 4 seconds.",
+            )
+        if status.get("status") != "succeeded":
+            raise Deferred(30)
+        # Cover from the first second, so a fade-in doesn't leave the Pin with a black cover.
+        return {
+            "source_type": "video_id",
+            "media_id": media_id,
+            "cover_image_key_frame_time": 1 if asset.media.get("duration", 0) >= 2 else 0,
+        }

@@ -47,6 +47,6 @@ def assets(db, settings):
 @pytest.fixture
 def post(db, settings, assets):
     facts = load_facts(db, settings.facts_path)
-    p = draft(db, "linkedin", "test", [a.id for a in assets], facts.id, product="demo")
+    p = draft(db, "linkedin", "test", [a.id for a in assets], facts.id, product="demo", human_review_required=False)
     generate(db, settings, p)
     return p

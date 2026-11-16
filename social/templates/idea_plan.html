@@ -1,8 +1,9 @@
 <form method="post" action="/forms/ideas/create" id="idea-plan">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  {% for key in ['prompt', 'format', 'kind', 'facts_id', 'product', 'rights', 'owner', 'website'] %}<input type="hidden" name="{{ key }}" value="{{ idea_form.get(key, '') }}">{% endfor %}
+  {% for key in ['prompt', 'format', 'kind', 'facts_id', 'product', 'rights', 'owner', 'website', 'upload_use'] %}<input type="hidden" name="{{ key }}" value="{{ idea_form.get(key, '') }}">{% endfor %}
   {% for value in idea_form.get('platforms', []) %}<input type="hidden" name="platforms" value="{{ value }}">{% endfor %}
   {% for value in idea_form.get('reference_ids', []) %}<input type="hidden" name="reference_ids" value="{{ value }}">{% endfor %}
+  {% for value in idea_form.get('upload_ids', []) %}<input type="hidden" name="upload_ids" value="{{ value }}">{% endfor %}
   {% for value in plan.available_systems %}<input type="hidden" name="available_systems" value="{{ value }}">{% endfor %}
   {% for value in plan.notes %}<input type="hidden" name="notes" value="{{ value }}">{% endfor %}
   <input type="hidden" name="planner" value="{{ plan.planner }}">
@@ -12,6 +13,27 @@
     <blockquote class="idea-quote">{{ idea_form.get('prompt', '') }}</blockquote>
     {% if plan.notes %}<h3>How your idea was read</h3><ul class="plan-notes">{% for note in plan.notes %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
   </section>
+  {% if plan.as_uploaded %}
+  <input type="hidden" name="as_uploaded" value="on"><input type="hidden" name="operation" value="{{ plan.operation }}">
+  <section id="uploaded-plan">
+    <h2>Adjust anything before posting</h2>
+    <div class="two">
+      <label>Post name<input name="campaign" required maxlength="200" value="{{ plan.title }}"></label>
+      <label>Content style<select name="plan_kind"><option value="promotional" {{ 'selected' if plan.kind == 'promotional' else '' }}>Promotional</option><option value="non_promotional" {{ 'selected' if plan.kind == 'non_promotional' else '' }}>Editorial / non-promotional</option></select></label>
+    </div>
+    <h3>Your media</h3>
+    <ul class="plan-notes">{% for a in idea_uploads %}<li>{{ a.original_name }} · {{ {'image': 'photo', 'video': 'video', 'audio': 'soundtrack'}[a.media.mime.split('/')[0]] }}{% if a.media.get('duration') %} · {{ a.media.duration|round|int }} s{% endif %}</li>{% endfor %}</ul>
+    <p class="muted">It's posted as it is. Each platform gets a copy sized for it, and the original stays unchanged in the asset library.</p>
+    {% if plan.operation == 'video' %}
+      <label>Length (seconds)<input type="number" name="duration" min="3" max="90" value="{{ plan.duration }}"></label>
+      <fieldset><legend>Ending</legend>
+        <label class="checkbox"><input type="checkbox" name="end_card" {{ 'checked' if plan.end_card and logos else '' }} {{ 'disabled' if not logos else '' }}>End with the Tudelu logo ({{ end_card_seconds }} seconds, added after your video)</label>
+        {% if logos %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>
+        {% else %}<p class="muted">To end videos with the logo, <a href="/admin/upload">upload it</a> and tick <i>This is the Tudelu logo</i>.</p>{% endif %}
+      </fieldset>
+    {% endif %}
+  </section>
+  {% else %}
   <section>
     <h2>Adjust anything before generating</h2>
     <div class="two">
@@ -49,15 +71,16 @@
       </fieldset>
     </div>
   </section>
+  {% endif %}
   <section>
-    <h2>What will be generated</h2>
+    <h2>{{ 'What happens next' if plan.as_uploaded else 'What will be generated' }}</h2>
     <p>{{ work_summary }}</p>
-    <p class="muted">Nothing is generated until you choose below. Each Runway prompt is written from your idea, tudelu.com, the approved facts and your Public uploads just before it is sent.</p>
+    {% if not plan.as_uploaded %}<p class="muted">Nothing is generated until you choose below. Each Runway prompt is written from your idea, tudelu.com, the approved facts and your Public uploads just before it is sent.</p>{% endif %}
     <div class="actions">
       <button class="primary" name="mode" value="once">Create now</button>
       <button name="mode" value="next">Use for next automatic post</button>
       <button name="mode" value="back" formnovalidate>Change the idea</button>
     </div>
-    <small>Create now generates the media, writes the caption, runs checks and schedules the post, even when automatic posts are off. Next automatic post waits until automatic posts are on. Global and platform pauses still apply.</small>
+    <small>Create now {{ 'prepares your media' if plan.as_uploaded else 'generates the media' }}, writes the caption and runs checks, even when automatic posts are off. You review the finished post before approving its schedule. Next automatic post waits until automation is on, then also requires your review. Global and platform pauses still apply.</small>
   </section>
 </form>

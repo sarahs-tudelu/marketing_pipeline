@@ -11,6 +11,21 @@ from PIL import Image, ImageOps
 from .image_provenance import TYPES, declaration_xmp, inspect_xmp, read_image_provenance
 
 
+def fitted_size(width, height, box_width, box_height, low, high):
+    """Output size for real media: its own shape, scaled down to fit the platform's box.
+
+    Landscape media uses the box turned sideways. A shape the platform doesn't accept is padded
+    to the platform's box instead. Sizes are never scaled up, and are always even.
+    """
+    ratio = width / max(height, 1)
+    if not low <= ratio <= high:
+        return box_width, box_height
+    if ratio > 1:
+        box_width, box_height = max(box_width, box_height), min(box_width, box_height)
+    scale = min(1, box_width / width, box_height / height)
+    return max(2, int(width * scale) // 2 * 2), max(2, int(height * scale) // 2 * 2)
+
+
 def image_rendition(data, width, height, *, source=None, generator=None):
     with Image.open(io.BytesIO(data)) as image:
         inherited = inspect_xmp(image.info)

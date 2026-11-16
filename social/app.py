@@ -20,7 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import connections
 from .clip_replace import clip_options, replace_part
-from .config import PLATFORMS, get_settings, profiles
+from .config import PLATFORMS, REAL_MEDIA_ONLY, get_settings, profiles
 from .db import make_engine, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
@@ -35,10 +35,18 @@ from .idea_plan import (
     plan_idea,
     plan_summary,
     shot_seconds,
+    uploaded_plan,
     work_summary,
 )
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
-from .media_studio import CreativeBrief, queue_jobs, resume_job, validate_sources, website_snapshot
+from .media_studio import (
+    CreativeBrief,
+    platform_copy,
+    queue_jobs,
+    resume_job,
+    validate_sources,
+    website_snapshot,
+)
 from .models import (
     Account,
     Alert,
@@ -55,7 +63,7 @@ from .models import (
 )
 from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, delete_draft, draft, generate, rewrite_caption
-from .provenance import requires_ai_review
+from .provenance import real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 from .recovery import held_reason, retry_option, retry_step, task_failed
@@ -74,6 +82,11 @@ class DraftInput(BaseModel):
     facts_id: str
     product: str = "company"
     kind: str = "promotional"
+
+
+# One photo or video and a soundtrack to post as they are, or up to three images and three audio
+# references for new AI media.
+MAX_IDEA_UPLOADS = 6
 
 
 def create_app(settings=None):
@@ -237,6 +250,7 @@ def create_app(settings=None):
         from .adapters import ADAPTERS
         from .asset_edit import form_values as asset_edit_values
         from .drive_import import panel as drive_panel
+        from .facts import content_digest
         from .models import AssetEdit
 
         editing_asset = db.get(Asset, editing_asset_id) if editing_asset_id else None
@@ -261,7 +275,7 @@ def create_app(settings=None):
             select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(200)
         ).all()
         if view == "queues":
-            posts = [p for p in posts if p.status in {"held", "awaiting_manual", "failed"}]
+            posts = [p for p in posts if p.status in {"held", "awaiting_review", "awaiting_manual", "failed"}]
         from .analytics import report
 
         media_jobs = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-queue" else []
@@ -274,6 +288,12 @@ def create_app(settings=None):
         assets = db.scalars(select(Asset).order_by(Asset.created_at.desc())).all()
         facts = db.scalars(select(FactSheet).order_by(FactSheet.created_at.desc())).all()
         idea_form = idea_form or {}
+        if view == "create" and not idea_form and (old := db.get(Post, request.query_params.get("from_post", ""))):
+            from .clip_replace import source_job
+
+            source = source_job(db, old)
+            brief = source.brief if source else {}
+            idea_form = {"prompt": brief.get("prompt", old.campaign), "platforms": [old.platform], "product": old.product, "kind": old.kind, "rights": brief.get("rights", "public"), "owner": brief.get("owner", ""), "reference_ids": brief.get("reference_ids", old.asset_ids if not source else [])}
         default_facts = next((f.id for f in facts if not f.document.get("demo_only")), facts[0].id if facts else "")
         return templates.TemplateResponse(
             request=request,
@@ -295,6 +315,9 @@ def create_app(settings=None):
                 "csrf": request.session["csrf"],
                 "posts": posts,
                 "post": post,
+                "posting_assets": [db.get(Asset, i) for i in post.asset_ids if db.get(Asset, i)] if post else [],
+                "reviewed_digest": content_digest(post, [db.get(Asset, i) for i in post.asset_ids]) if post else "",
+                "post_wants_live": settings.wants_live(post.platform, db.get(Account, post.platform)) if post else False,
                 "retry_existing": retry_existing,
                 "clip_fix": clip_options(db, post) if post else None,
                 "held": held_reason(db, post) if post else None,
@@ -309,11 +332,14 @@ def create_app(settings=None):
                 "control": db.get(Control, 1),
                 "automation_enabled": settings.automates_posts(db.get(Control, 1)),
                 "platforms": PLATFORMS,
+                "real_media_only": REAL_MEDIA_ONLY,
                 "assets": assets,
                 "facts": facts,
                 "default_facts_id": default_facts,
                 "active_jobs": active_jobs,
                 "idea_form": idea_form,
+                "idea_uploads": [a for i in idea_form.get("upload_ids", []) if (a := db.get(Asset, i))],
+                "max_idea_uploads": MAX_IDEA_UPLOADS,
                 "plan": plan,
                 "plan_summary": plan_summary(plan, idea_form.get("platforms", [])) if plan else "",
                 "work_summary": work_summary(plan, idea_form.get("platforms", [])) if plan else "",
@@ -534,7 +560,48 @@ def create_app(settings=None):
         values["website"] = "on" if form.get("website") == "on" else ""
         values["platforms"] = form.getlist("platforms")
         values["reference_ids"] = form.getlist("reference_ids")
+        # Files added on the idea page, already saved in the asset library.
+        values["upload_ids"] = list(dict.fromkeys(str(i) for i in form.getlist("upload_ids")))[:MAX_IDEA_UPLOADS]
+        values["upload_use"] = "reference" if form.get("upload_use") == "reference" else "as_is"
         return values
+
+    async def save_idea_uploads(db, form, values):
+        """Save files added with an idea to the asset library as real company media."""
+        files = [f for f in form.getlist("files") if isinstance(f, UploadFile) and f.filename]
+        if len(values["upload_ids"]) + len(files) > MAX_IDEA_UPLOADS:
+            raise ValueError(f"Add at most {MAX_IDEA_UPLOADS} files to one idea")
+        for file in files:
+            try:
+                if file.size is not None and file.size > settings.max_upload_bytes:
+                    raise ValueError(
+                        f"It's larger than the {settings.max_upload_bytes / 1_000_000:g} MB upload limit"
+                    )
+                data = await file.read(settings.max_upload_bytes + 1)
+                asset = await run_in_threadpool(
+                    ingest,
+                    db,
+                    settings,
+                    data,
+                    file.filename,
+                    rights=usage_rights(values["rights"]),
+                    owner=owner_value(values["owner"]),
+                    tags={"product": values["product"] or "company", "uploaded_with_idea": True},
+                )
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                event("asset_upload_failed", stage="idea", **upload_error_details(exc))
+                raise ValueError(f"{file.filename}: {describe_upload_error(exc)[1]}") from None
+            finally:
+                await file.close()
+            # Kept even if a later step fails, so the file isn't uploaded twice.
+            values["upload_ids"].append(asset.id)
+
+    def idea_uploads(db, values):
+        uploads = [db.get(Asset, i) for i in values.get("upload_ids", [])]
+        if any(a is None for a in uploads):
+            raise ValueError("A file you added is no longer in the asset library. Add it again.")
+        return uploads
 
     def friendly(exc):
         if isinstance(exc, ValidationError):
@@ -555,6 +622,11 @@ def create_app(settings=None):
                 raise ValueError("Keep the idea under 1,000 characters")
             if not values["platforms"] or set(values["platforms"]) - set(PLATFORMS):
                 raise ValueError("Choose at least one platform")
+            if set(values["platforms"]) & REAL_MEDIA_ONLY:
+                raise ValueError(
+                    "Pinterest only posts real photos and videos from Google Drive. Create Pinterest posts "
+                    "from Post from library media."
+                )
             usage_rights(values["rights"])
             owner_value(values["owner"])
             values["facts_id"] = values["facts_id"] or (
@@ -562,9 +634,15 @@ def create_app(settings=None):
             )
             if not db.get(FactSheet, values["facts_id"]):
                 raise ValueError("Save an approved facts version first")
+            await save_idea_uploads(db, form, values)
+            uploads = idea_uploads(db, values)
+            if uploads and values["upload_use"] == "as_is":
+                plan = uploaded_plan(idea, uploads, requested_style=values["kind"] or "auto")
+                return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
             references = [db.get(Asset, i) for i in values["reference_ids"]]
             if any(a is None for a in references):
                 raise ValueError("A selected reference is no longer in the asset library")
+            references += [a for a in uploads if a.id not in values["reference_ids"]]
             snapshot = await run_in_threadpool(website_snapshot, settings) if values["website"] else {}
             assets = db.scalars(select(Asset).order_by(Asset.created_at.desc())).all()
             plan = await run_in_threadpool(
@@ -598,6 +676,7 @@ def create_app(settings=None):
         except ValueError:
             duration = 10
         return IdeaPlan(
+            as_uploaded=form.get("as_uploaded") == "on",
             title=str(form.get("campaign", "")),
             operation=operation if operation in {"image", "video", "video_edit"} else "image",
             duration=max(3, min(90, duration)),
@@ -624,6 +703,32 @@ def create_app(settings=None):
             if plan.end_card and plan.operation != "image" and not form.get("logo_id"):
                 raise ValueError("Choose the logo for the end card, or untick End with the Tudelu logo")
             video = plan.operation != "image"
+            uploads = idea_uploads(db, values)
+            sounds = [a.id for a in uploads if a.media["mime"].startswith("audio/")]
+            pictures = [a.id for a in uploads if a.id not in sounds]
+            if plan.as_uploaded:
+                brief = CreativeBrief(
+                    campaign=plan.title,
+                    prompt=values["prompt"],
+                    operation=plan.operation,
+                    platforms=values["platforms"],
+                    facts_id=values["facts_id"],
+                    product=values["product"] or "company",
+                    kind=plan.kind,
+                    rights=values["rights"],
+                    owner=values["owner"],
+                    reference_ids=pictures,
+                    audio_reference_ids=sounds if video else [],
+                    duration=plan.duration if video else 5,
+                    website=False,
+                    create_posts=True,
+                    workflow={"once": "immediate", "next": "next"}[mode],
+                    end_card_asset_id=str(form.get("logo_id", "")) if video and plan.end_card else "",
+                    as_uploaded=True,
+                )
+                await run_in_threadpool(queue_jobs, db, settings, brief)
+                db.commit()
+                return RedirectResponse("/admin/media-queue", status_code=303)
             brief = CreativeBrief(
                 campaign=plan.title,
                 prompt=values["prompt"],
@@ -634,7 +739,8 @@ def create_app(settings=None):
                 kind=plan.kind,
                 rights=values["rights"],
                 owner=values["owner"],
-                reference_ids=values["reference_ids"],
+                reference_ids=values["reference_ids"] + [i for i in pictures if i not in values["reference_ids"]],
+                audio_reference_ids=sounds if video else [],
                 audio_prompt=plan.soundtrack.strip() if video else "",
                 duration=plan.duration if video else 5,
                 website=values["website"] == "on",
@@ -712,7 +818,7 @@ def create_app(settings=None):
         post = draft(db, **payload.model_dump())
         return {"id": post.id, "status": post.status}
 
-    def action_impl(db, post, action, actor, parts=None):
+    def action_impl(db, post, action, actor, parts=None, revision_request="", reviewed_digest=""):
         if action in {"check", "approve", "reject", "edit", "tiktok_status"}:
             lock_post(db, post)
         if action in {"check", "approve"} and not post.caption:
@@ -721,13 +827,23 @@ def create_app(settings=None):
         if action == "generate":
             generate(db, settings, post)
         elif action == "rewrite":
-            rewrite_caption(db, settings, post, actor)
+            rewrite_caption(db, settings, post, actor, revision_request)
         elif action == "retry":
             post = retry_post(db, settings, post, actor)
-        elif action == "delete":
+        elif action in {"delete", "restart"}:
             delete_draft(db, post, actor)
-        elif action in {"check", "approve"}:
-            if post.status == "held":
+        elif action == "approve":
+            from .human_review import approve
+
+            approve(db, settings, post, actor, reviewed_digest)
+            if post.status == "approved":
+                schedule(db, settings, post)
+        elif action == "stop":
+            from .human_review import stop
+
+            stop(db, post, actor)
+        elif action == "check":
+            if post.status in {"held", "awaiting_review"}:
                 transition(db, post, "generated", "Requested automated recheck", actor)
             run_gate(db, settings, post)
         elif action == "schedule":
@@ -736,9 +852,12 @@ def create_app(settings=None):
             transition(db, post, "failed", "Rejected by internal user", actor)
             db.commit()
         elif action == "edit":
-            if post.status not in {"held", "draft"}:
+            if post.status not in {"held", "draft", "awaiting_review"}:
                 raise ValueError("Only held/draft posts are editable")
-            if post.status == "held":
+            from .human_review import require_no_replacement
+
+            require_no_replacement(db, post)
+            if post.status != "draft":
                 transition(db, post, "draft", "Edited; approval invalidated", actor)
             facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
             post.parts = parts
@@ -746,6 +865,7 @@ def create_app(settings=None):
             post.ai_disclosure = any(requires_ai_review(db.get(Asset, id)) for id in post.asset_ids)
             post.caption = render(parts, profiles(settings)[post.platform], facts, post.platform, settings)
             post.approved_digest = ""
+            post.human_review_required, post.human_approved_digest = True, ""
             transition(db, post, "generated", "Edited caption and fact citations", actor)
             db.commit()
             run_gate(db, settings, post)
@@ -783,25 +903,42 @@ def create_app(settings=None):
         return {"id": post.id, "status": post.status}
 
     @app.post("/api/posts/{post_id}/{action}", dependencies=mutation)
-    def post_action(post_id: str, action: str, request: Request, db: DB, parts: list[dict] | None = None):
+    def post_action(post_id: str, action: str, request: Request, db: DB, parts: list[dict] | None = None, revision_request: str = "", reviewed_digest: str = ""):
         post = db.get(Post, post_id)
         if not post or post.status == "deleted":
             raise HTTPException(404)
-        return action_impl(db, post, action, request.state.actor, parts)
+        return action_impl(db, post, action, request.state.actor, parts, revision_request, reviewed_digest)
+
+    def compose_post(db, values):
+        asset_ids = values["asset_ids"]
+        if values["platform"] in REAL_MEDIA_ONLY:
+            # Real Drive media only; a resized copy is made when the original doesn't fit the platform.
+            assets = [db.get(Asset, i) for i in asset_ids]
+            if not assets or None in assets:
+                raise ValueError("Choose a photo or video from the asset library")
+            if error := real_drive_media_error(db, assets):
+                raise ValueError(error)
+            asset_ids = [platform_copy(db, settings, a, values["platform"]).id for a in assets]
+        return draft(
+            db,
+            values["platform"],
+            values["campaign"],
+            asset_ids,
+            values["facts_id"],
+            values["product"],
+            values["kind"],
+        )
 
     @app.post("/forms/posts", dependencies=mutation)
     async def compose(request: Request, db: DB):
         form = await request.form()
-        post = await run_in_threadpool(
-            draft,
-            db,
-            form["platform"],
-            form["campaign"],
-            form.getlist("asset_ids"),
-            form["facts_id"],
-            form["product"],
-            form["kind"],
-        )
+        values = {k: str(form.get(k, "")) for k in ("campaign", "platform", "kind", "product", "facts_id")}
+        values["asset_ids"] = form.getlist("asset_ids")
+        try:
+            post = await run_in_threadpool(compose_post, db, values)
+        except ValueError as exc:
+            db.rollback()
+            return page(request, db, "compose", error_message=str(exc), asset_form=values, status_code=400)
         return RedirectResponse(f"/posts/{post.id}", status_code=303)
 
     @app.post("/forms/posts/{post_id}/clips/{part}/regenerate", dependencies=mutation)
@@ -836,7 +973,7 @@ def create_app(settings=None):
         try:
             if post_processing(engine, post_id):
                 raise PostBusy("This post is being processed")
-            result = await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts)
+            result = await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts, str(form.get("revision_request", "")), str(form.get("reviewed_digest", "")))
         except PostBusy:
             db.rollback()
             return page(request, db, "post", post_id, post_busy=True, status_code=202)
@@ -849,6 +986,8 @@ def create_app(settings=None):
         except ValueError as exc:
             db.rollback()
             return page(request, db, "post", post.id, error_message=str(exc), status_code=400)
+        if action == "restart" and post.status == "deleted":
+            return RedirectResponse(f"/admin/create?from_post={post.id}", status_code=303)
         return RedirectResponse("/" if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)
 
     def return_to(form, default):
@@ -1121,7 +1260,9 @@ def create_app(settings=None):
             name="oauth_handoff.html",
             context={
                 "authorize_url": url,
-                "platform_name": {"x": "X", "linkedin": "LinkedIn", "tiktok": "TikTok"}[platform],
+                "platform_name": {"x": "X", "linkedin": "LinkedIn", "tiktok": "TikTok"}.get(
+                    platform, platform.title()
+                ),
             },
         )
 

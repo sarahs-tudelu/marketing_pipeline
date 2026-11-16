@@ -49,3 +49,18 @@ tiktok:
   min_width: 360
   min_height: 360
   max_assets: 1
+pinterest:
+  # Real photos and videos imported from Google Drive only (see social/provenance.py).
+  # 2:3 is Pinterest's recommended Pin shape; wider and square media are posted at their own shape.
+  image_width: 1000
+  image_height: 1500
+  image_min_ratio: 0.5
+  image_max_bytes: 20000000
+  video_width: 720
+  video_height: 1280
+  min_duration: 4
+  max_length: 500
+  hashtag_limit: 0
+  tone: calm, helpful and inspiring; describe the idea someone could save and come back to, in plain words
+  lead_in: "Ideas from Tudelu:"
+  max_assets: 1

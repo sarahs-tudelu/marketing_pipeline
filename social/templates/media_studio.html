@@ -19,7 +19,7 @@
       </select></label>
     </div>
     <fieldset><legend>Platforms — each gets its own framing and caption</legend>
-      {% for p in platforms %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ p }}" {{ 'checked' if p in asset_form.get('platforms', ['instagram']) else '' }}>{{ p|title }}</label>{% endfor %}
+      {% for p in platforms if p not in real_media_only %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ p }}" {{ 'checked' if p in asset_form.get('platforms', ['instagram']) else '' }}>{{ p|platform }}</label>{% endfor %}
     </fieldset>
     <div class="two">
       <label>Product tag<input name="product" required value="{{ asset_form.get('product', 'company') }}"></label>

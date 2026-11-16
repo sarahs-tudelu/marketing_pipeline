@@ -62,6 +62,8 @@ def fetch(db, settings, post, client=None):
         )
         rows = result.get("elements", [])
         return rows[0]["totalShareStatistics"] if rows else {"unavailable": True}
+    if post.platform == "pinterest":
+        return {"unavailable": True, "reason": "Pinterest metrics aren't collected yet"}
     if post.platform == "x":
         return a.direct("GET", f"{a.base}/tweets/{remote}", params={"tweet.fields": "public_metrics"})[
             "data"

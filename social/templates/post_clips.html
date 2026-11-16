@@ -6,9 +6,9 @@
     <a class="button" href="/admin/media-queue">Open In progress</a>
   {% elif clip_fix.unavailable %}
     <p>{{ clip_fix.unavailable }}</p>
-    <a class="button" href="/admin/create">New post from an idea</a>
+    <a class="button" href="/admin/create?from_post={{ post.id }}">New post from an idea</a>
   {% else %}
-    <p>Regenerate only the part with the problem. Everything else is reused, and the new {{ clip_fix.noun }} goes through the checks again as a new post. This post is marked replaced when the new one is ready.</p>
+    <p>Describe the changes in the prompt for the image, clip or music below. Everything else is reused, and the new {{ clip_fix.noun }} goes through the checks again as a new post. This post is marked replaced when the new one is ready. The replacement waits for your review before it can be scheduled.</p>
     {% if clip_fix.reasons %}<div class="idea-quote"><b>What the visual check found</b>{% for r in clip_fix.reasons %}<br>{{ r }}{% endfor %}</div>
       {% if not clip_fix.parts|rejectattr('kind', 'eq', 'music')|selectattr('flagged')|list %}<p class="muted">The check didn't say which clip shows this. Open the clip whose setting matches what it found.</p>{% endif %}
     {% endif %}

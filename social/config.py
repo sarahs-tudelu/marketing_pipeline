@@ -7,8 +7,10 @@ import yaml
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-PLATFORMS = ("linkedin", "instagram", "facebook", "x", "tiktok")
-OAUTH_CLIENT_ID_FIELDS = frozenset({"linkedin_client_id", "x_client_id", "tiktok_client_id"})
+PLATFORMS = ("linkedin", "instagram", "facebook", "x", "tiktok", "pinterest")
+# Real photos and videos imported from Google Drive only; never generated media.
+REAL_MEDIA_ONLY = frozenset({"pinterest"})
+OAUTH_CLIENT_ID_FIELDS = frozenset({"linkedin_client_id", "x_client_id", "tiktok_client_id", "pinterest_client_id"})
 
 
 class Settings(BaseSettings):
@@ -63,6 +65,9 @@ class Settings(BaseSettings):
     tiktok_verified_url_prefix: str = ""
     tiktok_transfer: Literal["file", "url"] = "file"
     tiktok_manual_assignee: str = "Tudelu social owner"
+    pinterest_client_id: str = ""
+    pinterest_client_secret: SecretStr = SecretStr("")
+    pinterest_board_id: str = ""  # Numeric ID of the board Pins are saved to.
     ai_mode: Literal["fixture", "live"] = "fixture"
     caption_provider: Literal["anthropic"] = "anthropic"
     review_provider: Literal["anthropic"] = "anthropic"
@@ -236,26 +241,38 @@ def profiles(settings: Settings) -> dict[str, Profile]:
     raw = yaml.safe_load(settings.profiles_path.read_text(encoding="utf-8"))
     result = {p: Profile.model_validate(raw[p]) for p in PLATFORMS}
     # These ceilings cannot be loosened via a YAML typo.
-    ceilings = {"instagram": 49, "tiktok": 4, "x": 50, "linkedin": 10, "facebook": 10}
-    lengths = {"instagram": 2200, "tiktok": 2200, "x": 280, "linkedin": 3000, "facebook": 5000}
+    ceilings = {"instagram": 49, "tiktok": 4, "x": 50, "linkedin": 10, "facebook": 10, "pinterest": 10}
+    # Pinterest's API accepts 800-character descriptions; its own Pin editor stops at 500.
+    lengths = {
+        "instagram": 2200,
+        "tiktok": 2200,
+        "x": 280,
+        "linkedin": 3000,
+        "facebook": 5000,
+        "pinterest": 500,
+    }
     for name, profile in result.items():
-        max_assets = {"instagram": 10, "tiktok": 1, "x": 4, "linkedin": 9, "facebook": 1}
+        max_assets = {"instagram": 10, "tiktok": 1, "x": 4, "linkedin": 9, "facebook": 1, "pinterest": 1}
         formats = {"image/jpeg"} if name == "instagram" else {"image/jpeg", "image/png"}
         minimum = 360 if name == "tiktok" else 320
+        # Pinterest takes images up to 20 MB, tall 2:3 Pins and videos of at least 4 seconds.
+        image_bytes = 20_000_000 if name == "pinterest" else 5_000_000
+        tallest = 0.5 if name == "pinterest" else 0.8
+        shortest = 4 if name == "pinterest" else 3
         if (
             profile.hard_cap > ceilings[name]
             or profile.max_length > lengths[name]
             or profile.max_assets < 1
             or profile.max_assets > max_assets[name]
             or not set(profile.image_formats) <= formats
-            or not 0 < profile.image_max_bytes <= 5_000_000
+            or not 0 < profile.image_max_bytes <= image_bytes
             or not 0 < profile.video_max_bytes <= 100_000_000
             or profile.min_width < minimum
             or profile.min_height < minimum
             or not profile.min_width <= profile.max_width <= 1920
-            or not 0.8 <= profile.image_min_ratio <= profile.image_max_ratio <= 1.91
+            or not tallest <= profile.image_min_ratio <= profile.image_max_ratio <= 1.91
             or not 0.5625 <= profile.video_min_ratio <= profile.video_max_ratio <= 1.777778
-            or not 3 <= profile.min_duration <= profile.max_duration <= 90
+            or not shortest <= profile.min_duration <= profile.max_duration <= 90
             or profile.hashtag_limit > 30
         ):
             raise ValueError(f"{name}: exceeds verified conservative envelope")

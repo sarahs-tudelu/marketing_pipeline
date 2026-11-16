@@ -191,7 +191,7 @@ def test_clip_regeneration_needs_a_held_multi_clip_post(db, settings, facts, log
         refused = client.post(f"/forms/posts/{post.id}/clips/0/regenerate", data={"csrf": token})
         assert (
             refused.status_code == 400
-            and "Only a held post can have part of its media made again" in refused.text
+            and "Stop scheduled delivery before changing the media" in refused.text
         )
         long = client.post(
             f"/forms/posts/{post.id}/clips/0/regenerate", data={"csrf": token, "prompt": "x" * 1001}
