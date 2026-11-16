@@ -1,5 +1,17 @@
 # DigitalOcean Droplet deployment with Google Secret Manager
 
+## Deployment ownership and Git updates
+
+Changes are implemented and checked locally, committed, and pushed to GitHub `origin/main`. The user pulls the server checkout and performs builds, migrations and service restarts. Agents must not deploy or copy source onto the server unless the user explicitly changes this policy; see [AGENTS.md](../AGENTS.md).
+
+Use Git to update `/opt/tudelu`; copying a Windows working tree there leaves modified line endings and untracked files that block subsequent merges. `.gitattributes` keeps source checkouts in LF on both Windows and Linux. Keep `.env`, credentials and runtime files outside version control.
+
+For a user-managed update, start with `git status --short` and `git pull --ff-only origin main`, then follow the build/migration/start steps below. If there is conflicting local work, inspect and preserve it with `git stash push --include-untracked -m "server-before-pull"` before pulling. This includes untracked source files and leaves ignored `.env` and runtime files alone. Review the saved changes before restoring them: they may already be included in the incoming commit. Keep the backup until any unique changes have been reconciled in GitHub.
+
+Pulling updates the checkout only. The application changes take effect after the user rebuilds the image, applies required migrations and recreates web and worker.
+
+## Deployment configuration
+
 The project-root `.env` is now a **deployment configuration containing placeholders and secret references**, copied from [`deploy/droplet.env.example`](../deploy/droplet.env.example). It contains no API keys, passwords or private keys. Use [`compose.droplet.yaml`](../compose.droplet.yaml) as a standalone Compose file, not as an override for the local `compose.yaml`.
 
 The configuration targets your existing **DigitalOcean Managed PostgreSQL** cluster. It has been prepared and tested locally; no Droplet, database, DNS record, Google project, IAM grant, secret or public deployment was created or changed. Replace the placeholders before deployment. Publishing and AI calls remain in fixture/dry-run mode.
