@@ -85,9 +85,20 @@ def test_flagged_times_and_suggested_wording():
     segments = [
         {"index": i, "start": s, "duration": d} for i, (s, d) in enumerate([(0, 7), (7, 7), (14, 7), (21, 6)])
     ]
-    assert flagged([REASON], segments) == {2}
-    assert flagged(["Lettering at 7 s and around 22 seconds."], segments) == {1, 3}
-    assert flagged(["The track is 30.0 s"], segments) == set()
+    assert flagged({"reasons": [REASON]}, segments) == {2}
+    assert flagged({"reasons": ["Lettering at 7 s and around 22 seconds."]}, segments) == {1, 3}
+    assert flagged({"reasons": ["The track is 30.0 s"]}, segments) == set()
+    # The review's frame times place the problem even when its reasons don't say where.
+    assert flagged(
+        {"reasons": ["Garbled lettering on a sign."], "problem_seconds": [8.0, 9.0]}, segments
+    ) == {1}
+    assert flagged({"reasons": ["Signs between 3 and 4 seconds, again 22s-23s, and at 0:15."]}, segments) == {
+        0,
+        2,
+        3,
+    }
+    # An aspect ratio isn't a time, and "and" alone doesn't make a range.
+    assert flagged({"reasons": ["A 16:9 frame at 2 s and 25 seconds."]}, segments) == {0}
     clip = {"prompt": "Tudelu Sunshades at a storefront. Plain, unmarked surfaces."}
     assert suggested_prompt(clip, {"garbled_text": True}).endswith(FIXES["text"])
     assert suggested_prompt(clip, {"unexpected_people": True}).endswith(FIXES["people"])
@@ -108,7 +119,7 @@ def test_held_video_regenerates_only_the_flagged_clip(db, settings, facts, logo,
         assert (
             'id="fix-clip"' in page and "What the visual check found" in page and "garbled brand-like" in page
         )
-        assert "<details open><summary><b>Clip 3</b> · 14–21 s · storefront · Sunshades" in page
+        assert '<details id="part-2" open><summary><b>Clip 3</b> · 14–21 s · storefront · Sunshades' in page
         assert page.count("Flagged by the check") == 1 and FIXES["text"] in page
         assert "one new 7-second simulated clip" in page
 
@@ -241,3 +252,68 @@ def test_fix_one_clip_in_browser(db, settings, facts, logo, tmp_path):  # noqa: 
         _, _, post = held_video(db, settings, client, facts, logo)
         asyncio.run(exercise(client, post))
     assert len(db.scalars(select(MediaJob)).all()) == 2
+
+
+def test_fix_button_opens_the_part_in_browser(db, settings, facts, logo, tmp_path):  # noqa: F811
+    from test_studio_ui import serve_studio_request
+
+    playwright = pytest.importorskip("playwright.async_api")
+    capture = Path(os.getenv("UI_CAPTURE_DIR") or tmp_path)
+    capture.mkdir(parents=True, exist_ok=True)
+
+    def held_by_vision(post, details, run_id):
+        transition(db, post, "generated", "Requested automated recheck")
+        db.add(
+            CheckResult(post_id=post.id, run_id=run_id, name="vision_review", passed=False, details=details)
+        )
+        transition(db, post, "held", "vision_review")
+        db.commit()
+
+    async def exercise(client, post):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            page = await browser.new_page(viewport={"width": 1440, "height": 900})
+            page.set_default_timeout(5000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+
+            # The check placed the problem by frame time only: the button names that clip and opens it,
+            # even after it was closed.
+            held_by_vision(
+                post,
+                {"passed": False, "reasons": ["Garbled lettering on a sign."], "problem_seconds": [8.0]},
+                "frames",
+            )
+            await page.goto(f"http://studio.test/posts/{post.id}")
+            clip = page.locator("#part-1")
+            await clip.locator("summary").click()
+            await playwright.expect(clip).not_to_have_attribute("open", "")
+            await page.locator("#post-held").get_by_role("link", name="Fix clip 2").click()
+            await playwright.expect(clip).to_have_attribute("open", "")
+            await playwright.expect(clip.get_by_role("button", name="Regenerate clip 2")).to_be_in_viewport()
+            await page.screenshot(path=str(capture / "fix-button-desktop.png"))
+            await page.set_viewport_size({"width": 390, "height": 844})
+            assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            await page.screenshot(path=str(capture / "fix-button-mobile.png"))
+            await page.set_viewport_size({"width": 1440, "height": 900})
+
+            # The check didn't say where: the button asks for a choice and the list says why.
+            held_by_vision(post, {"passed": False, "reasons": ["Garbled lettering on a sign."]}, "no-times")
+            await page.goto(f"http://studio.test/posts/{post.id}")
+            section = page.locator("#fix-clip")
+            await playwright.expect(section.locator("details[open]")).to_have_count(0)
+            await page.locator("#post-held").get_by_role("link", name="Choose the clip to fix").click()
+            assert await page.evaluate("location.hash") == "#fix-clip"
+            await playwright.expect(
+                section.get_by_text("The check didn't say which clip shows this.")
+            ).to_be_in_viewport()
+            await page.screenshot(path=str(capture / "choose-clip-desktop.png"))
+            assert not errors
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        _, _, post = held_video(db, settings, client, facts, logo)
+        asyncio.run(exercise(client, post))

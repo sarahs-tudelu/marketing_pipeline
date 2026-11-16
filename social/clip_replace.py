@@ -17,8 +17,14 @@ FIXES = {
     "appear only as blank rendered walls and greenery.",
     "people": "The whole scene is empty and unoccupied.",
 }
-_RANGE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:–|-|to)\s*(\d+(?:\.\d+)?)\s*(?:s\b|sec|second)", re.I)
-_POINT = re.compile(r"\b(?:at|around|about|near)\s+(\d+(?:\.\d+)?)\s*(?:s\b|sec|second)", re.I)
+_UNIT = r"\s*(?:s|secs?|seconds?)\b"
+_RANGE = re.compile(
+    rf"(?:\bbetween\s+(\d+(?:\.\d+)?)(?:{_UNIT})?\s+and|(\d+(?:\.\d+)?)(?:{_UNIT})?\s*(?:–|—|-|to))"
+    rf"\s*(\d+(?:\.\d+)?){_UNIT}",
+    re.I,
+)
+_POINT = re.compile(rf"\b(?:at|around|about|near)\s+(\d+(?:\.\d+)?){_UNIT}", re.I)
+_CLOCK = re.compile(r"\b(\d{1,2}):([0-5]\d)\b")
 GENERATED = {"ai_generated", "ai_edited"}
 
 
@@ -48,19 +54,22 @@ def failed_check(db, post, name):
         .where(CheckResult.post_id == post.id, CheckResult.name == name)
         .order_by(CheckResult.id.desc())
     )
-    return check.details if check and not check.passed else {}
+    details = (check.details or {}) if check and not check.passed else {}
+    # A check that couldn't run found nothing to fix in the media.
+    return {} if details.get("error_type") else details
 
 
 def failed_vision(db, post):
     return failed_check(db, post, "vision_review")
 
 
-def flagged(reasons, segments):
-    """Indexes of clips overlapping the times a failed visual check mentions."""
-    spans = []
-    for text in reasons:
-        spans += [(float(a), float(b)) for a, b in _RANGE.findall(text)]
+def flagged(vision, segments):
+    """Indexes of clips holding the frames a failed visual check flagged, or the times its reasons mention."""
+    spans = [(float(t), float(t)) for t in vision.get("problem_seconds") or [] if isinstance(t, (int, float))]
+    for text in vision.get("reasons", []):
+        spans += [(float(a or b), float(c)) for a, b, c in _RANGE.findall(text)]
         spans += [(float(a), float(a)) for a in _POINT.findall(text)]
+        spans += [(int(m) * 60 + int(s),) * 2 for m, s in _CLOCK.findall(text)]
     return {
         s["index"]
         for s in segments
@@ -99,7 +108,7 @@ def parts(db, job, vision, audio):
     result = []
     if segments and brief["operation"] == "video":
         if all(s.get("output_asset_id") for s in segments):
-            marked = flagged(vision.get("reasons", []), segments)
+            marked = flagged(vision, segments)
             for s in segments:
                 prompt = s.get("prompt") or prompts.get(s["index"], "")
                 if not prompt:

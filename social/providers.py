@@ -59,6 +59,8 @@ class VisionReview(BaseModel):
     misused_logos: bool
     unexpected_people: bool
     visible_claims: list[str] = []
+    # Video only: frame_seconds values of the sampled frames that show a problem.
+    problem_seconds: list[float] = []
 
 
 class AudioSegment(BaseModel):
@@ -312,6 +314,7 @@ class OpenAI:
         store = storage(self.s)
         for asset in assets:
             first_image = len(images) + 1
+            seconds = []
             data = store.read(asset.storage_key)
             still_image = asset.media["mime"].startswith("image/")
             if still_image:
@@ -333,11 +336,13 @@ class OpenAI:
                             preview.thumbnail((768, 768))
                             preview.save(output, format="JPEG")
                             images.append(("image/jpeg", output.getvalue()))
+                            seconds.append(round(float(frame.time or 0), 2))
                             next_second += 1
                     if last_frame:
                         output = io.BytesIO()
                         last_frame.to_image().save(output, format="JPEG")
                         images.append(("image/jpeg", output.getvalue()))
+                        seconds.append(round(float(last_frame.time or 0), 2))
             media_inputs.append(
                 {
                     "asset_id": asset.id,
@@ -345,17 +350,22 @@ class OpenAI:
                     "input_kind": "still_image" if still_image else "sampled_video_frames",
                     "image_numbers": list(range(first_image, len(images) + 1)),
                 }
+                # Lets the review say where a problem is, so the post page can open that clip.
+                | ({} if still_image else {"frame_seconds": seconds})
             )
         has_video = any(item["input_kind"] == "sampled_video_frames" for item in media_inputs)
         media_guidance = (
             "The media_inputs records map each source asset to its one-based input image numbers. "
             "Only assets marked sampled_video_frames are videos, sampled approximately once per second "
-            "plus the final frame. Record unobserved-frame limitations for those videos only. "
+            "plus the final frame; frame_seconds gives the time of each of their images, in order. "
+            "Record unobserved-frame limitations for those videos only. "
+            "In problem_seconds, list the frame_seconds of every frame that shows garbled text, a misused "
+            "logo, an unexpected person or an unapproved claim, and say those times in the reasons. "
             "Audio is evaluated separately in audio_review; do not infer sound from the frames. "
             "Assets marked still_image are complete still images. "
             if has_video
             else "All supplied media are complete still images. Do not report video sampling, missing "
-            "frames, transitions, or audio limitations. "
+            "frames, transitions, or audio limitations. Leave problem_seconds empty. "
         )
         content = [
             {
@@ -369,7 +379,7 @@ class OpenAI:
                 "Flag it only if it is distorted, cropped or not Tudelu's. Logos or brand text inside the "
                 "generated scenes before the end card remain misused logos. "
                 "Return JSON with passed, reasons, garbled_text, "
-                "misused_logos, unexpected_people, visible_claims. "
+                "misused_logos, unexpected_people, visible_claims, problem_seconds. "
                 + media_guidance
                 + "Context: "
                 + json.dumps(context | {"media_inputs": media_inputs}, default=str),

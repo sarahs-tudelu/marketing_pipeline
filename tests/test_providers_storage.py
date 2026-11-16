@@ -148,8 +148,13 @@ def test_vision_identifies_stills_and_video_samples_without_clearing_holds(db, s
         for kind, item in zip(kinds, media_inputs):
             if kind == "image":
                 assert item["input_kind"] == "still_image" and len(item["image_numbers"]) == 1
+                assert "frame_seconds" not in item
             else:
                 assert item["input_kind"] == "sampled_video_frames" and len(item["image_numbers"]) > 1
+                times = item["frame_seconds"]
+                assert len(times) == len(item["image_numbers"]) and times[0] == 0 and times == sorted(times)
+        schema = payload["text"]["format"]["schema"]
+        assert "problem_seconds" in schema["required"] and "default" not in schema["properties"]["problem_seconds"]
         if "video" in kinds:
             assert "sampled approximately once per second" in prompt
             assert "for those videos only" in prompt
@@ -163,6 +168,7 @@ def test_vision_identifies_stills_and_video_samples_without_clearing_holds(db, s
             "misused_logos": False,
             "unexpected_people": False,
             "visible_claims": [],
+            "problem_seconds": [],
         }
         return httpx.Response(200, json={
             "status": "completed",

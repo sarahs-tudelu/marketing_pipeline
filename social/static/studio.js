@@ -224,4 +224,17 @@
     };
     setInterval(pollMedia, 3000);
   }
+
+  // A link to a closed part opens it, so the jump lands on that part's prompt and button.
+  function openPart(hash) {
+    let target;
+    try { target = hash.length > 1 && document.getElementById(decodeURIComponent(hash.slice(1))); } catch { return; }
+    if (target instanceof HTMLDetailsElement) target.open = true;
+  }
+  document.addEventListener("click", (event) => {
+    const link = event.target instanceof Element && event.target.closest('a[href^="#"]');
+    if (link) openPart(link.getAttribute("href"));
+  });
+  window.addEventListener("hashchange", () => openPart(location.hash));
+  openPart(location.hash);
 })();

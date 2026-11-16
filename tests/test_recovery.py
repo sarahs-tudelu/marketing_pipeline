@@ -156,7 +156,8 @@ def test_failed_checks_are_listed_with_their_fix(db, settings, facts, logo):  # 
     )
     assert "The check couldn&#39;t run: OpenAI reported a service error." in page  # rendered from a variable
     assert "Correct the cause, then recheck the post." in page
-    assert 'href="#fix-clip">Regenerate part of the video</a>' in page and "Write the caption again" in page
+    # The audio check couldn't run, so only the clip the visual check placed is offered.
+    assert 'href="#part-2">Fix clip 3</a>' in page and "Write the caption again" in page
     held = held_reason(db, post)
     assert [p["kind"] for p in held["problems"]] == ["visual", "caption", "recheck"]
 

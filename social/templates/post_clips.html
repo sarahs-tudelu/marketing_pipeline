@@ -9,9 +9,11 @@
     <a class="button" href="/admin/create">New post from an idea</a>
   {% else %}
     <p>Regenerate only the part with the problem. Everything else is reused, and the new {{ clip_fix.noun }} goes through the checks again as a new post. This post is marked replaced when the new one is ready.</p>
-    {% if clip_fix.reasons %}<div class="idea-quote"><b>What the visual check found</b>{% for r in clip_fix.reasons %}<br>{{ r }}{% endfor %}</div>{% endif %}
+    {% if clip_fix.reasons %}<div class="idea-quote"><b>What the visual check found</b>{% for r in clip_fix.reasons %}<br>{{ r }}{% endfor %}</div>
+      {% if not clip_fix.parts|rejectattr('kind', 'eq', 'music')|selectattr('flagged')|list %}<p class="muted">The check didn't say which clip shows this. Open the clip whose setting matches what it found.</p>{% endif %}
+    {% endif %}
     <ol class="fix-clips">
-    {% for c in clip_fix.parts %}<li><details {{ 'open' if c.flagged else '' }}><summary><b>{{ c.title }}</b>{% if c.kind == 'clip' %} · {{ c.start }}–{{ c.end }} s{% if c.setting %} · {{ c.setting }}{% endif %}{% if c.system %} · {{ c.system }}{% endif %}{% elif c.duration %} · {{ c.duration }} s{% endif %}{% if c.flagged %} <span class="tag">Flagged by the check</span>{% endif %}</summary>
+    {% for c in clip_fix.parts %}<li><details id="part-{{ c.key }}" {{ 'open' if c.flagged else '' }}><summary><b>{{ c.title }}</b>{% if c.kind == 'clip' %} · {{ c.start }}–{{ c.end }} s{% if c.setting %} · {{ c.setting }}{% endif %}{% if c.system %} · {{ c.system }}{% endif %}{% elif c.duration %} · {{ c.duration }} s{% endif %}{% if c.flagged %} <span class="tag">Flagged by the check</span>{% endif %}</summary>
       {% set what = {'clip': 'one new ' ~ c.duration ~ '-second ', 'visual': 'a new ' ~ (c.duration ~ '-second ' if c.duration else ''), 'music': 'a new ' ~ c.duration ~ '-second '}[c.kind] %}
       {% set thing = {'clip': 'clip', 'visual': clip_fix.noun, 'music': 'music track'}[c.kind] %}
       <form method="post" action="/forms/posts/{{ post.id }}/parts/{{ c.key }}/regenerate" data-confirm="Regenerate {{ c.label }}? This makes {{ what }}{{ 'Runway ' if clip_fix.live else 'simulated ' }}{{ thing }}.">
