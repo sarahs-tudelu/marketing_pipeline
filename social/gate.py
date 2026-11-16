@@ -270,11 +270,15 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     )
 
     def duplicates():
+        from .reposts import exclusions
+
+        excluded, source_checks = exclusions(db, settings, post)
         vector, model = providers.embedding(post.caption)
         post.embedding, post.embedding_model = vector, model
         candidates = db.scalars(
             select(Post).where(
                 Post.id != post.id,
+                Post.id.not_in(excluded),
                 Post.platform == post.platform,
                 func.coalesce(Post.published_at, Post.scheduled_at, Post.created_at)
                 >= at - timedelta(days=settings.duplicate_days),
@@ -299,10 +303,13 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
                 Post.status != "deleted",
             )
         )
-        return maximum < settings.duplicate_threshold and not cross, {
+        sources_missing = all(c["state"] == "unavailable" for c in source_checks)
+        return maximum < settings.duplicate_threshold and not cross and sources_missing, {
             "maximum": maximum,
             "embedding_model": model,
             "cross_platform_identical": bool(cross),
+            "repost_sources": source_checks,
+            "excluded_unavailable_originals": sorted(excluded),
         }
 
     check("duplicates", duplicates)

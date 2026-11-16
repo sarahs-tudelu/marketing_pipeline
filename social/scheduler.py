@@ -83,9 +83,10 @@ def schedule(db, settings, post, earliest=None):
     from .adapters import adapter
 
     selected = adapter(settings, db, post)
+    from .reposts import sources
     from .retries import original_post
 
-    original = original_post(db, post)
+    original = original_post(db, post) or next(iter(sources(db, post)), None)
     if original and not original.dry_run:
         if original.account_id != account.external_id or selected.dry:
             raise ValueError("Retry requires the original live account with live posting enabled")

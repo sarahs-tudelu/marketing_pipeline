@@ -1,0 +1,20 @@
+{% if post.status == 'published' %}
+<section id="post-availability"><div class="section-head"><h2>Platform availability</h2><span class="status availability-{{ availability.state if availability else 'unchecked' }}">{{ 'Simulated' if post.dry_run else availability_labels.get(availability.state, 'Not checked yet') if availability else 'Not checked yet' }}</span></div>
+{% if post.dry_run %}<p>This was a simulated delivery. There is no platform post to check or repost.</p>
+{% else %}
+  <p>{{ availability.reason if availability else 'The background monitor will check this post. You can also check it now.' }}</p>
+  <p class="muted">{% if availability and availability.checked_at %}Last checked: {{ availability.checked_at }} UTC.{% endif %}{% if availability and availability.last_seen_at %} Last seen: {{ availability.last_seen_at }} UTC.{% endif %}</p>
+  <p class="muted">{{ 'Automatic checks run every ' ~ settings.post_availability_interval_hours ~ ' hours.' if settings.post_availability_enabled else 'Automatic availability checks are off.' }} Unavailable can mean deleted, private, or no longer accessible to the connected account.</p>
+  <div class="actions"><form method="post" action="/forms/posts/{{ post.id }}/availability"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Check availability now</button></form>{% if post.live_url %}<a class="button" href="{{ post.live_url }}" target="_blank" rel="noopener noreferrer">Open original on {{ post.platform|platform }}</a>{% endif %}</div>
+  {% if repost_existing %}<p>A repost draft has already been prepared.</p><a class="button primary" href="/posts/{{ repost_existing.id }}">Open repost</a>
+  {% elif availability and availability.state == 'unavailable' %}
+  <form method="post" action="/forms/posts/{{ post.id }}/repost">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="checkbox"><input type="checkbox" name="confirmed_removed" required>I checked the platform and confirmed the original post is no longer available.</label>
+    <button class="primary">Prepare repost for review</button>
+    <small>Reuses the saved media and caption in a new draft. Fresh checks and your approval are required before scheduling. The original delivery history is preserved.</small>
+  </form>{% endif %}
+  {% if availability_history %}<details><summary>Availability history</summary>{% for c in availability_history %}<p><b>{{ availability_labels[c.state] }}</b> · {{ c.checked_at }} UTC<small>{{ c.reason }} · {{ c.actor }}</small></p>{% endfor %}</details>{% endif %}
+{% endif %}
+</section>
+{% elif repost_sources %}<div class="banner"><b>Repost draft</b><span>Reuses the saved content from <a href="/posts/{{ repost_sources[0].id }}">the original publication</a>. It requires your approval and a fresh availability check before delivery.</span></div>{% endif %}

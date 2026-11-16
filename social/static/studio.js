@@ -64,6 +64,8 @@
     pending.delete(form);
   }
   const labels = {
+    availability: ["Checking availability…", "Reading the original post from the platform."],
+    repost: ["Preparing repost…", "Rechecking the original and creating a draft for your review."],
     "save-media": ["Saving media details…", "Updating permissions and source information."],
     automation: ["Updating automation…", "Saving your automatic-post preference."],
     "media-studio": ["Saving creative brief…", "Preparing your media queue or recurring campaign."],

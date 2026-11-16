@@ -1,0 +1,3 @@
+{% if p.status == 'published' and not p.dry_run %}{% set presence = availability_by_post.get(p.id) %}
+<div class="availability-summary"><span class="status availability-{{ presence.state if presence else 'unchecked' }}">{{ availability_labels[presence.state] if presence else 'Not checked yet' }}</span>{% if presence and presence.checked_at %}<small>Checked {{ presence.checked_at }} UTC</small>{% endif %}{% if presence and presence.state in ['unavailable','unknown'] %}<a href="/posts/{{ p.id }}#post-availability">{{ 'Review / repost' if presence.state == 'unavailable' else 'Review availability' }}</a>{% endif %}</div>
+{% endif %}

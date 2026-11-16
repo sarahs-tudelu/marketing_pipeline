@@ -10,7 +10,7 @@ from .config import get_settings
 from .connections import import_meta_from_env, refresh_all
 from .db import make_engine, now, sessions
 from .lifecycle import PostConflict
-from .models import MediaJob, Post, PostRetry
+from .models import MediaJob, Post, PostRepost, PostRetry
 from .monitoring import alert, deliver_alerts, event, setup_logging
 from .pipeline import bootstrap, generate, publish_due
 from .storage import watch_folder
@@ -34,6 +34,7 @@ def advance_queue(db, settings):
         Post.status.in_(active),
     )))
     requested.update(retries)
+    requested.update(db.scalars(select(PostRepost.repost_post_id).join(Post, Post.id == PostRepost.repost_post_id).where(Post.status.in_(active))))
     query = select(Post).where(Post.status.in_(active))
     if not can_automate(db, settings):
         query = query.where(Post.id.in_(requested))
@@ -112,7 +113,13 @@ def run():
             bootstrap(db)
             import_meta_from_env(db, settings)
         scheduler = BlockingScheduler(timezone="UTC")
+        from .availability import tick as availability_tick
         from .drive_import import tick as drive_tick
+
+        scheduler.add_job(
+            availability_tick, "interval", seconds=settings.worker_interval_seconds,
+            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
+        )
 
         scheduler.add_job(
             drive_tick,

@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = 300
     max_upload_bytes: int = 100_000_000
     analytics_enabled: bool = False
+    post_availability_enabled: bool = True
+    post_availability_interval_hours: int = Field(default=6, ge=1, le=168)
+    post_availability_batch_size: int = Field(default=20, ge=1, le=100)
     auto_advance: bool = True
 
     def __init__(self, **values):

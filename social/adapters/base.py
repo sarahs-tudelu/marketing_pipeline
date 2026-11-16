@@ -364,6 +364,11 @@ class BaseAdapter:
         body = response.json()
         failure = error_for(response, body)
         if failure:
+            # Read-only availability checks need the codes, never raw error text or credentials.
+            error = body.get("error", {}) if isinstance(body, dict) else {}
+            failure.http_status = response.status_code
+            failure.platform_code = error.get("code") if isinstance(error, dict) else error
+            failure.platform_subcode = error.get("error_subcode") if isinstance(error, dict) else None
             raise failure
         return body
 

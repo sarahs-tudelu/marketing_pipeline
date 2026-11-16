@@ -227,6 +227,12 @@ def create_app(settings=None):
     def health():
         return {"status": "ok"}
 
+    def post_revision(db, post_id):
+        from .models import AvailabilityCheck
+
+        return (db.scalar(select(func.max(Transition.id)).where(Transition.post_id == post_id)) or 0) + (
+            db.scalar(select(func.max(AvailabilityCheck.id)).where(AvailabilityCheck.post_id == post_id)) or 0)
+
     def page(
         request,
         db,
@@ -249,9 +255,12 @@ def create_app(settings=None):
         request.session.setdefault("browser_nonce", secrets.token_urlsafe(32))
         from .adapters import ADAPTERS
         from .asset_edit import form_values as asset_edit_values
+        from .availability import LABELS
         from .drive_import import panel as drive_panel
         from .facts import content_digest
-        from .models import AssetEdit
+        from .models import AssetEdit, AvailabilityCheck, PostAvailability
+        from .reposts import existing as existing_repost
+        from .reposts import sources as repost_sources
 
         editing_asset = db.get(Asset, editing_asset_id) if editing_asset_id else None
 
@@ -271,11 +280,14 @@ def create_app(settings=None):
             )
         post = db.get(Post, post_id) if post_id else None
         retry_existing = db.get(PostRetry, post.id) if post and post.status == "failed" else None
-        posts = db.scalars(
-            select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(200)
-        ).all()
+        post_query = select(Post).where(Post.status != "deleted")
         if view == "queues":
-            posts = [p for p in posts if p.status in {"held", "awaiting_review", "awaiting_manual", "failed"}]
+            post_query = post_query.where(
+                Post.status.in_(["held", "awaiting_review", "awaiting_manual", "failed"])
+                | ((Post.status == "published") & Post.id.in_(select(PostAvailability.post_id).where(
+                    PostAvailability.state.in_(["unavailable", "unknown"]))))
+            )
+        posts = db.scalars(post_query.order_by(Post.created_at.desc()).limit(200)).all()
         from .analytics import report
 
         media_jobs = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-queue" else []
@@ -315,6 +327,12 @@ def create_app(settings=None):
                 "csrf": request.session["csrf"],
                 "posts": posts,
                 "post": post,
+                "availability_labels": LABELS,
+                "availability_by_post": {a.post_id: a for a in db.scalars(select(PostAvailability).where(PostAvailability.post_id.in_([p.id for p in posts])))},
+                "availability": db.get(PostAvailability, post.id) if post else None,
+                "availability_history": db.scalars(select(AvailabilityCheck).where(AvailabilityCheck.post_id == post.id).order_by(AvailabilityCheck.id.desc()).limit(20)).all() if post else [],
+                "repost_existing": existing_repost(db, post) if post and post.status == "published" else None,
+                "repost_sources": repost_sources(db, post) if post else [],
                 "posting_assets": [db.get(Asset, i) for i in post.asset_ids if db.get(Asset, i)] if post else [],
                 "reviewed_digest": content_digest(post, [db.get(Asset, i) for i in post.asset_ids]) if post else "",
                 "post_wants_live": settings.wants_live(post.platform, db.get(Account, post.platform)) if post else False,
@@ -326,7 +344,7 @@ def create_app(settings=None):
                 "retry_original": original_post(db, post) if post else None,
                 "retry_block_reason": retry_block_reason(db, settings, post) if post and post.status == "failed" and not retry_existing else "",
                 "post_busy": ((post.status == "publishing" or post_processing(engine, post.id)) if post_busy is None else post_busy) if post else False,
-                "post_revision": db.scalar(select(func.max(Transition.id)).where(Transition.post_id == post.id)) if post else 0,
+                "post_revision": post_revision(db, post.id) if post else 0,
                 "connections": state,
                 "any_live": any(not c["dry"] for c in state),
                 "control": db.get(Control, 1),
@@ -446,6 +464,9 @@ def create_app(settings=None):
 
     @app.get("/api/posts")
     def list_posts(db: DB):
+        from .models import PostAvailability
+
+        availability = {a.post_id: a for a in db.scalars(select(PostAvailability))}
         return [
             {
                 "id": p.id,
@@ -455,6 +476,9 @@ def create_app(settings=None):
                 "scheduled_at": p.scheduled_at,
                 "url": p.live_url,
                 "dry_run": p.dry_run,
+                "availability": ({"state": a.state, "reason": a.reason, "checked_at": a.checked_at,
+                                  "last_seen_at": a.last_seen_at, "next_check_at": a.next_check_at}
+                                 if (a := availability.get(p.id)) else None),
             }
             for p in db.scalars(
                 select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(500)
@@ -493,7 +517,7 @@ def create_app(settings=None):
         return {
             "processing": post.status == "publishing" or post_processing(engine, post_id),
             "status": post.status,
-            "revision": db.scalar(select(func.max(Transition.id)).where(Transition.post_id == post_id)) or 0,
+            "revision": post_revision(db, post_id),
         }
 
     @app.post("/forms/media-studio", dependencies=mutation)
@@ -818,7 +842,7 @@ def create_app(settings=None):
         post = draft(db, **payload.model_dump())
         return {"id": post.id, "status": post.status}
 
-    def action_impl(db, post, action, actor, parts=None, revision_request="", reviewed_digest=""):
+    def action_impl(db, post, action, actor, parts=None, revision_request="", reviewed_digest="", confirmed_removed=False):
         if action in {"check", "approve", "reject", "edit", "tiktok_status"}:
             lock_post(db, post)
         if action in {"check", "approve"} and not post.caption:
@@ -830,6 +854,14 @@ def create_app(settings=None):
             rewrite_caption(db, settings, post, actor, revision_request)
         elif action == "retry":
             post = retry_post(db, settings, post, actor)
+        elif action == "availability":
+            from .availability import check_post
+
+            check_post(db, settings, post, actor)
+        elif action == "repost":
+            from .reposts import create
+
+            post = create(db, settings, post, actor, confirmed_removed)
         elif action in {"delete", "restart"}:
             delete_draft(db, post, actor)
         elif action == "approve":
@@ -880,6 +912,14 @@ def create_app(settings=None):
             result = selected.get_status(post.remote_id)["data"]
             if result["status"] == "PUBLISH_COMPLETE":
                 ids = result.get("publicaly_available_post_id", [])
+                if ids:
+                    from .models import PostAvailability
+
+                    availability = db.get(PostAvailability, post.id)
+                    if availability is None:
+                        availability = PostAvailability(post_id=post.id)
+                        db.add(availability)
+                    availability.public_ids = [str(i) for i in ids]
                 # The status endpoint does not return a canonical profile/share URL.
                 # Use a platform-returned URL when the optional Display API scope exists.
                 if ids and "video.list" in selected.credentials.get("scope", ""):
@@ -903,11 +943,11 @@ def create_app(settings=None):
         return {"id": post.id, "status": post.status}
 
     @app.post("/api/posts/{post_id}/{action}", dependencies=mutation)
-    def post_action(post_id: str, action: str, request: Request, db: DB, parts: list[dict] | None = None, revision_request: str = "", reviewed_digest: str = ""):
+    def post_action(post_id: str, action: str, request: Request, db: DB, parts: list[dict] | None = None, revision_request: str = "", reviewed_digest: str = "", confirmed_removed: bool = False):
         post = db.get(Post, post_id)
         if not post or post.status == "deleted":
             raise HTTPException(404)
-        return action_impl(db, post, action, request.state.actor, parts, revision_request, reviewed_digest)
+        return action_impl(db, post, action, request.state.actor, parts, revision_request, reviewed_digest, confirmed_removed)
 
     def compose_post(db, values):
         asset_ids = values["asset_ids"]
@@ -973,7 +1013,7 @@ def create_app(settings=None):
         try:
             if post_processing(engine, post_id):
                 raise PostBusy("This post is being processed")
-            result = await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts, str(form.get("revision_request", "")), str(form.get("reviewed_digest", "")))
+            result = await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts, str(form.get("revision_request", "")), str(form.get("reviewed_digest", "")), form.get("confirmed_removed") == "on")
         except PostBusy:
             db.rollback()
             return page(request, db, "post", post_id, post_busy=True, status_code=202)

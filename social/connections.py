@@ -48,7 +48,7 @@ def ready(settings, platform):
 
 def requested_scopes(settings, platform):
     scope = OAUTH[platform]["scope"]
-    if platform == "tiktok" and settings.analytics_enabled:
+    if platform == "tiktok" and (settings.analytics_enabled or settings.post_availability_enabled):
         scope += ",video.list"
     return scope
 

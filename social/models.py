@@ -128,6 +128,38 @@ class PostRetry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class PostAvailability(Base):
+    __tablename__ = "post_availability"
+    post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"), primary_key=True)
+    state: Mapped[str] = mapped_column(String(30), default="unchecked")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    unavailable_since: Mapped[datetime | None] = mapped_column(DateTime)
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    public_ids: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class AvailabilityCheck(Base):
+    __tablename__ = "availability_checks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"), index=True)
+    state: Mapped[str] = mapped_column(String(30))
+    reason: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor: Mapped[str] = mapped_column(String(100))
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class PostRepost(Base):
+    __tablename__ = "post_reposts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    original_post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"), index=True)
+    repost_post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"), unique=True)
+    actor: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class Transition(Base):
     __tablename__ = "transitions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
