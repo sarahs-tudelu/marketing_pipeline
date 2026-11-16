@@ -208,6 +208,11 @@ def pending_step(job):
             "limit": MUSIC_PROMPT_LIMIT,
         }
     segment = current_segment(job)
+    if brief.get("active_generation") == "scene":
+        plan = (segment or brief).get("reference_plan", {})
+        return {"kind": "scene", "index": segment["index"] if segment else None,
+                "label": f"the scene for clip {segment['index'] + 1}" if segment else "the scene image",
+                "prompt": plan.get("scene_prompt", ""), "limit": PROMPT_LIMIT}
     if segment:
         return {
             "kind": "clip",
@@ -271,7 +276,19 @@ def retry_step(db, job, prompt):
         raise ValueError(f"Keep the prompt under {step['limit']} characters")
     brief = dict(job.brief)
     failed = {"task_id": job.task_id, "stage": job.stage, "error": job.error[:500], "at": now().isoformat()}
-    if step["kind"] == "clip":
+    if step["kind"] == "scene":
+        failed["stage"] = "scene"
+        if step["index"] is not None:
+            failed["segment_index"] = step["index"]
+            brief["video_segments"] = [
+                {k: v for k, v in s.items() if k != "reference_plan"}
+                | {"prompt": text, "seed": (s["seed"] + 1) % 2**32}
+                if s["index"] == step["index"] else s for s in brief["video_segments"]
+            ]
+        else:
+            brief.pop("reference_plan", None)
+            brief["generation_prompt"], brief["seed"] = text, (brief["seed"] + 1) % 2**32
+    elif step["kind"] == "clip":
         failed["segment_index"] = step["index"]
         brief["video_segments"] = [
             s | {"prompt": text, "seed": (s["seed"] + 1) % 2**32} if s["index"] == step["index"] else s

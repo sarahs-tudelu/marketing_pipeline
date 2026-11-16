@@ -309,7 +309,9 @@ def create_app(settings=None):
         posts = db.scalars(post_query.order_by(Post.created_at.desc()).limit(200)).all()
         from .analytics import report
 
-        media_jobs = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-queue" else []
+        media_jobs = db.scalars(select(MediaJob).where(
+            (MediaJob.post_id.is_(None)) | ~MediaJob.post_id.in_(select(Post.id).where(Post.status == "deleted"))
+        ).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-queue" else []
         media_job_posts = dict(db.execute(select(Post.id, Post.status).where(Post.id.in_([j.post_id for j in media_jobs if j.post_id]))).all())
         active_jobs = db.scalar(
             select(func.count(MediaJob.id)).where(
@@ -520,6 +522,7 @@ def create_app(settings=None):
                 "platform": j.platform,
                 "state": j.state,
                 "stage": j.stage,
+                "generation_phase": j.brief.get("active_generation", ""),
                 "task_id": j.task_id,
                 "error": j.error,
                 "asset_id": j.output_asset_id,
@@ -527,7 +530,9 @@ def create_app(settings=None):
                 "post_status": post_status,
                 "completed_clips": sum(bool(s.get("output_asset_id")) for s in j.brief.get("video_segments", [])),
             }
-            for j, post_status in db.execute(select(MediaJob, Post.status).outerjoin(Post, Post.id == MediaJob.post_id).order_by(MediaJob.created_at.desc()).limit(100))
+            for j, post_status in db.execute(select(MediaJob, Post.status).outerjoin(Post, Post.id == MediaJob.post_id)
+                .where(Post.status.is_(None) | (Post.status != "deleted"))
+                .order_by(MediaJob.created_at.desc()).limit(100))
         ]
 
     @app.get("/api/posts/{post_id}/activity")

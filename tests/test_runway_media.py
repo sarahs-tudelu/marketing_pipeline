@@ -169,7 +169,7 @@ def reference_selection(assets, monkeypatch):
     monkeypatch.setattr(refs, "website_references", lambda *args: [])
     monkeypatch.setattr(refs, "select_reference", lambda s, records, context: refs.Selection(
         reference_id=records[0]["id"], physical_description="Fixed aluminum pergola.",
-        prompt=context["prompt"], reason="Matching photo.", problem=""))
+        prompt=context["prompt"], scene_prompt=context["prompt"], reason="Matching photo.", problem=""))
 
 
 def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets, monkeypatch):

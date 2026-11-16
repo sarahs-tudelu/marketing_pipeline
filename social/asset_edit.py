@@ -32,6 +32,7 @@ PROTECTED_TAGS = frozenset(
         "source_checksum",
         "reference_provenance",
         "reference_plan",
+        "generated_scene",
         "google_drive_file_id",
         "google_drive_folder_id",
         "imported_bucket_key",

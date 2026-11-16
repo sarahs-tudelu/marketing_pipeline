@@ -120,12 +120,14 @@ def test_full_pipeline_joins_saved_clips_and_soundtrack_once(db, settings, monke
 
 def test_failure_on_later_clip_resumes_without_buying_completed_clips_again(db, settings, assets, monkeypatch):
     from social import reference_grounding as refs
+    from social.scene_generation import SceneCheck
 
+    monkeypatch.setattr("social.scene_generation.review_scene", lambda *args: SceneCheck(passed=True, reasons=[]))
     assets[0].rights, assets[0].tags = "public", {"product": "pergolas"}
     monkeypatch.setattr(refs, "website_references", lambda *args: [])
     monkeypatch.setattr(refs, "select_reference", lambda s, records, context: refs.Selection(
         reference_id=records[0]["id"], physical_description="Fixed aluminum pergola.",
-        prompt=context["prompt"], reason="Matching photo.", problem=""))
+        prompt=context["prompt"], scene_prompt=context["prompt"], reason="Matching photo.", problem=""))
     monkeypatch.setattr('social.media_studio.write_prompt', lambda *a: {'generation_prompt': 'A pergola at dusk', 'prompt_writer': {}, 'depicted_system': 'Pergolas'})
     # 15 seconds: 12 seconds of footage in two 6-second clips, then the 3-second logo.
     job = queue_jobs(db, settings, brief(db, settings, duration=15, create_posts=False))[0]
@@ -142,28 +144,29 @@ def test_failure_on_later_clip_resumes_without_buying_completed_clips_again(db, 
 
         def submit(self, endpoint, payload):
             self.submissions.append(payload)
-            assert payload['duration'] == 6
+            if endpoint == 'image_to_video':
+                assert payload['duration'] == 6
             return f'task-{len(self.submissions)}'
 
         def task(self, task_id):
             return {'status': 'SUCCEEDED', 'output': [task_id]}
 
         def download(self, task_id):
-            if task_id == 'task-2' and not self.failed:
+            if task_id == 'task-4' and not self.failed:
                 self.failed = True
                 raise ProviderError('Temporary download failure', provider='Runway', category='download')
-            return clip(6, 0)
+            return storage(settings).read(assets[0].storage_key) if task_id in {'task-1', 'task-3'} else clip(6, 0)
 
     provider = Runway()
-    for _ in range(4):
+    for _ in range(8):
         process_jobs(db, settings, provider)
-    assert job.state == 'failed' and job.task_id == 'task-2'
+    assert job.state == 'failed' and job.task_id == 'task-4', job.error
     saved = job.brief['video_segments'][0]['output_asset_id']
     resume_job(job)
     db.commit()
     process_jobs(db, settings, provider)
     # Both clips are saved; the default ambient music is the next step.
-    assert (job.state, job.stage) == ('queued', 'audio') and len(provider.submissions) == 2
+    assert (job.state, job.stage) == ('queued', 'audio') and len(provider.submissions) == 4
     assert job.brief['video_segments'][0]['output_asset_id'] == saved
     assert len(job.source_asset_ids) == 2
 

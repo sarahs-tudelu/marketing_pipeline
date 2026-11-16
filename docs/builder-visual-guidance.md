@@ -65,7 +65,7 @@ company photos or accepted Builder renders as references.
 
 ### Reference-grounded rendering
 
-The [reference workflow](reference-grounded-generation.md) makes the guide actionable against actual pixels: the selector checks Public library/Drive photos and reviewed website images against the product rules before each live scene. It supplies the chosen image to Runway, including every later video clip, and final review compares the result with that source. `social/rendering_guidelines.py` adds the versioned scene-consistency, visible-connection and restrained-camera rules shared by planning, generation and review. This supplements the immutable Builder/facts snapshot; it does not rewrite existing facts or authorize new caption claims.
+The [reference workflow](reference-grounded-generation.md) makes the guide actionable against actual pixels: the selector checks Public library/Drive photos and reviewed website images against the product rules before each live scene. It uses the chosen image for product construction while composing a new scene from the prompt. Each video scene image is checked before animation; a shared visual direction coordinates varied settings and supported finishes across clips. Final review distinguishes those intended differences from product defects. `social/rendering_guidelines.py` adds the versioned scene-consistency, visible-connection and restrained-camera rules shared by planning, generation and review. This supplements the immutable Builder/facts snapshot; it does not rewrite existing facts or authorize new caption claims.
 
 ### Owner correction: hanger-rod canopies
 

@@ -197,6 +197,9 @@ def test_music_is_regenerated_alone(db, settings, facts, logo):  # noqa: F811
 
 
 def test_failed_runway_task_can_be_generated_again(db, settings, assets, monkeypatch):
+    from test_runway_media import reference_selection
+
+    reference_selection(assets, monkeypatch)
     monkeypatch.setattr("social.media_studio.write_prompt", written_prompt)
     monkeypatch.setattr(
         "social.providers.OpenAI.call",
@@ -255,7 +258,7 @@ def test_failed_runway_task_can_be_generated_again(db, settings, assets, monkeyp
         token = client.get("/api/session").json()["csrf"]
         page = client.get("/admin/media-queue").text
         assert "Generate the image again" in page and "Resume saved task" not in page
-        assert "This starts one new paid Runway task." in page
+        assert "Runway generation is paid." in page
         resumed = client.post(f"/forms/media-jobs/{job.id}/resume", data={"csrf": token})
         assert resumed.status_code == 400 and "Use Generate again instead" in resumed.text
         retried = client.post(
@@ -270,10 +273,10 @@ def test_failed_runway_task_can_be_generated_again(db, settings, assets, monkeyp
     for _ in range(4):
         process_jobs(db, settings, provider)
     assert job.state == "complete", job.error
-    assert provider.prompts == [
-        ("A pergola at dusk", seed),
-        ("A pergola beside a plain white wall", (seed + 1) % 2**32),
-    ]
+    assert [value for prompt, value in provider.prompts] == [seed, (seed + 1) % 2**32]
+    assert provider.prompts[0][0].startswith("A pergola at dusk")
+    assert provider.prompts[1][0].startswith("A pergola beside a plain white wall")
+    assert all("fixed stationary louvers" in prompt for prompt, value in provider.prompts)
     assert retry_option(job) is None
 
 

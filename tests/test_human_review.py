@@ -13,7 +13,7 @@ from social.gate import run_gate
 from social.human_review import approve, stop
 from social.lifecycle import PostConflict
 from social.media_studio import process_jobs, queue_jobs
-from social.models import MediaCampaign, Post, RequestRecord, Transition
+from social.models import MediaCampaign, MediaJob, Post, RequestRecord, Transition
 from social.pipeline import delete_draft, publish_due, rewrite_caption
 from social.providers import Providers
 from social.scheduler import schedule
@@ -146,6 +146,23 @@ def test_delete_restart_keeps_assets_and_reopens_idea(db, settings, post, assets
     db.refresh(post)
     assert post.status == 'deleted'
     assert assets[0].id in post.asset_ids
+
+
+def test_deleted_draft_disappears_from_generation_queue(db, settings, post):
+    job = queue_jobs(db, settings, brief_for(db, settings))[0]
+    job.state, job.post_id = 'complete', post.id
+    db.commit()
+    with TestClient(create_app(settings)) as client:
+        token = client.get('/api/session').json()['csrf']
+        assert f'data-job-id="{job.id}"' in client.get('/admin/media-queue').text
+        response = client.post(f'/forms/posts/{post.id}/delete', data={'csrf': token})
+        assert response.status_code == 200
+        assert f'data-job-id="{job.id}"' not in client.get('/admin/media-queue').text
+        assert job.id not in [row['id'] for row in client.get('/api/media-jobs').json()]
+        assert client.get(f'/posts/{post.id}').status_code == 404
+    db.refresh(post)
+    assert post.status == 'deleted'
+    assert db.get(MediaJob, job.id)  # Hidden from the workspace; delivery/retry audit remains intact.
 
 
 @pytest.mark.parametrize('action', [stop, delete_draft])

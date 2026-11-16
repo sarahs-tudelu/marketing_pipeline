@@ -148,6 +148,8 @@ def payload_for(settings, brief, platform, references, *, audio=False):
             model=settings.runway_image_model,
             ratio="1080:1440" if p.image_height > p.image_width else "1080:1080",
         )
+        if brief.get("video_scene"):
+            result["ratio"] = "720:1280" if p.video_height > p.video_width else "1280:720"
         if references:
             result["referenceImages"] = [{"uri": uri, "tag": f"ref{i}"} for i, uri in enumerate(references)]
         return "text_to_image", result

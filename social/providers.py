@@ -399,22 +399,27 @@ class OpenAI:
             )
         # These are comparison inputs, not frames of the output under review. Keep their
         # numbering separate so an original logo/person is never attributed to a generated clip.
-        reference_inputs, reference_seen = [], set()
+        reference_inputs, reference_seen = [], {}
         for asset in assets:
             plans = [asset.tags.get("reference_plan")]
             plans += [s.get("reference_plan") for s in asset.tags.get("video_sequence", [])]
             for plan in (p for p in plans if p):
-                for record in plan.get("references", []):
-                    if record["checksum"] in reference_seen:
-                        continue
-                    if len(reference_seen) >= 12:
-                        raise ValueError("Too many product references for one visual review")
-                    data = store.read(record["storage_key"])
-                    if hashlib.sha256(data).hexdigest() != record["checksum"]:
-                        raise ValueError("Product reference integrity failed before visual review")
-                    reference_seen.add(record["checksum"])
-                    images.append((record["media"]["mime"], data))
-                    reference_inputs.append({"image_number": len(images), "system": plan["system"],
+                records = [("product_construction", r) for r in plan.get("references", [])]
+                if plan.get("scene_reference"):
+                    records.append(("generated_scene", plan["scene_reference"]))
+                for role, record in records:
+                    if record["checksum"] not in reference_seen:
+                        if len(reference_seen) >= 24:
+                            raise ValueError("Too many product references for one visual review")
+                        data = store.read(record["storage_key"])
+                        if hashlib.sha256(data).hexdigest() != record["checksum"]:
+                            raise ValueError("Product reference integrity failed before visual review")
+                        images.append((record["media"]["mime"], data))
+                        reference_seen[record["checksum"]] = len(images)
+                    reference_inputs.append({"image_number": reference_seen[record["checksum"]], "system": plan["system"],
+                                             "role": role, "requested_scene": plan.get("scene_prompt", ""),
+                                             "creative_changes": plan.get("creative_changes", ""),
+                                             "visual_direction": plan.get("visual_direction", ""),
                                              "origin": record["origin"], "source_url": record.get("source_url", ""),
                                              "physical_description": plan["physical_description"]})
         has_video = any(item["input_kind"] == "sampled_video_frames" for item in media_inputs)
@@ -458,9 +463,15 @@ class OpenAI:
                 "matching product profile and global_rules. Those Builder rules override conflicting website "
                 "examples or generation prompts. Check materials, frame proportions, louver connections, "
                 "supports, roof type and visible operation. Reject unsupported products and configurations. "
-                "reference_inputs are original comparison photos/illustrations, not generated output frames. "
-                "Compare the output's configuration, supports, roof, materials and connections with the matching "
-                "reference image as well as rendering_guidelines. Do not attribute text, logos or people in a "
+                "reference_inputs are comparison images, not output video frames. product_construction images "
+                "guide product identity and connections, not a locked background or finish. generated_scene "
+                "images show the intended starting scene, but remain AI output, not proof of product accuracy. "
+                "Honor requested_scene and creative_changes when Builder-supported: different backgrounds, "
+                "architecture, configurations, colors and finishes are allowed. Do not reject those differences "
+                "merely because they differ from the original photo. Check stable geometry within each scene "
+                "and compatible photographic style across the sequence using visual_direction. Distinct "
+                "locations and deliberate product variety are expected; reject only concrete unsupported "
+                "construction or observed visual defects, not subjective stylistic preference. Do not attribute text, logos or people in a "
                 "comparison reference to the output. Builder rules and owner corrections still take precedence "
                 "over a reference. A selected reference or its model description is not an automatic approval. "
                 "Do not infer hidden parts or precise measurements from pixels; explain uncertainty when a "

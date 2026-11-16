@@ -556,6 +556,11 @@ def replenish_campaigns(db, settings):
 def _save_output(db, settings, job, data):
     from .reference_grounding import current_plan
 
+    if job.brief.get("active_generation") == "scene":
+        from .scene_generation import save_scene
+
+        save_scene(db, settings, job, data)
+        return
     brief = segment_brief(job)
     segment = current_segment(job) if job.stage == "visual" else None
     is_audio = job.stage == "audio" or brief["operation"] == "audio"
@@ -573,6 +578,8 @@ def _save_output(db, settings, job, data):
     reference_plan = current_plan(job) if not is_audio else None
     reference_ids = ([r["asset_id"] for r in reference_plan["references"] if r.get("asset_id")]
                      if reference_plan else brief["reference_ids"])
+    if reference_plan and reference_plan.get("scene_reference"):
+        reference_ids += [reference_plan["scene_reference"]["asset_id"]]
     refs = [db.get(Asset, i) for i in dict.fromkeys(reference_ids + brief["audio_reference_ids"])]
     expiries = [a.rights_expire_at for a in refs if a.rights_expire_at]
     prompt = brief["audio_prompt"] if job.stage == "audio" else brief["generation_prompt"]
@@ -1182,13 +1189,12 @@ def process_jobs(db, settings, provider=None):
                 from types import SimpleNamespace
 
                 from .reference_grounding import prepare as prepare_references
+                from .scene_generation import generation_inputs
 
                 grounded_references = prepare_references(db, settings, job)
+                generation_brief, grounded_references, phase = generation_inputs(db, settings, job, grounded_references)
                 ids = brief.audio_reference_ids if job.stage == "audio" else brief.reference_ids
                 segment = current_segment(job) if job.stage == "visual" else None
-                if not grounded_references and segment and segment.get("shot") and segment["index"] > 0 and brief.operation == "video":
-                    # A start image belongs to the first planned clip; later clips show other settings.
-                    ids = []
                 if job.stage == "audio" and job.brief.get("soundtrack_model") == "music":
                     ids = []
                 if brief.operation == "audio":
@@ -1201,12 +1207,13 @@ def process_jobs(db, settings, provider=None):
                 else:
                     references = [runway.reference(db.get(Asset, i)) for i in ids]
                 endpoint, payload = payload_for(
-                    settings, segment_brief(job), job.platform, references, audio=job.stage == "audio"
+                    settings, generation_brief, job.platform, references, audio=job.stage == "audio"
                 )
                 db.refresh(control)
                 db.refresh(account)
                 if control.killed or account.paused:
                     continue
+                job.brief = job.brief | {"active_generation": phase}
                 # Persist before the paid request; crash recovery never blindly re-submits.
                 claimed = db.execute(
                     update(MediaJob)

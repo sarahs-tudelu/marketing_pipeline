@@ -25,6 +25,7 @@ from .facts import Facts, active
 from .models import Asset, FactSheet, MediaJob, Post
 from .product_rules import VisualGuidance, constrain_prompt, context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
+from .rendering_guidelines import DEFAULT_VISUAL_DIRECTION
 from .rendering_guidelines import policy as rendering_policy
 
 # promptText limit for gen4_image, gen4.5 and aleph2, in UTF-16 code units (Runway OpenAPI).
@@ -44,7 +45,7 @@ VISUAL_RULES = [
     "Storefronts, streets, parking and other commercial settings invite generated lettering: frame them so the "
     "system and one plain, unbranded facade fill the shot, with any neighboring buildings described as blank "
     "rendered walls and greenery, windows as clear glass reflecting the sky and awnings as plain solid fabric.",
-    "Photorealistic architectural photography with believable scale, physics and daylight.",
+    "Photorealistic architectural photography with believable scale, physics and the requested lighting.",
 ]
 
 WRITER_INSTRUCTIONS = (
@@ -58,7 +59,8 @@ WRITER_INSTRUCTIONS = (
     "for geometry, materials, supports and operation. Choose only a system in its products. These Builder rules "
     "override conflicting website examples, admin ideas and generated or uploaded references. Explain an "
     "unsupported configuration in problem instead of inventing it. Use references for finish and composition "
-    "only within these rules. Include the physical product cues in every shot; fixed louvers remain stationary "
+    "only within these rules. The admin idea controls new settings, architecture and supported colors, finishes "
+    "and configurations; reference photos do not lock the scene. Include the physical product cues in every shot; fixed louvers remain stationary "
     "in video. The camera may move. Never turn installation-angle options into operable blades. "
     "Always apply rules.product_constraints, including when visual_guidance is absent. These current owner "
     "corrections override older rules and references. A rod-hung canopy has rods above the roof running up "
@@ -75,7 +77,8 @@ WRITER_INSTRUCTIONS = (
     "wording such as 'plain unmarked surfaces' or 'an empty terrace', never 'no text' or 'without people'. "
     "Write one coherent scene in plain descriptive sentences: subject, setting, composition, lighting, mood. "
     "For video, describe one continuous shot with a specific camera movement and how the system moves. "
-    "For video with a starting image (has_start_image), describe the motion and camera only, preserving the image. "
+    "For generated video, describe the complete requested scene, appearance and motion. The app will first "
+    "create a new scene image using the supplied photos as product references, then animate that new image. "
     "For video_edit, describe the change to apply to the supplied video while preserving the system's geometry. "
     "Keep prompt under 900 characters. sources_used lists which sources informed it, such as "
     "'website', 'rules', 'uploaded:<asset_id>', 'reference:<asset_id>', 'previous:<asset_id>'. "
@@ -85,10 +88,14 @@ WRITER_INSTRUCTIONS = (
     "clip prompt describes one continuous shot of its own setting and one Tudelu system (the clip's named "
     "system when given, otherwise one you choose; give clips different systems when the idea asks for several "
     "products), with a specific camera move for its seconds. Keep one consistent cinematic look across clips "
-    "(time of day, light, color grade, lens). Each clip prompt stays under 700 characters and repeats any "
+    "(compatible light, exposure, color grade, lens and camera pacing). Return visual_direction: a concise "
+    "shared art direction for the whole film, at most 350 characters, grounded in the admin idea. Allow a "
+    "deliberate mix of locations, architecture and supported colors/material finishes; preserve the same "
+    "configuration only across shots of the same installation. Plan matched compositions and camera movement "
+    "across cuts so the variety feels cohesive. Each clip prompt stays under 700 characters and repeats any "
     "detail it needs, because Runway sees each clip prompt alone. Every product clip will receive its own "
-    "visually checked starting reference from the company website or Public library. Keep shots achievable "
-    "from real product views; avoid inventing hidden geometry or switching configurations between angles. "
+    "new scene image grounded in company product references. Keep the Builder's construction accurate while "
+    "following each shot's requested setting and supported appearance. "
     "Set the top-level system and prompt to clip 1's. When end_card is true, the app appends the official logo "
     "afterwards, so never show logos or brand names in any clip."
 )
@@ -105,6 +112,7 @@ class WrittenPrompt(BaseModel):
     shots: list[WrittenShot] = Field(default_factory=list, max_length=12)
     sources_used: list[str] = Field(default_factory=list, max_length=40)
     problem: str = Field(default="", max_length=2000)
+    visual_direction: str = Field(default="", max_length=1000)
 
 
 def utf16_trim(text, limit=PROMPT_LIMIT):
@@ -411,6 +419,7 @@ def write_prompt(db, settings, job):
     result = {
         "generation_prompt": constrain_prompt(written.prompt, profile_for(guidance, written.system), written.system),
         "depicted_system": written.system.strip(),
+        "visual_direction": utf16_trim(written.visual_direction or DEFAULT_VISUAL_DIRECTION, 400),
         "prompt_writer": {
             "writer": writer,
             "written_at": now().isoformat(),

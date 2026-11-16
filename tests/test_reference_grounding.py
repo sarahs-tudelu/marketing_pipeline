@@ -63,6 +63,8 @@ def choice(record, prompt="The existing fixed pergola remains stationary; a slow
         reference_id=record["id"],
         physical_description="Straight aluminum frame, fixed louvers and four posts.",
         prompt=prompt,
+        scene_prompt="New white aluminum pergola in a courtyard, warm soft light, using @ref0 construction.",
+        creative_changes="New courtyard and white finish.",
         reason="The photographed roof and supports match the Builder.",
         problem="",
     )
@@ -316,7 +318,10 @@ def test_reference_links_render_in_both_review_screens(db, settings, reference_j
 
     monkeypatch.setattr(refs, "select_reference", lambda s, r, c: choice(r[0]))
     refs.prepare(db, settings, reference_job)
-    photo.tags = photo.tags | {"reference_plan": reference_job.brief["reference_plan"]}
+    plan = reference_job.brief["reference_plan"] | {"scene_reference": refs.asset_record(photo),
+                                                  "scene_check": {"passed": True}}
+    reference_job.brief = reference_job.brief | {"reference_plan": plan}
+    photo.tags = photo.tags | {"reference_plan": plan}
     post.asset_ids = [photo.id]
     db.commit()
     with TestClient(create_app(settings)) as client:
@@ -325,6 +330,7 @@ def test_reference_links_render_in_both_review_screens(db, settings, reference_j
             assert response.status_code == 200
             assert "Google Drive photo" in response.text and "View source image" in response.text
             assert "Straight aluminum frame" in response.text
+            assert "View generated scene" in response.text and "Shared visual direction" in response.text
 
 
 def test_fixture_and_existing_video_edits_do_not_call_reference_selector(
@@ -395,7 +401,9 @@ def test_final_visual_review_gets_reference_images_separately(
         generator="test",
         prompt="test",
         rights="public",
-        tags={"reference_plan": reference_job.brief["reference_plan"]},
+        tags={"reference_plan": reference_job.brief["reference_plan"], "video_sequence": [
+            {"reference_plan": reference_job.brief["reference_plan"] | {"creative_changes": "Wood Look at a cafe"}}
+        ]},
     )
     seen = []
 
@@ -429,4 +437,8 @@ def test_final_visual_review_gets_reference_images_separately(
     context = json.loads(content[0]["text"].split("Context: ")[1])
     assert context["media_inputs"][0]["image_numbers"] == [1]
     assert context["reference_inputs"][0]["image_number"] == 2
+    assert context["reference_inputs"][0]["creative_changes"] == "New courtyard and white finish."
+    assert context["reference_inputs"][1]["image_number"] == 2
+    assert context["reference_inputs"][1]["creative_changes"] == "Wood Look at a cafe"
+    assert context["reference_inputs"][0]["role"] == "product_construction"
     assert len([p for p in content if p["type"] == "input_image"]) == 2

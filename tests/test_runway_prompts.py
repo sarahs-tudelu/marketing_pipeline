@@ -111,7 +111,7 @@ def sources(db, settings, monkeypatch):
     monkeypatch.setattr(reference_grounding, "website_references", lambda *args: [])
     monkeypatch.setattr(reference_grounding, "select_reference", lambda s, records, context: reference_grounding.Selection(
         reference_id=records[0]["id"], physical_description="Slatted aluminum pergola.",
-        prompt=context["prompt"], reason="Matches the company photo.", problem=""))
+        prompt=context["prompt"], scene_prompt=context["prompt"], reason="Matches the company photo.", problem=""))
     image = seed_media()[0]
     public = ingest(
         db, settings, image, "pergola.jpg", rights="public", owner="Tudelu", tags={"product": "pergola"}
@@ -188,9 +188,9 @@ def test_live_prompt_uses_site_rules_public_uploads_and_previous_generations(
     assert context["orientation"] == "portrait" and context["direction"]
 
     endpoint, payload = runway.payloads[0]
-    assert endpoint == "image_to_video"
-    assert payload["promptImage"] == "runway://" + sources["public"].checksum
-    assert payload["promptText"] == job.brief["video_segments"][0]["prompt"]
+    assert endpoint == "text_to_image"
+    assert payload["referenceImages"] == [{"uri": "runway://" + sources["public"].checksum, "tag": "ref0"}]
+    assert payload["promptText"] == job.brief["video_segments"][0]["reference_plan"]["scene_prompt"]
     assert payload["promptText"].startswith(job.brief["generation_prompt"])
     assert job.brief["depicted_system"] == "pergolas"
     recorded = job.brief["prompt_writer"]["sources"]

@@ -311,15 +311,17 @@ def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, l
         write_prompt(db, settings, job)
 
 
-def test_matching_start_image_is_used_for_every_planned_clip(db, settings, assets, house_logo, monkeypatch):
+def test_new_scene_is_generated_for_every_planned_clip(db, settings, assets, house_logo, monkeypatch):
     from social import reference_grounding as refs
+    from social.scene_generation import SceneCheck
 
+    monkeypatch.setattr("social.scene_generation.review_scene", lambda *args: SceneCheck(passed=True, reasons=[]))
     assets[0].rights = "public"
     assets[0].tags = {"product": "pergolas"}
     monkeypatch.setattr(refs, "website_references", lambda *args: [])
     monkeypatch.setattr(refs, "select_reference", lambda s, records, context: refs.Selection(
         reference_id=records[0]["id"], physical_description="Fixed aluminum pergola.",
-        prompt=context["prompt"], reason="Matching photo.", problem=""))
+        prompt=context["prompt"], scene_prompt=context["prompt"], reason="Matching photo.", problem=""))
     shots = [Shot(setting="backyard"), Shot(setting="walkway")]
     job = queue_jobs(
         db,
@@ -348,17 +350,18 @@ def test_matching_start_image_is_used_for_every_planned_clip(db, settings, asset
             return f"task-{len(submitted)}"
 
         def task(self, task_id):
-            return {"status": "SUCCEEDED", "output": ["https://output.test/clip"]}
+            return {"status": "SUCCEEDED", "output": [task_id]}
 
         def download(self, url):
             from social.seed import seed_media
 
-            return seed_media(duration=5)[1]
+            return seed_media(duration=5)[0 if url in {"task-1", "task-3"} else 1]
 
-    for _ in range(4):
+    for _ in range(8):
         process_jobs(db, settings, FakeRunway())
-    assert [e for e, _ in submitted] == ["image_to_video", "image_to_video"], job.error
-    assert all(payload["promptImage"] == "runway://start" for _, payload in submitted)
+    assert [e for e, _ in submitted] == ["text_to_image", "image_to_video"] * 2, job.error
+    assert all(payload["promptImage"] == "runway://start" for e, payload in submitted if e == "image_to_video")
+    assert len(submitted[2][1]["referenceImages"]) == 2  # product geometry + first scene's style
     assert clip and re.fullmatch(r"task-\d", job.task_history[-1]["task_id"])
 
 
