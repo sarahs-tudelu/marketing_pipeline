@@ -14,7 +14,16 @@ from social.gate import evaluate
 from social.idea_plan import catalog_for, plan_idea
 from social.media_studio import CreativeBrief, process_jobs, queue_jobs
 from social.models import FactSheet
-from social.product_rules import VisualGuidance, constrain_prompt, enforce_job_prompt, profile_for
+from social.product_rules import (
+    HANGER_ROD_CUE,
+    HANGER_ROD_RULE,
+    PRODUCT_CONSTRAINTS_VERSION,
+    VisualGuidance,
+    constrain_prompt,
+    current_constraints,
+    enforce_job_prompt,
+    profile_for,
+)
 from social.prompting import PROMPT_LIMIT, write_prompt
 from social.providers import Claude, OpenAI, Providers, VisionReview
 from social.security import digest
@@ -127,10 +136,12 @@ def test_writer_receives_rules_and_persists_exact_source_provenance(db, settings
     instructions, context = observed[0]
     assert "override conflicting website" in instructions
     assert context["rules"]["visual_guidance"] == sheet.document["visual_guidance"]
+    assert context["rules"]["product_constraints"] == current_constraints()
     assert result["generation_prompt"].endswith(
         profile_for(Facts.model_validate(sheet.document).visual_guidance, "Pergolas").prompt_cue
     )
     assert result["prompt_writer"]["sources"]["visual_guidance"] == sheet.document["visual_guidance"]
+    assert result["prompt_writer"]["sources"]["product_constraints"] == current_constraints()
 
 
 @pytest.mark.parametrize(
@@ -204,6 +215,7 @@ def test_planner_uses_only_profiled_products_and_gets_full_rules(db, settings, s
     catalog = catalog_for(db, sheet.id, {"text": "Motorized roof example; Ceiling Systems"}, "company")
     assert len(catalog["product_names"]) == 7
     assert "Ceiling Systems" not in catalog["product_names"]
+    assert catalog["product_constraints"] == current_constraints()
     seen = []
 
     def respond(self, instructions, context):
@@ -243,6 +255,7 @@ def test_product_review_fails_closed_even_if_model_says_pass(
                 misused_logos=False,
                 unexpected_people=False,
                 product_rules_version=expected if version == "current" else version,
+                product_constraints_version=PRODUCT_CONSTRAINTS_VERSION,
                 product_mismatches=mismatches,
             )
 
@@ -266,6 +279,7 @@ def test_openai_gets_rule_instructions_and_structured_mismatch_fields(settings, 
             visible_claims=[],
             problem_seconds=[],
             product_rules_version=sheet.document["visual_guidance"]["version"],
+            product_constraints_version=PRODUCT_CONSTRAINTS_VERSION,
             product_mismatches=["builder.connections: floating louver ends"],
         )
         return {
@@ -279,6 +293,105 @@ def test_openai_gets_rule_instructions_and_structured_mismatch_fields(settings, 
     payload = seen[0]
     assert "independently compare every depicted product" in payload["input"][0]["content"][0]["text"]
     assert "product_rules_version" in payload["text"]["format"]["schema"]["required"]
+    assert "product_constraints_version" in payload["text"]["format"]["schema"]["required"]
+    instructions, supplied = payload["input"][0]["content"][0]["text"].split("Context: ", 1)
+    assert "Rods or rod-like braces underneath" in instructions
+    assert json.loads(supplied)["product_constraints"] == current_constraints()
+
+
+@pytest.mark.parametrize("system", ["Canopy", "Sunshades", "Walkways", "Carports", "Drive-Through Systems"])
+@pytest.mark.parametrize("legacy", [True, False])
+def test_hanger_rod_orientation_survives_prompt_limits_and_retries(guide, system, legacy):
+    profile = None if legacy else profile_for(guide, system)
+    prompt = constrain_prompt("An entrance in daylight. " * 100 + "\U0001f305" * 80, profile, system)
+    assert len(prompt.encode("utf-16-le")) <= PROMPT_LIMIT * 2
+    assert prompt.endswith(HANGER_ROD_CUE)
+    assert prompt.count(HANGER_ROD_CUE) == 1
+    assert constrain_prompt(prompt, profile, system) == prompt
+    if profile:
+        assert profile.prompt_cue in prompt
+
+
+@pytest.mark.parametrize("operation", ["image", "video", "video_edit"])
+def test_old_saved_prompts_receive_owner_correction_before_submission(db, settings, operation):
+    sheet = load_facts(db, settings.facts_path)
+    original = json.dumps(sheet.document, sort_keys=True)
+    job = job_for(db, settings, sheet, product="canopies")
+    job.brief = job.brief | {"operation": operation, "generation_prompt": "A close view of the canopy."}
+    if operation != "image":
+        job.brief = job.brief | {
+            "video_segments": [{"index": 0, "duration": 5, "seed": 1, "prompt": "A new camera angle."}]
+        }
+    enforce_job_prompt(db, job)
+    sent = segment_brief(job)["generation_prompt"]
+    assert sent.endswith(HANGER_ROD_CUE)
+    assert job.brief["product_constraints"] == current_constraints()
+    enforce_job_prompt(db, job)
+    assert segment_brief(job)["generation_prompt"] == sent
+    assert json.dumps(db.get(FactSheet, sheet.id).document, sort_keys=True) == original
+
+
+def test_each_canopy_clip_retains_correction_after_manual_replacement(db, settings, sheet, house_logo, monkeypatch):
+    job = job_for(db, settings, sheet, operation="video", duration=12, product="company", shots=[
+        {"setting": "entry", "system": "Canopies"},
+        {"setting": "garden", "system": "Sunshades"},
+    ])
+    job.brief = job.brief | {"execution_mode": "live"}
+    monkeypatch.setattr(Claude, "call", lambda *args: {
+        "system": "Canopies", "prompt": "An entrance.",
+        "shots": [{"system": "Canopies", "prompt": "An entrance. " * 120},
+                  {"system": "Sunshades", "prompt": "A garden. " * 120}],
+    })
+    job.brief = job.brief | write_prompt(db, settings, job)
+    first, second = job.brief["video_segments"]
+    assert all(s["prompt"].endswith(HANGER_ROD_CUE) for s in (first, second))
+    job.brief = job.brief | {"video_segments": [first | {"output_asset_id": "already-generated"},
+                                               second | {"prompt": "A closer view of the supports."}]}
+    enforce_job_prompt(db, job)
+    assert segment_brief(job)["generation_prompt"].endswith(HANGER_ROD_CUE)
+    assert job.brief["video_segments"][0] == first | {"output_asset_id": "already-generated"}
+
+
+def test_owner_constraint_problem_stops_legacy_writer_even_with_a_named_system(db, settings, monkeypatch):
+    sheet = load_facts(db, settings.facts_path)
+    job = job_for(db, settings, sheet, product="canopies")
+    job.brief = job.brief | {"execution_mode": "live"}
+
+    def respond(self, instructions, context):
+        assert context["rules"]["product_constraints"] == current_constraints()
+        return {"system": "Canopies", "prompt": "A canopy.",
+                "problem": "The supplied reference has bottom-supported rods that cannot be preserved."}
+
+    monkeypatch.setattr(Claude, "call", respond)
+    with pytest.raises(ValueError, match="bottom-supported"):
+        write_prompt(db, settings, job)
+
+
+@pytest.mark.parametrize("version,mismatch,passes", [
+    (PRODUCT_CONSTRAINTS_VERSION, "", True),
+    (PRODUCT_CONSTRAINTS_VERSION, HANGER_ROD_RULE + ": diagonal rods below the roof at 2 seconds", False),
+    ("", "", False),
+    ("older-owner-correction", "", False),
+])
+def test_old_fact_versions_cannot_bypass_current_canopy_review(db, settings, post, assets, version, mismatch, passes):
+    assets[0].source, assets[0].generator, assets[0].prompt = "ai_generated", "test", "A canopy"
+
+    class Reviewer(Providers):
+        def vision(self, supplied, context):
+            assert context["product_constraints"] == current_constraints()
+            return VisionReview(
+                passed=True, reasons=["Reviewed pixels"], garbled_text=False, misused_logos=False,
+                unexpected_people=False, product_constraints_version=version,
+                product_mismatches=[mismatch] if mismatch else [], problem_seconds=[2] if mismatch else [],
+            )
+
+    results, _ = evaluate(db, settings, post, providers=Reviewer(settings))
+    check = next(c for c in results if c.name == "vision_review")
+    assert check.passed is passes
+    assert check.details["product_constraints"] == current_constraints()
+    if mismatch:
+        assert mismatch in check.details["reasons"]
+        assert check.details["problem_seconds"] == [2]
 
 
 def test_fact_editor_shows_new_version_as_default_and_preserves_guidance(settings, sheet):

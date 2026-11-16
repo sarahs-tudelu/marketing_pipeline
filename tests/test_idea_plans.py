@@ -263,6 +263,7 @@ def test_review_flow_creates_the_reported_idea_as_a_video_with_music_and_logo(
 
 
 def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, logo, monkeypatch):
+    from social.product_rules import HANGER_ROD_CUE
     from social.prompting import write_prompt
 
     brief = brief_for(
@@ -298,8 +299,8 @@ def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, l
     assert replies[0]["end_card"] is True
     assert [s["prompt"] for s in written["video_segments"]] == [
         "Pergolas clip",
-        "Canopies clip",
-        "Sunshades clip",
+        f"Canopies clip {HANGER_ROD_CUE}",
+        f"Sunshades clip {HANGER_ROD_CUE}",
     ]
     assert written["depicted_system"] == "Pergolas, Canopies, Sunshades"
     reply["shots"] = reply["shots"][:2]

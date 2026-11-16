@@ -14,6 +14,7 @@ from .facts import Facts, active, caption_fact_ids, composed, content_digest, pa
 from .image_provenance import verify_asset_metadata
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
+from .product_rules import PRODUCT_CONSTRAINTS_VERSION, current_constraints
 from .provenance import asset_source_error, asset_type, real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
@@ -321,6 +322,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         "caption_parts": post.parts,
         "fact_ids": post.fact_ids,
         "facts": facts.model_dump(mode="json"),
+        "product_constraints": current_constraints(),
         "campaign": post.campaign,
         "platform": post.platform,
         "product": post.product,
@@ -379,14 +381,17 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         approved = {text for f in selected for text in [f.text, *f.variants]}
         product_reviewed = not result.product_mismatches and (
             not facts.visual_guidance or result.product_rules_version == facts.visual_guidance.version
-        )
+        ) and result.product_constraints_version == PRODUCT_CONSTRAINTS_VERSION
         details = result.model_dump() | {
             "product_rules_checked": bool(product_reviewed), "review_scope": "media_only",
+            "product_constraints": current_constraints(),
         }
         if not product_reviewed:
             details["reasons"] = list(result.reasons) + result.product_mismatches
             if facts.visual_guidance and result.product_rules_version != facts.visual_guidance.version:
                 details["reasons"].append("Visual review did not confirm the selected Builder product rules.")
+            if result.product_constraints_version != PRODUCT_CONSTRAINTS_VERSION:
+                details["reasons"].append("Visual review did not confirm the current owner product corrections.")
         return result.passed and product_reviewed and not (
             result.garbled_text or result.misused_logos or result.unexpected_people
         ) and all(c in approved for c in result.visible_claims), details

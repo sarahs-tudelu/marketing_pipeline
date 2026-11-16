@@ -1,8 +1,9 @@
 """Write each Runway prompt from the admin idea and Tudelu's own sources.
 
 Sources, by authority:
-1. Rules: the selected approved facts version (products, brand voice, banned phrases, relevant
-   facts), the platform profile, and fixed visual rules that mirror the vision gate.
+1. Rules: current owner product corrections, the selected approved facts version (products,
+   brand voice, banned phrases, relevant facts), the platform profile, and fixed visual rules
+   that mirror the vision gate.
 2. tudelu.com: the batch's saved homepage snapshot (systems catalog, headings, image descriptions).
 3. Uploaded company media marked Public: observed visual summaries of real products.
 4. Previously generated Runway media: observed summaries and what happened to their posts.
@@ -22,7 +23,7 @@ from .config import profiles
 from .db import now
 from .facts import Facts, active
 from .models import Asset, FactSheet, MediaJob, Post
-from .product_rules import VisualGuidance, constrain_prompt, context_for, profile_for
+from .product_rules import VisualGuidance, constrain_prompt, context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
 
 # promptText limit for gen4_image, gen4.5 and aleph2, in UTF-16 code units (Runway OpenAPI).
@@ -58,6 +59,12 @@ WRITER_INSTRUCTIONS = (
     "unsupported configuration in problem instead of inventing it. Use references for finish and composition "
     "only within these rules. Include the physical product cues in every shot; fixed louvers remain stationary "
     "in video. The camera may move. Never turn installation-angle options into operable blades. "
+    "Always apply rules.product_constraints, including when visual_guidance is absent. These current owner "
+    "corrections override older rules and references. A rod-hung canopy has rods above the roof running up "
+    "to higher wall anchors; bottom-supported rods are not a Tudelu configuration. Describe the correct "
+    "orientation in each relevant clip. If an idea or starting image requires a forbidden configuration, "
+    "return problem rather than preserve or copy it. An explicit video-edit request to correct the geometry "
+    "may describe its replacement with the permitted arrangement. "
     "Ground the system's appearance in uploaded_media and selected_references summaries first (they observe "
     "real media), then in the website image descriptions. Use previous_generations only to keep a consistent "
     "look and to choose a different composition, viewpoint and setting from them; they may contain mistakes, "
@@ -155,6 +162,7 @@ def gather_sources(db, settings, job):
         "banned_phrases": facts.banned_phrases,
         "products": facts.products,
         "visual_guidance": context_for(facts.visual_guidance),
+        "product_constraints": current_constraints(),
         "facts": [f.text for f in facts.facts if active(f, at) and f.product in scope][:20],
     }
 
@@ -265,6 +273,7 @@ def gather_sources(db, settings, job):
     provenance = {
         "facts_version": facts.version,
         "visual_guidance": context_for(facts.visual_guidance),
+        "product_constraints": current_constraints(),
         "website": {k: website.get(k) for k in ("url", "sha256", "fetched_at", "demo_only") if k in website}
         or None,
         "uploaded_asset_ids": [u["asset_id"] for u in uploaded],
@@ -374,8 +383,8 @@ def write_prompt(db, settings, job):
                 category="response",
             ) from None
         writer = settings.anthropic_model
-        if guidance and written.problem.strip():
-            raise ValueError("The idea conflicts with the Builder product rules. " + written.problem.strip()[:600])
+        if written.problem.strip():
+            raise ValueError("The idea conflicts with the product rules. " + written.problem.strip()[:600])
         if not written.system.strip() or not written.prompt.strip():
             raise ValueError(
                 "This idea could not be matched to a Tudelu system found on tudelu.com, in the approved "
@@ -396,7 +405,7 @@ def write_prompt(db, settings, job):
             for shot in written.shots:
                 _checked_system(shot.system, context)
     result = {
-        "generation_prompt": constrain_prompt(written.prompt, profile_for(guidance, written.system)),
+        "generation_prompt": constrain_prompt(written.prompt, profile_for(guidance, written.system), written.system),
         "depicted_system": written.system.strip(),
         "prompt_writer": {
             "writer": writer,
@@ -410,7 +419,7 @@ def write_prompt(db, settings, job):
         clips = [
             segment
             | {
-                "prompt": constrain_prompt(shot.prompt, profile_for(guidance, shot.system)),
+                "prompt": constrain_prompt(shot.prompt, profile_for(guidance, shot.system), shot.system),
                 "system": " ".join(shot.system.split()),
                 "seed": (job.brief["seed"] + segment["index"]) % (2**32),
             }

@@ -4,6 +4,42 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-16-v1"
+HANGER_ROD_RULE = "canopy.hanger_rods_above"
+HANGER_ROD_CUE = (
+    "Any hanger rods rise above the canopy roof from its outer fascia to higher wall anchors, "
+    "with clear open space underneath."
+)
+
+
+def current_constraints():
+    """Current owner corrections supplement, but never rewrite, immutable facts versions."""
+    return {
+        "version": PRODUCT_CONSTRAINTS_VERSION,
+        "source": {
+            "type": "owner_instruction",
+            "recorded_on": "2026-11-16",
+            "record": "docs/builder-visual-guidance.md#owner-correction-hanger-rod-canopies",
+            "statement": "Tudelu does not offer bottom-supported hanger-rod canopies.",
+        },
+        "rules": [{
+            "id": HANGER_ROD_RULE,
+            "instruction": (
+                "For any rod-hung canopy, hanger/tie rods must run entirely ABOVE the canopy roof, from "
+                "its outer fascia up to wall anchors higher on the facade. Tudelu does not offer bottom-"
+                "supported hanger-rod canopies: never show rods or rod-like diagonal braces beneath the "
+                "roof, running from a lower wall anchor up to the underside or outer edge. Keep this "
+                "orientation throughout every clip, including canopy components in sunshades, walkways, "
+                "drive-through systems and carports. This restriction does not prohibit vertical posts "
+                "or a separately approved cantilever configuration; follow their selected product rules. "
+                "Do not reinterpret a lower diagonal rod as an approved cantilever. These owner "
+                "corrections override conflicting creative requests, older support descriptions, website "
+                "examples, uploaded references and previous generations. They restrict depictions and "
+                "do not supply new caption facts or engineering approval."
+            ),
+        }],
+    }
+
 
 class RuleSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -82,16 +118,21 @@ def context_for(guidance):
     return guidance.model_dump(mode="json") if guidance else None
 
 
-def constrain_prompt(prompt, profile):
+def constrain_prompt(prompt, profile, system=""):
     """Reserve space for product identity; never truncate away its physical cues."""
     from .prompting import PROMPT_LIMIT, utf16_trim
 
-    if profile is None:
-        return utf16_trim(prompt)
-    cue = profile.prompt_cue
     prompt = " ".join(prompt.split())
-    if prompt.endswith(cue):
-        prompt = prompt[: -len(cue)].strip()
+    cues = [profile.prompt_cue] if profile else []
+    subject = normalize(f"{profile.product_id if profile else system} {prompt}")
+    if re.search(r"\b(canopy|canopies|sunshades?|walkways?|carports?|drive through|hanger rods?|tie rods?)\b", subject):
+        cues.append(HANGER_ROD_CUE)
+    if not cues:
+        return utf16_trim(prompt)
+    for cue in reversed(cues):
+        if prompt.endswith(cue):
+            prompt = prompt[: -len(cue)].strip()
+    cue = " ".join(cues)
     remaining = PROMPT_LIMIT - len(cue.encode("utf-16-le")) // 2 - 1
     return (utf16_trim(prompt, remaining) + " " + cue).strip()
 
@@ -105,21 +146,21 @@ def enforce_job_prompt(db, job):
     if job.stage != "visual" or job.brief["operation"] == "audio":
         return
     guidance = Facts.model_validate(db.get(FactSheet, job.brief["facts_id"]).document).visual_guidance
-    if guidance is None:
-        return
     segment = current_segment(job)
     system = (segment or {}).get("system") or (segment or {}).get("shot", {}).get("system")
     system = system or job.brief.get("depicted_system") or job.brief["product"]
     profile = profile_for(guidance, system)
     if segment and segment.get("prompt"):
         segments = [
-            s | {"prompt": constrain_prompt(s["prompt"], profile)} if s["index"] == segment["index"] else s
+            s | {"prompt": constrain_prompt(s["prompt"], profile, system)} if s["index"] == segment["index"] else s
             for s in job.brief["video_segments"]
         ]
         job.brief = job.brief | {"video_segments": segments}
     else:
         job.brief = job.brief | {
-            "generation_prompt": constrain_prompt(job.brief["generation_prompt"], profile)
+            "generation_prompt": constrain_prompt(job.brief["generation_prompt"], profile, system)
         }
-    job.brief = job.brief | {"visual_guidance_version": guidance.version}
+    if guidance:
+        job.brief = job.brief | {"visual_guidance_version": guidance.version}
+    job.brief = job.brief | {"product_constraints": current_constraints()}
     db.commit()

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from .db import now
 from .facts import Facts, active
 from .models import FactSheet
-from .product_rules import context_for, profile_for
+from .product_rules import context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
 
 END_CARD_SECONDS = 3
@@ -148,6 +148,10 @@ PLANNER_INSTRUCTIONS = (
     "product rules, even if a website example or idea conflicts. Fixed pergola louvers do not operate; "
     "use camera motion to show them. Explain any unsupported request in notes. This guidance is for "
     "depiction, not engineering certification or new caption claims. "
+    "Always apply catalog.product_constraints, even without visual_guidance; current owner corrections "
+    "override older catalog examples and creative requests. Hanger rods belong above the canopy roof "
+    "and run up to higher wall anchors. Do not plan a bottom-supported hanger-rod canopy. Explain a "
+    "conflicting request in notes and plan only a permitted configuration. "
     "available_systems: every system the catalog shows as currently offered (not 'Coming soon'). "
     "title: a short internal post name, at most 60 characters. "
     "notes: 2-6 short plain-language notes on how you read the idea, for example "
@@ -255,6 +259,7 @@ def catalog_for(db, facts_id, snapshot, product):
         "products": facts.products if facts else [],
         "product_names": products,
         "visual_guidance": context_for(facts.visual_guidance) if facts else None,
+        "product_constraints": current_constraints(),
         "facts": [f.text for f in facts.facts if active(f, at) and f.product in {product, "company"}][:20]
         if facts
         else [],

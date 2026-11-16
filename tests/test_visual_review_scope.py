@@ -5,6 +5,7 @@ import pytest
 from test_gate import change_facts, checks
 
 from social.facts import render
+from social.product_rules import PRODUCT_CONSTRAINTS_VERSION, current_constraints
 from social.providers import Claude, OpenAI, PartCheck, Providers, Review, VisionReview, vision_context
 
 CAPTION = (
@@ -67,6 +68,7 @@ def test_visual_context_excludes_caption_and_other_check_policies_but_keeps_prod
     for excluded in ["caption-only", "audio-only", "caption-tag", "old-caption-interpretation"]:
         assert excluded not in serialized
     assert filtered["review_scope"] == "media_only"
+    assert filtered["product_constraints"] == current_constraints()
     assert filtered["assets"][0]["tags"]["end_card"] == {"seconds": 3}
     assert "Two adults" in filtered["assets"][0]["scene_intent"]["generation_prompt"]
     assert context == original
@@ -123,6 +125,7 @@ def test_geometry_issue_still_holds_even_with_false_text_logo_and_people_flags(
                 misused_logos=False,
                 unexpected_people=False,
                 product_mismatches=mismatches,
+                product_constraints_version=PRODUCT_CONSTRAINTS_VERSION,
             )
 
     result = checks(db, settings, post, providers=Reviewer(settings))["vision_review"]

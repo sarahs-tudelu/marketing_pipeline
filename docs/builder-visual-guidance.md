@@ -63,6 +63,41 @@ company photos or accepted Builder renders as references.
 
 ## Updating
 
+### Owner correction: hanger-rod canopies
+
+On 2026-11-16, the owner reported that generated video showed bottom-supported
+hanger-rod canopies and confirmed that Tudelu does not offer them. Rule
+`canopy.hanger_rods_above`, recorded in `social/product_rules.py` under
+`tudelu-owner-visual-2026-11-16-v1`, requires hanger rods above the roof, rising
+from the outer fascia to higher wall anchors. Rods or rod-like diagonal braces
+below the roof, from a lower wall anchor to the underside or outer edge, are
+unsupported. Existing rules for vertical posts and separately approved
+cantilever arrangements still apply; a lower diagonal rod is not reclassified
+as an approved cantilever.
+
+This is a current owner correction, separate from the immutable Builder source
+snapshot and caption facts. The planner, prompt writer and visual reviewer
+receive its source and version even when a job uses older facts without Builder
+guidance. Each relevant image, video or video-edit clip retains a positive
+above-roof support cue within Runway's prompt limit, including manually edited
+and retried prompts immediately before submission. Job records preserve the
+applied correction. Corrections override conflicting references and earlier
+generated media; they do not authorize additional caption claims.
+
+Visual review checks the actual rod geometry in sampled frames, records affected
+timestamps, and holds reported violations even when the model's overall verdict
+says pass. The review must acknowledge the current correction version. The
+publication gate reruns this check for scheduled posts before a new public write.
+
+Existing output files are not changed by updating the code. After deploying,
+recheck the affected post and use **Regenerate clip** for the flagged clip;
+the replacement receives the current constraints and must pass checks and human
+review again. Already-running Runway tasks finish with their submitted prompts,
+and their outputs still require the corrected visual review. No paid regeneration
+or public publishing is triggered by this code change.
+
+### Updating the Builder snapshot
+
 Review changed Builder sources before changing the curated rules. Preserve the original
 source revision and file hashes for every imported version. Save a new facts version;
 do not overwrite an existing document. `save_facts` validates source references and

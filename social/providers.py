@@ -12,6 +12,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from .facts import composed, part_fact_ids
+from .product_rules import PRODUCT_CONSTRAINTS_VERSION, current_constraints
 from .provider_errors import ProviderError, request_json
 from .storage import ingest, storage
 
@@ -63,6 +64,7 @@ class VisionReview(BaseModel):
     # Video only: frame_seconds values of the sampled frames that show a problem.
     problem_seconds: list[float] = []
     product_rules_version: str = ""
+    product_constraints_version: str = ""
     product_mismatches: list[str] = []
 
 
@@ -86,6 +88,7 @@ def vision_context(context):
         assets.append(record)
     return {
         "review_scope": "media_only",
+        "product_constraints": current_constraints(),
         **{key: context[key] for key in ("platform", "product", "at", "execution_mode", "public_publication")
            if key in context},
         "facts": {key: facts[key] for key in ("version", "products", "facts", "visual_guidance") if key in facts},
@@ -441,10 +444,20 @@ class OpenAI:
                 "after applying it. When no Builder guidance is supplied, use an empty product_rules_version "
                 "and check concrete product contradictions against the supplied facts/product records, citing "
                 "their IDs in product_mismatches. Missing guidance alone is not a rejection. "
+                "Always apply product_constraints, including to media with older facts or no visual_guidance. "
+                "These current owner corrections override older support descriptions and generation prompts. "
+                "For canopy.hanger_rods_above, inspect rod position relative to the roof and both attachments "
+                "in every supplied frame: rods must run above the roof up to higher wall anchors. Rods or "
+                "rod-like braces underneath, rising from a lower wall anchor to the canopy, are a product "
+                "mismatch. Do not accept them as cantilevers or approve based on the prompt claiming correct "
+                "geometry. If visible rods cannot be assessed, explain that uncertainty as a mismatch. "
+                "List the rule ID and observed defect in product_mismatches and mark affected problem_seconds. "
+                "Set product_constraints_version to product_constraints.version after checking these rules, "
+                "including when no canopy is depicted. Any mismatch means passed=false. "
                 "Visual guidance is not additional approved text for visible claims or caption claims. "
                 "Return JSON with passed, reasons, garbled_text, "
                 "misused_logos, unexpected_people, visible_claims, problem_seconds, product_rules_version, "
-                "product_mismatches. "
+                "product_constraints_version, product_mismatches. "
                 + media_guidance
                 + "Context: "
                 + json.dumps(vision_context(context) | {"media_inputs": media_inputs}, default=str),
@@ -571,6 +584,7 @@ class Providers:
                 passed=True,
                 reasons=["SIMULATED vision: fixture only"],
                 product_rules_version=(context.get("facts", {}).get("visual_guidance") or {}).get("version", ""),
+                product_constraints_version=PRODUCT_CONSTRAINTS_VERSION,
                 garbled_text=False,
                 misused_logos=False,
                 unexpected_people=False,
