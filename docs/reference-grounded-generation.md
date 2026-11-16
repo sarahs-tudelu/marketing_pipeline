@@ -19,6 +19,24 @@ Current owner corrections and the versioned AI Builder drawing guide define corr
 
 If no reference can ground the requested product family, the job explains the missing reference and stops before buying a generation. It does not silently revert to text-only product generation. Add or tag a clear Public photo from Drive/the library, then resume. A photo whose critical geometry is unclear may need another view. Reference selection and final review are model judgments; this workflow cannot guarantee geometrically perfect video or certify unobserved frames.
 
+The planner records concise `scene_requirements` for the chosen roof count, supports,
+fascia/post finishes, trim and lighting. These go at the start of the Runway scene
+prompt, ahead of optional scenery, with the Builder cues retained. Requirements
+that cannot fit stop planning instead of being silently truncated. Choices such as
+a single roof or Crown-only lighting belong to that scene; they are not blanket
+restrictions on other supported canopy configurations.
+
+When a scene is rejected, **Generate corrected scene** carries its full review,
+previous intended changes and any edited prompt into the next planning attempt.
+The rejected image and plan remain in the audit history; the image is never used
+as product or style evidence. Each correction must be expressed in the new scene's
+requirements, and the replacement must pass review before animation. **Resume**
+cannot re-review an unchanged rejected scene until it happens to pass. A temporary
+review/download failure still resumes the saved work without buying another scene.
+Runway's terminal internal errors use **Generate the scene again** to submit a new
+task with a new seed. New generation requires the existing user action; there are
+no automatic paid retries, and other completed clips remain intact.
+
 Offline fixtures make no reference-selection or generation calls. Existing real-media uploads retain their own-media workflow. Existing video edits retain their source video and Builder constraints. Already-running tasks keep their recorded inputs; completed clips are not automatically regenerated or republished. A replacement affects the requested clip, so other flagged clips still need correction.
 
 ## Release and verification

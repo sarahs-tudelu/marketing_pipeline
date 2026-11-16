@@ -4,7 +4,7 @@
   <p>{{ 'Google Drive photo' if r.origin == 'google_drive' else 'Company library reference' if r.origin == 'asset_library' else 'Tudelu website reference' }}: {{ r.original_name }}</p>
   <a href="{{ media_base_url ~ '/' ~ (r.storage_key|urlencode) if r.asset_id else r.source_url }}" target="_blank" rel="noopener noreferrer">View source image</a>
   {% endfor %}
-  {% if plan.get('scene_reference') %}<p><a href="{{ media_base_url ~ '/' ~ (plan.scene_reference.storage_key|urlencode) }}" target="_blank" rel="noopener noreferrer">View generated scene</a> · {{ 'Checked for animation' if plan.get('scene_check', {}).get('passed') else 'Awaiting scene check' }}</p>{% endif %}
+  {% if plan.get('scene_reference') %}<p><a href="{{ media_base_url ~ '/' ~ (plan.scene_reference.storage_key|urlencode) }}" target="_blank" rel="noopener noreferrer">View generated scene</a> · {{ 'Checked for animation' if plan.get('scene_check', {}).get('passed') else 'Rejected before animation' if plan.get('scene_check', {}).get('passed') == false else 'Awaiting scene check' }}</p>{% endif %}
   {% if plan.get('creative_changes') %}<p>{{ plan.creative_changes }}</p>{% endif %}
   {% if plan.get('visual_direction') %}<small>Shared visual direction: {{ plan.visual_direction }}</small>{% endif %}
   <p>{{ plan.physical_description }}</p><small>{{ plan.reason }}</small>

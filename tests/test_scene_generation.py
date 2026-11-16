@@ -128,14 +128,17 @@ def test_prompt_led_scene_is_saved_checked_then_animated(db, settings, video_job
     assert storage(settings).read(db.get(Asset, scene_id).storage_key) == provider.still
 
 
-def test_rejected_scene_never_buys_video_and_can_be_reviewed_or_replaced(
+def test_rejected_scene_requires_correction_and_carries_feedback_into_new_scene(
     db, settings, video_job, monkeypatch
 ):
-    monkeypatch.setattr(
-        scenes,
-        "review_scene",
-        lambda *args: scenes.SceneCheck(passed=False, reasons=["A roof member floats above the frame."]),
-    )
+    reviewed, planned = [], []
+    reason = "A roof member floats above the frame."
+
+    def review(*args):
+        reviewed.append(args)
+        return scenes.SceneCheck(passed=len(reviewed) > 1, reasons=[reason] if len(reviewed) == 1 else [])
+
+    monkeypatch.setattr(scenes, "review_scene", review)
     provider = Provider(db, video_job, settings)
     for _ in range(3):
         process_jobs(db, settings, provider)
@@ -143,17 +146,54 @@ def test_rejected_scene_never_buys_video_and_can_be_reviewed_or_replaced(
     assert video_job.state == "failed" and "floats" in video_job.error
     assert len(provider.submitted) == 1 and not video_job.task_id
     assert retry_option(video_job)["kind"] == "scene"
-    resume_job(video_job)
+    assert retry_option(video_job)["scene_reasons"] == [reason]
+    from fastapi.testclient import TestClient
+
+    from social.app import create_app
+
+    with TestClient(create_app(settings)) as client:
+        page = client.get("/admin/media-queue")
+        assert "Generate corrected scene" in page.text and reason in page.text
+        assert "Rejected before animation" in page.text
+    with pytest.raises(ValueError, match="Generate corrected scene"):
+        resume_job(video_job)
+    # Even an already-queued resume cannot get an unchanged rejected scene approved on a second review.
+    video_job.state = "queued"
     db.commit()
     process_jobs(db, settings, provider)
     assert (
         len(provider.submitted) == 1 and refs.current_plan(video_job)["scene_reference"]["asset_id"] == saved
     )
+    assert len(reviewed) == 1 and video_job.state == "failed"
+
+    def choose(settings, records, context):
+        planned.append(context)
+        return choice(records[0]).model_copy(update={
+            "scene_requirements": ["White aluminum frame", "All roof members physically connected to the frame"]
+            if len(planned) > 1 else [],
+        })
+
+    monkeypatch.setattr(refs, "select_reference", choose)
     retry_step(db, video_job, "White pergola in a courtyard, all roof members connected.")
+    process_jobs(db, settings, provider)
+    assert video_job.state == "failed" and "explicit product requirements" in video_job.error
+    assert len(provider.submitted) == 1
+    assert retry_option(video_job)["scene_reasons"] == [reason]
+    retry_step(db, video_job, retry_option(video_job)["prompt"])
     process_jobs(db, settings, provider)
     assert video_job.state == "running", video_job.error
     assert len(provider.submitted) == 2 and not refs.current_plan(video_job).get("scene_reference")
     assert video_job.brief["failed_tasks"][-1]["stage"] == "scene"
+    assert video_job.brief["failed_tasks"][-2]["reference_plan"]["scene_reference"]["asset_id"] == saved
+    assert planned[0]["scene_retry"]["review"]["reasons"] == [reason]
+    assert planned[0]["scene_retry"]["prompt_edited"] is True
+    assert planned[1]["scene_retry"]["review"]["reasons"] == [reason]
+    assert "All roof members physically connected" in provider.submitted[1][1]["promptText"]
+    assert all(r.id != saved for r in provider.uploaded)  # Rejected image isn't a product/style reference.
+    for _ in range(2):
+        process_jobs(db, settings, provider)
+    assert len(reviewed) == 2
+    assert provider.submitted[-1][0] == "image_to_video"
 
 
 def test_later_scene_uses_shared_style_without_reusing_its_background(
@@ -243,6 +283,40 @@ def test_scene_download_failure_resumes_saved_task_without_new_generation(
     db.commit()
     process_jobs(db, settings, provider)
     assert len(provider.submitted) == 1 and refs.current_plan(video_job)["scene_reference"]
+
+
+def test_runway_internal_scene_failure_needs_explicit_new_task(db, settings, video_job, monkeypatch):
+    provider = Provider(db, video_job, settings)
+    process_jobs(db, settings, provider)
+    first_seed = provider.submitted[0][1]["seed"]
+    monkeypatch.setattr(provider, "task", lambda _: {"status": "FAILED", "failureCode": "INTERNAL.BAD_OUTPUT.CODE01"})
+    process_jobs(db, settings, provider)
+    assert video_job.state == "failed" and video_job.task_id == "task-1"
+    assert "INTERNAL.BAD_OUTPUT.CODE01" in video_job.error
+    process_jobs(db, settings, provider)
+    assert len(provider.submitted) == 1  # No automatic paid retry.
+    retry_step(db, video_job, retry_option(video_job)["prompt"])
+    process_jobs(db, settings, provider)
+    assert video_job.task_id == "task-2" and len(provider.submitted) == 2
+    assert provider.submitted[1][1]["seed"] != first_seed
+    assert video_job.brief["failed_tasks"][-1]["task_id"] == "task-1"
+
+
+def test_incomplete_scene_review_can_resume_without_rebuying_scene(db, settings, video_job, monkeypatch):
+    provider = Provider(db, video_job, settings)
+    for _ in range(2):
+        process_jobs(db, settings, provider)
+    scene_id = refs.current_plan(video_job)["scene_reference"]["asset_id"]
+    with monkeypatch.context() as failed_review:
+        failed_review.setattr(scenes, "review_scene", lambda *args: (_ for _ in ()).throw(
+            ProviderError("Temporary review error", provider="OpenAI", category="service")))
+        process_jobs(db, settings, provider)
+    assert video_job.state == "failed" and not refs.current_plan(video_job).get("scene_check")
+    resume_job(video_job)
+    db.commit()
+    process_jobs(db, settings, provider)
+    assert refs.current_plan(video_job)["scene_reference"]["asset_id"] == scene_id
+    assert [endpoint for endpoint, _ in provider.submitted] == ["text_to_image", "image_to_video"]
 
 
 def test_ambiguous_scene_submission_does_not_auto_retry(db, settings, video_job, monkeypatch):

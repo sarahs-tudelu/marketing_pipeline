@@ -14,6 +14,7 @@ from social import reference_grounding as refs
 from social.db import now
 from social.media_studio import _save_output, process_jobs
 from social.models import Asset
+from social.product_rules import HANGER_ROD_CUE, VisualGuidance, profile_for
 from social.providers import OpenAI
 from social.runway import payload_for
 from social.storage import ingest, storage
@@ -68,6 +69,44 @@ def choice(record, prompt="The existing fixed pergola remains stationary; a slow
         reason="The photographed roof and supports match the Builder.",
         problem="",
     )
+
+
+def test_scene_product_requirements_survive_long_creative_prompt():
+    guidance = VisualGuidance.model_validate(refs.reference_config("visual-guidance.builder.yaml"))
+    profile = profile_for(guidance, "canopies")
+    requirements = [
+        "One rectangular canopy roof",
+        "Warm Wood Look aluminum on fascia and both front posts",
+        "Sharp stepped Crown trim",
+        "Smooth underside lit only by the continuous Crown LED line",
+        "Plain unmarked fascia and clear entrance glazing",
+    ]
+    prompt = refs.compose_scene_prompt("A peaceful plaza at dusk. " * 150 + "\U0001f305" * 40,
+                                      requirements, profile, has_style=True)
+    assert all(item in prompt for item in requirements)
+    assert "@ref0" in prompt and "@ref1" in prompt
+    assert prompt.endswith(HANGER_ROD_CUE)
+    assert len(prompt.encode("utf-16-le")) <= 2000
+
+
+def test_overlong_product_requirements_stop_instead_of_silently_disappearing():
+    guidance = VisualGuidance.model_validate(refs.reference_config("visual-guidance.builder.yaml"))
+    with pytest.raises(ValueError, match="requirements exceed"):
+        refs.compose_scene_prompt("An entrance", ["Required detail " * 100], profile_for(guidance, "canopies"))
+
+
+def test_image_generation_keeps_the_image_request_with_required_product_details(
+    db, settings, reference_job, photo, monkeypatch
+):
+    monkeypatch.setattr(refs, "select_reference", lambda s, r, c: choice(r[0]).model_copy(update={
+        "prompt": "A sunny courtyard with the pergola as the subject.",
+        "scene_prompt": "Unused video scene request.",
+        "scene_requirements": ["White aluminum pergola with connected fixed louvers"],
+    }))
+    refs.prepare(db, settings, reference_job)
+    prompt = refs.current_plan(reference_job)["prompt"]
+    assert "White aluminum pergola with connected fixed louvers" in prompt
+    assert "sunny courtyard" in prompt and "Unused video" not in prompt
 
 
 def test_every_clip_uses_the_actual_drive_photo_and_cached_selection(

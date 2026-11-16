@@ -209,10 +209,15 @@ def pending_step(job):
         }
     segment = current_segment(job)
     if brief.get("active_generation") == "scene":
-        plan = (segment or brief).get("reference_plan", {})
+        target = segment or brief
+        plan = target.get("reference_plan", {})
+        retry = target.get("scene_retry", {})
+        review = plan.get("scene_check") or retry.get("review", {})
         return {"kind": "scene", "index": segment["index"] if segment else None,
                 "label": f"the scene for clip {segment['index'] + 1}" if segment else "the scene image",
-                "prompt": plan.get("scene_prompt", ""), "limit": PROMPT_LIMIT}
+                "prompt": plan.get("scene_prompt") or retry.get("requested_prompt")
+                or target.get("prompt") or brief.get("generation_prompt", ""), "limit": PROMPT_LIMIT,
+                "scene_reasons": review.get("reasons", []) if review.get("passed") is False else []}
     if segment:
         return {
             "kind": "clip",
@@ -243,7 +248,7 @@ def runway_failure(job, task):
     elif "SAFETY" in upper or "MODERATION" in upper:
         why = "Runway's content moderation declined it. Change the prompt below, then generate it again."
     elif "INTERNAL" in upper:
-        why = "Runway had an internal error. Generating it again usually works."
+        why = "Runway had an internal error. Generate it again to try a new task."
     elif upper.startswith("ASSET") or "INPUT" in upper:
         why = "Runway couldn't use the reference media. Generate it again, or create the post with another image."
     else:
@@ -277,17 +282,36 @@ def retry_step(db, job, prompt):
     brief = dict(job.brief)
     failed = {"task_id": job.task_id, "stage": job.stage, "error": job.error[:500], "at": now().isoformat()}
     if step["kind"] == "scene":
+        from .reference_grounding import current_plan
+
+        plan = current_plan(job) or {}
+        failed["reference_plan"] = plan
+        target = current_segment(job) or job.brief
+        retry = dict(target.get("scene_retry", {}))
+        if plan:
+            retry.update({
+                "previous_prompt": plan.get("scene_prompt", ""),
+                "creative_changes": plan.get("creative_changes", ""),
+                "scene_requirements": plan.get("scene_requirements", []),
+                "review": plan.get("scene_check", {}),
+                "scene": plan.get("scene_reference"),
+            })
+        retry.update({
+            "requested_prompt": text,
+            "prompt_edited": text != " ".join(step["prompt"].split()),
+        })
         failed["stage"] = "scene"
         if step["index"] is not None:
             failed["segment_index"] = step["index"]
             brief["video_segments"] = [
                 {k: v for k, v in s.items() if k != "reference_plan"}
-                | {"prompt": text, "seed": (s["seed"] + 1) % 2**32}
+                | {"prompt": text, "seed": (s["seed"] + 1) % 2**32, "scene_retry": retry}
                 if s["index"] == step["index"] else s for s in brief["video_segments"]
             ]
         else:
             brief.pop("reference_plan", None)
             brief["generation_prompt"], brief["seed"] = text, (brief["seed"] + 1) % 2**32
+            brief["scene_retry"] = retry
     elif step["kind"] == "clip":
         failed["segment_index"] = step["index"]
         brief["video_segments"] = [

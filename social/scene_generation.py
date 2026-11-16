@@ -68,6 +68,7 @@ def review_scene(settings, plan, guidance, scene):
         "policy": policy(),
         "requested_scene": plan["scene_prompt"],
         "creative_changes": plan.get("creative_changes", ""),
+        "scene_requirements": plan.get("scene_requirements", []),
         "visual_direction": plan["visual_direction"],
     }
     content = [
@@ -149,6 +150,11 @@ def generation_inputs(db, settings, job, product_references):
             "scene",
         )
     validate_scene(db, settings, scene)
+    if plan.get("scene_check", {}).get("passed") is False:
+        raise ValueError(
+            "Scene needs changes before animation. Generate a corrected scene; the saved rejection still applies: "
+            + "; ".join(plan["scene_check"].get("reasons", []))[:700]
+        )
     if not plan.get("scene_check", {}).get("passed"):
         checked = review_scene(settings, plan, builder_guidance(db, job), scene)
         plan = plan | {

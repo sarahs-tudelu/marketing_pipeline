@@ -1258,6 +1258,11 @@ def process_jobs(db, settings, provider=None):
 def resume_job(job):
     if job.state not in {"failed", "uncertain"}:
         raise ValueError("Only failed or uncertain jobs can be resumed")
+    from .reference_grounding import current_plan
+
+    plan = current_plan(job) or {}
+    if not job.task_id and plan.get("scene_reference") and plan.get("scene_check", {}).get("passed") is False:
+        raise ValueError("This scene was rejected. Use Generate corrected scene so its review findings are addressed.")
     if job.task_id:
         job.state, job.submitted_at = "running", now()
     elif job.state == "uncertain":

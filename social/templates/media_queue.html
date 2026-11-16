@@ -25,8 +25,9 @@
     {% if step %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resubmit" data-confirm="Generate {{ step.label }} again? {{ 'A generated video clip includes a new scene image followed by animation.' if j.brief.operation == 'video' and step.kind != 'music' else 'This starts a new generation.' }}{{ ' Runway generation is paid.' if j.brief.execution_mode == 'live' else '' }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label>Prompt for {{ step.label }}<textarea name="prompt" rows="5" maxlength="{{ step.limit }}">{{ step.prompt }}</textarea></label>
-      <small class="muted">Change it if Runway declined it.{{ ' A new seed gives a different take even if you leave it unchanged.' if step.kind != 'music' else '' }}{{ ' Clips already saved are kept.' if j.brief.get('video_segments') else '' }}</small>
-      <div class="actions"><button class="primary">Generate {{ step.label }} again</button></div>
+      {% if step.get('scene_reasons') %}<p>The next scene will use these review findings as corrections:</p><ul>{% for reason in step.scene_reasons %}<li>{{ reason }}</li>{% endfor %}</ul><small>The replacement must pass scene review before animation. Clips already saved are kept.</small>
+      {% else %}<small class="muted">Change it if Runway declined it.{{ ' A new seed gives a different take even if you leave it unchanged.' if step.kind != 'music' else '' }}{{ ' Clips already saved are kept.' if j.brief.get('video_segments') else '' }}</small>{% endif %}
+      <div class="actions"><button class="primary">{{ 'Generate corrected scene' if step.get('scene_reasons') else 'Generate ' ~ step.label ~ ' again' }}</button></div>
     </form>
     {% elif j.state in ['failed','uncertain'] and j.id not in task_failed %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resume"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume saved task / output</button></form>{% endif %}
     {% if j.state in ['planned','queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
