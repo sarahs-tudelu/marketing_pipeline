@@ -201,6 +201,9 @@ def test_failed_runway_task_can_be_generated_again(db, settings, assets, monkeyp
 
     reference_selection(assets, monkeypatch)
     monkeypatch.setattr("social.media_studio.write_prompt", written_prompt)
+    # This checks that a retry sends a new seed. Gen-4 Image takes one; Nano Banana, the default
+    # image model since aaefb69, takes none, so the fake provider below would have no seed to record.
+    settings.runway_image_model = "gen4_image"
     monkeypatch.setattr(
         "social.providers.OpenAI.call",
         lambda *args, **kwargs: {

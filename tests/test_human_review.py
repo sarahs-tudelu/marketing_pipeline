@@ -66,7 +66,9 @@ def test_old_preview_and_failed_checks_cannot_authorize(db, settings, post, asse
     assert post.status == 'held' and not post.human_approved_digest
 
 
-def test_edits_cannot_bypass_schedule_or_publisher(db, settings, post, assets):
+def test_edits_cannot_bypass_schedule_or_publisher(db, settings, post, assets, monkeypatch):
+    # The delivery gate is under test, not posting hours: without this it fails after 17:00 New York.
+    monkeypatch.setattr("social.scheduler.in_window", lambda at, profile: True)
     ready(db, settings, post)
     approve(db, settings, post, 'human', content_digest(post, assets))
     post.caption += ' changed'

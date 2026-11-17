@@ -88,6 +88,8 @@ def test_gate_exempts_only_explicit_missing_original_not_other_duplicates(
 def test_restored_original_blocks_delivery_even_outside_duplicate_window(
     db, settings, published, assets, monkeypatch
 ):
+    # The delivery gate is under test, not posting hours: without this it fails after 17:00 New York.
+    monkeypatch.setattr("social.scheduler.in_window", lambda at, profile: True)
     published.published_at = now() - timedelta(days=400)
     db.commit()
     mock_platform(monkeypatch, lambda _: httpx.Response(404, json={}))

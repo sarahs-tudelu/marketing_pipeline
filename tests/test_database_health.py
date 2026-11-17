@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -23,7 +24,8 @@ def test_health_detects_unapplied_availability_migration_and_recovers(settings):
                 assert "migration required" in response.json()["detail"]
                 assert schema_gaps(engine) == {
                     "missing_tables": ["availability_checks", "post_availability", "post_reposts"],
-                    "missing_columns": {},
+                    # Added after the availability tables, by ace71117c001 (prompt account).
+                    "missing_columns": {"posts": ["prompted_by", "prompted_by_label"]},
                 }
                 with engine.connect() as connection:
                     assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "c6f3a7b95247"
@@ -36,7 +38,9 @@ def test_health_detects_unapplied_availability_migration_and_recovers(settings):
                 assert client.get("/").status_code == 200
                 assert client.get("/api/media-jobs").status_code == 200
                 with engine.connect() as connection:
-                    assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "d8e4b2c61709"
+                    # Every later migration is applied too, not just the availability one.
+                    head = ScriptDirectory.from_config(config).get_current_head()
+                    assert connection.scalar(text("SELECT version_num FROM alembic_version")) == head
                     assert connection.execute(text("SELECT * FROM controls")).all() == controls_before
                 command.check(config)
         finally:

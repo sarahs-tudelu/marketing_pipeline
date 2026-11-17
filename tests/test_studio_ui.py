@@ -60,7 +60,7 @@ def test_media_studio_custom_prompt_and_responsive_layout(db, settings, tmp_path
                 "A calm architectural study in warm light"
             )
             await page.get_by_label("Usage rights", exact=True).select_option("public")
-            await page.get_by_label("Use tudelu.com to choose and describe the system shown").uncheck()
+            await page.get_by_label("Use website text for creative direction").uncheck()
             await page.get_by_label("Content style").select_option("non_promotional")
             await page.screenshot(path=str(tmp_path / "media-studio-desktop.png"), full_page=True)
             await page.get_by_role("button", name="Queue idea / save campaign").click()
@@ -412,6 +412,9 @@ def test_long_video_progress_refreshes_between_clips(db, settings, assets, house
     playwright = pytest.importorskip("playwright.async_api")
     job = queue_jobs(db, settings, brief_for(db, settings, operation="video", duration=90))[0]
     job.state = "running"
+    # 87 seconds of footage in Veo's clips of at most 8 seconds.
+    clips = len(job.brief["video_segments"])
+    assert clips == 11
     assets[0].original_name = "8f98c44dc10ebb7152c7453735800ae76568ca84a153f2c6a8bd91d045f8f591.mp4"
     observe_audio(db, settings, assets[0], Providers(settings))
     db.commit()
@@ -425,11 +428,13 @@ def test_long_video_progress_refreshes_between_clips(db, settings, assets, house
             duration = page.get_by_label("Finished video duration (seconds)")
             await playwright.expect(duration).to_have_attribute("max", "90")
             await page.goto("http://studio.test/admin/media-queue")
-            await playwright.expect(page.locator("#media-queue")).to_contain_text("Video clips saved: 0 / 9")
+            await playwright.expect(page.locator("#media-queue")).to_contain_text(f"Video clips saved: 0 / {clips}")
             job.brief = job.brief | {"video_segments": [s | {"output_asset_id": assets[0].id} if s["index"] == 0 else s
                                                      for s in job.brief["video_segments"]]}
             db.commit()
-            await playwright.expect(page.locator("#media-queue")).to_contain_text("Video clips saved: 1 / 9", timeout=8000)
+            await playwright.expect(page.locator("#media-queue")).to_contain_text(
+                f"Video clips saved: 1 / {clips}", timeout=8000
+            )
             await page.set_viewport_size({"width": 390, "height": 844})
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             await page.goto("http://studio.test/admin/assets")
