@@ -6,11 +6,13 @@
   {% for value in idea_form.get('upload_ids', []) %}<input type="hidden" name="upload_ids" value="{{ value }}">{% endfor %}
   {% for value in plan.available_systems %}<input type="hidden" name="available_systems" value="{{ value }}">{% endfor %}
   {% for value in plan.notes %}<input type="hidden" name="notes" value="{{ value }}">{% endfor %}
+  {% for value in plan.conflicts %}<input type="hidden" name="conflicts" value="{{ value }}">{% endfor %}
   <input type="hidden" name="planner" value="{{ plan.planner }}">
   <section>
     <div class="section-head"><h2>Here's the plan</h2><small>{{ 'Planned by ' ~ plan.planner if plan.planner and plan.planner != 'rules' else 'Planned from the words in your idea' }}</small></div>
     <p class="plan-summary">{{ plan_summary }}</p>
     <blockquote class="idea-quote">{{ idea_form.get('prompt', '') }}</blockquote>
+    {% if plan.conflicts %}<div class="banner plan-conflicts" role="status"><b>Tudelu doesn't make part of this idea</b><ul>{% for item in plan.conflicts %}<li>{{ item }}</li>{% endfor %}</ul><p>The plan shows the closest thing Tudelu does make. Change a clip's configuration below, or go back and change the idea.</p></div>{% endif %}
     {% if plan.notes %}<h3>How your idea was read</h3><ul class="plan-notes">{% for note in plan.notes %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
   </section>
   {% if plan.as_uploaded %}
@@ -51,16 +53,17 @@
       <label>Content style<select name="plan_kind"><option value="promotional" {{ 'selected' if plan.kind == 'promotional' else '' }}>Promotional</option><option value="non_promotional" {{ 'selected' if plan.kind == 'non_promotional' else '' }}>Editorial / non-promotional</option></select></label>
     </div>
     <fieldset data-show-for="video image"><legend>{{ 'Clips, in viewing order' if plan.operation != 'image' else 'Scene' }}</legend>
-      <p class="muted" data-show-for="video">Each clip shows one setting and one Tudelu system. Leave the system blank to let the prompt writer choose from tudelu.com. Clear both fields to remove a clip. Up to {{ max_clips }} clips, at least 2 seconds each.</p>
+      <p class="muted" data-show-for="video">Each clip shows one setting and one Tudelu system. The configuration is how that system is set up for the scene, such as a solid roof for rain; the prompt writer and the checks follow it. Leave the system blank to let the prompt writer choose from tudelu.com. Clear the setting and system to remove a clip. Up to {{ max_clips }} clips, at least 2 seconds each.</p>
       <p class="muted" data-show-for="image">An image uses the first row only.</p>
       <ol class="clip-list">
-        {% set rows = plan.shots + [{'setting': '', 'system': ''}] if plan.shots|length < max_clips else plan.shots %}
+        {% set rows = plan.shots + [{'setting': '', 'system': '', 'configuration': ''}] if plan.shots|length < max_clips else plan.shots %}
         {% for shot in rows %}
         <li>
           {% set extra_row = plan.shots and loop.index0 >= plan.shots|length %}
           <span class="clip-length" data-show-for="video">{% if extra_row %}New{% elif loop.index0 < clip_seconds|length %}{{ clip_seconds[loop.index0] }} s{% endif %}</span>
           <label>Setting<input name="shot_setting" maxlength="160" value="{{ shot.setting }}" placeholder="{{ 'Add a clip: a place, time of day and mood' if extra_row else 'Let the writer choose' }}"></label>
           <label>Tudelu system<input name="shot_system" maxlength="120" list="known-systems" value="{{ shot.system }}" placeholder="Let the writer choose"></label>
+          <label class="clip-configuration">Configuration<input name="shot_configuration" maxlength="240" value="{{ shot.configuration }}" placeholder="Let the writer choose, e.g. solid roof for rain"></label>
         </li>
         {% endfor %}
       </ol>

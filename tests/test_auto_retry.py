@@ -195,3 +195,47 @@ def test_auto_retries_off(db, settings, facts, logo):  # noqa: F811
     with TestClient(create_app(settings)) as client:
         _, _, post = held_video(db, settings, client, facts, logo)
     assert auto_regenerate(db, settings, post) is None
+
+
+def test_scene_that_the_shot_itself_makes_impossible_waits_for_a_person(
+    db, settings, video_job, monkeypatch  # noqa: F811
+):
+    settings.media_auto_retries = 3
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(
+        passed=False,
+        reasons=["Hanger rods run below the canopy."],
+        request_conflict="The shot asks for hanger rods below the canopy.",
+    ))
+    monkeypatch.setattr(
+        refs,
+        "select_reference",
+        lambda s, r, c: choice(r[0]).model_copy(update={"scene_requirements": ["Rods below the roof"]}),
+    )
+    provider = Provider(db, video_job, settings)
+    for _ in range(8):
+        process_jobs(db, settings, provider)
+    # One scene, then no paid automatic corrections that would fail the same way.
+    assert [e for e, _ in provider.submitted] == ["text_to_image"]
+    assert video_job.state == "failed"
+    assert "asks for something Tudelu doesn't make: The shot asks for hanger rods" in video_job.error
+    assert retry_option(video_job)["kind"] == "scene"
+
+
+def test_held_post_whose_shot_conflicts_is_not_regenerated(db, settings, facts, logo):  # noqa: F811
+    with TestClient(create_app(settings)) as client:
+        _, _, post = held_video(db, settings, client, facts, logo)
+    db.add(
+        CheckResult(
+            post_id=post.id,
+            run_id="conflict",
+            name="vision_review",
+            passed=False,
+            details={
+                "passed": False,
+                "reasons": ["Pergola louvers rotate open at 4 seconds."],
+                "request_conflict": "The shot asks for opening pergola louvers.",
+            },
+        )
+    )
+    db.commit()
+    assert auto_regenerate(db, settings, post) is None

@@ -15,9 +15,9 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .db import now
-from .facts import Facts, active
+from .facts import Facts, active, product_index
 from .models import FactSheet
-from .product_rules import context_for, current_constraints, profile_for
+from .product_rules import SCOPE_REASONING, WEATHER_GUIDANCE, context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
 from .rendering_guidelines import policy as rendering_policy
 from .runway import video_clip_limit
@@ -79,11 +79,19 @@ def _text(value, limit):
 class Shot(BaseModel):
     setting: str = Field(default="", max_length=160)
     system: str = Field(default="", max_length=120)
+    # The Tudelu configuration chosen for this setting, e.g. a panel roof for rain. Once approved on the
+    # plan page it is the selection every later prompt writer and reviewer works from.
+    configuration: str = Field(default="", max_length=240)
 
     @field_validator("setting", mode="before")
     @classmethod
     def clean_setting(cls, value):
         return _text(value, 160)
+
+    @field_validator("configuration", mode="before")
+    @classmethod
+    def clean_configuration(cls, value):
+        return _text(value, 240)
 
     @field_validator("system", mode="before")
     @classmethod
@@ -101,6 +109,8 @@ class IdeaPlan(BaseModel):
     end_card: bool = False
     available_systems: list[str] = Field(default_factory=list, max_length=60)
     notes: list[str] = Field(default_factory=list, max_length=20)
+    # Parts of the idea Tudelu doesn't make, each with what the plan shows instead.
+    conflicts: list[str] = Field(default_factory=list, max_length=20)
     planner: str = ""
     # The admin's own photo or video is posted as it is; nothing is generated.
     as_uploaded: bool = False
@@ -118,7 +128,7 @@ class IdeaPlan(BaseModel):
     def clamp_duration(cls, value):
         return max(3, min(90, int(value))) if isinstance(value, int | float) else value
 
-    @field_validator("notes", "available_systems", mode="before")
+    @field_validator("notes", "available_systems", "conflicts", mode="before")
     @classmethod
     def clean_lists(cls, value):
         return [_text(v, 200) for v in value if _text(v, 200)][:20] if isinstance(value, list) else value
@@ -127,8 +137,8 @@ class IdeaPlan(BaseModel):
 PLANNER_INSTRUCTIONS = (
     "You plan one Tudelu social media post from an admin's idea before any media is generated. "
     'Return only JSON {"title":"...","operation":"image|video|video_edit","duration":30,'
-    '"kind":"promotional|non_promotional","shots":[{"setting":"...","system":"..."}],"soundtrack":"...",'
-    '"end_card":false,"available_systems":["..."],"notes":["..."]}. '
+    '"kind":"promotional|non_promotional","shots":[{"setting":"...","system":"...","configuration":"..."}],'
+    '"soundtrack":"...","end_card":false,"available_systems":["..."],"notes":["..."],"conflicts":["..."]}. '
     "operation: use requested_format unless it is auto. For auto, choose video when the idea asks for motion, "
     "clips, a reel, footage, music or a length in seconds; video_edit only when has_video_reference is true and "
     "the idea asks to edit that video; otherwise image. "
@@ -145,14 +155,18 @@ PLANNER_INSTRUCTIONS = (
     "end_card: true for every video; the app always ends videos with a cut to the official uploaded logo. "
     "The generator never draws logos. "
     "kind: use requested_style unless it is auto; introductions, launches and offers are promotional. "
-    "When catalog.visual_guidance is present, use only its product profiles and obey their global and "
-    "product rules, even if a website example or idea conflicts. Fixed pergola louvers do not operate; "
-    "use camera motion to show them. Explain any unsupported request in notes. This guidance is for "
-    "depiction, not engineering certification or new caption claims. "
-    "Always apply catalog.product_constraints, even without visual_guidance; current owner corrections "
-    "override older catalog examples and creative requests. Hanger rods belong above the canopy roof "
-    "and run up to higher wall anchors. Do not plan a bottom-supported hanger-rod canopy. Explain a "
-    "conflicting request in notes and plan only a permitted configuration. "
+    "When catalog.visual_guidance is present, use only its product profiles. Apply catalog.product_constraints, "
+    "the owner's current instructions, to read them: " + SCOPE_REASONING + " " + WEATHER_GUIDANCE + " "
+    "configuration: for each shot with a system, the Tudelu configuration that fits its setting and the "
+    "idea, in one short phrase of visible choices, for example 'black pergola with an insulated solid panel "
+    "roof for rain cover, four posts' or 'white canopy on above-roof hanger rods'. Choose supported options "
+    "the situation needs instead of dropping part of the idea; leave details the idea doesn't need empty. "
+    "Keep the configuration the same across shots of the same installation. "
+    "conflicts: only parts of the idea past a hard limit (something Tudelu doesn't make, such as hanger "
+    "rods below a canopy or opening pergola louvers), each as one plain sentence naming the request and "
+    "what the plan shows instead. Customizations, weather and people are never conflicts. Fixed pergola "
+    "louvers do not operate; use camera motion to show them. This guidance is for depiction, not "
+    "engineering certification or new caption claims. "
     "Follow catalog.rendering_guidelines: company photos guide product construction while the user's idea "
     "controls new scenes. Plan a varied mix of requested locations, architecture and Builder-supported "
     "configurations, colors and finishes, with compatible lighting, palette, framing and camera pacing across "
@@ -262,7 +276,8 @@ def catalog_for(db, facts_id, snapshot, product):
         products = [p.name for p in facts.visual_guidance.products]
     return {
         "website": {k: snapshot.get(k) for k in ("url", "text", "image_descriptions") if snapshot.get(k)},
-        "products": facts.products if facts else [],
+        # Names and availability only: claim limits are caption rules, not drawing rules.
+        "products": product_index(facts.products) if facts else [],
         "product_names": products,
         "visual_guidance": context_for(facts.visual_guidance) if facts else None,
         "product_constraints": current_constraints(),
@@ -427,6 +442,7 @@ def finalize(plan, signals, idea, requested_format, requested_style, has_video_r
     for shot in plan.shots:
         if shot.system and not _grounded(shot.system, grounding):
             dropped.append(shot.system)
+            # The configuration described the dropped system, so the writer chooses afresh.
             shot = Shot(setting=shot.setting)
         if shot.setting or shot.system:
             shots.append(shot)
@@ -463,6 +479,7 @@ def finalize(plan, signals, idea, requested_format, requested_style, has_video_r
         end_card=end_card,
         available_systems=systems[:40],
         notes=list(dict.fromkeys(notes))[:8],
+        conflicts=list(dict.fromkeys(c.strip()[:300] for c in plan.conflicts if c.strip()))[:6],
         planner=plan.planner,
     )
 

@@ -18,6 +18,7 @@ from social.facts import load_facts, save_facts
 from social.idea_plan import IdeaPlan, Shot, finalize, plan_idea, read_signals, shot_seconds
 from social.media_studio import process_jobs, queue_jobs
 from social.models import Asset, MediaJob
+from social.product_rules import SCOPE_REASONING, WEATHER_GUIDANCE
 from social.provider_errors import ProviderError
 from social.renditions import logo_card
 from social.runway import payload_for
@@ -242,7 +243,9 @@ def test_review_flow_creates_the_reported_idea_as_a_video_with_music_and_logo(
     job = db.scalar(select(MediaJob))
     assert job.brief["workflow"] == "immediate" and job.brief["soundtrack_model"] == "music"
     assert [s["duration"] for s in job.brief["video_segments"]] == [7, 7, 7, 6]
-    assert job.brief["video_segments"][3]["shot"] == {"setting": "storefront at dusk", "system": "Carports"}
+    assert job.brief["video_segments"][3]["shot"] == {
+        "setting": "storefront at dusk", "system": "Carports", "configuration": ""
+    }
     for _ in range(12):
         process_jobs(db, settings)
         if job.state == "complete":
@@ -295,7 +298,9 @@ def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, l
         ],
     }
     written = write_prompt(db, settings, job)
-    assert replies[0]["storyboard"][0] == {"clip": 1, "seconds": 7, "setting": "backyard", "system": ""}
+    assert replies[0]["storyboard"][0] == {
+        "clip": 1, "seconds": 7, "setting": "backyard", "system": "", "configuration": ""
+    }
     assert replies[0]["end_card"] is True
     assert [s["prompt"] for s in written["video_segments"]] == [
         "Pergolas clip",
@@ -433,3 +438,81 @@ def test_idea_to_plan_to_progress_in_browser(db, settings, facts, logo, tmp_path
     with TestClient(create_app(settings), base_url="http://studio.test") as client:
         asyncio.run(exercise(client))
     assert db.scalar(select(MediaJob)).brief["end_card"]["asset_id"] == logo.id
+
+
+RAIN_IDEA = "A 12 second reel of a family grilling and eating under a pergola in the rain, with louvers opening."
+RAIN_ROOF = "black pergola with an insulated solid panel roof for rain cover"
+LOUVERS = "Opening louvers: Tudelu pergola louvers are fixed, so the camera moves instead."
+
+
+def test_planner_fits_the_idea_to_a_configuration_and_lists_only_real_conflicts(
+    db, settings, facts, monkeypatch
+):
+    seen = {}
+
+    def claude(self, system, context):
+        seen.update(system=system, context=context)
+        return {
+            "title": "Rainy dinner",
+            "operation": "video",
+            "duration": 12,
+            "kind": "promotional",
+            "shots": [
+                {"setting": "backyard dinner in steady rain", "system": "Pergolas", "configuration": RAIN_ROOF},
+                {"setting": "garden", "system": "Gazebos", "configuration": "wooden gazebo"},
+            ],
+            "end_card": True,
+            "available_systems": ["Pergolas"],
+            "notes": ["Rain: the pergola gets a panel roof so the family stays dry."],
+            "conflicts": [LOUVERS, " "],
+        }
+
+    monkeypatch.setattr("social.providers.Claude.call", claude)
+    settings.ai_mode = "live"
+    plan = plan_idea(db, settings, idea=RAIN_IDEA, facts_id=facts.id, has_logo=True)
+    assert SCOPE_REASONING in seen["system"] and WEATHER_GUIDANCE in seen["system"]
+    assert '"configuration"' in seen["system"] and '"conflicts"' in seen["system"]
+    assert plan.shots[0] == Shot(setting="backyard dinner in steady rain", system="Pergolas", configuration=RAIN_ROOF)
+    # A configuration for a system that isn't offered goes with it; the writer chooses afresh.
+    assert plan.shots[1] == Shot(setting="garden")
+    assert plan.conflicts == [LOUVERS]
+
+
+def test_plan_page_shows_conflicts_and_keeps_each_clips_configuration(db, settings, facts, logo, monkeypatch):
+    def offline(*args, **kwargs):
+        raise AssertionError("Fixture mode must not contact external services")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", offline)
+    with TestClient(create_app(settings)) as client:
+        token = client.get("/api/session").json()["csrf"]
+        idea = {
+            "csrf": token,
+            "prompt": RAIN_IDEA,
+            "format": "auto",
+            "kind": "auto",
+            "platforms": ["instagram"],
+            "rights": "public",
+            "facts_id": facts.id,
+        }
+        plan = {
+            "campaign": "Rainy dinner",
+            "operation": "video",
+            "duration": "12",
+            "plan_kind": "promotional",
+            "shot_setting": ["backyard dinner in steady rain", ""],
+            "shot_system": ["Pergolas", ""],
+            "shot_configuration": [RAIN_ROOF, ""],
+            "conflicts": [LOUVERS],
+            "logo_id": logo.id,
+        }
+        short = client.post("/forms/ideas/create", data=idea | plan | {"duration": "4", "mode": "once"})
+        assert short.status_code == 400
+        assert "make part of this idea" in short.text and "Opening louvers: Tudelu pergola louvers" in short.text
+        assert f'name="shot_configuration" maxlength="240" value="{RAIN_ROOF}"' in short.text
+        assert f'name="conflicts" value="{LOUVERS}"' in short.text
+        created = client.post("/forms/ideas/create", data=idea | plan | {"mode": "once"})
+        assert created.status_code == 200
+    job = db.scalars(select(MediaJob)).one()
+    assert job.brief["shots"] == [
+        {"setting": "backyard dinner in steady rain", "system": "Pergolas", "configuration": RAIN_ROOF}
+    ]

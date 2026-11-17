@@ -13,6 +13,7 @@ from social import reference_grounding as refs
 from social import scene_generation as scenes
 from social.media_studio import process_jobs, resume_job
 from social.models import Asset
+from social.product_rules import FRAMING_GUIDANCE, WEATHER_GUIDANCE
 from social.provider_errors import ProviderError
 from social.providers import OpenAI
 from social.recovery import retry_option, retry_step
@@ -622,6 +623,38 @@ def test_scene_review_receives_authored_intent_and_keeps_real_defects(db, settin
     context = json.loads(seen[0]["input"][0]["content"][0]["text"].split("Context: ")[1])
     assert context["request_intent"] == plan["request_intent"]
     assert context["request_intent"]["admin_idea"] == video_job.brief["prompt"]
+    assert "approved_shot" in context["request_intent"]
+    instructions = seen[0]["input"][0]["content"][0]["text"]
+    assert FRAMING_GUIDANCE in instructions and WEATHER_GUIDANCE in instructions
+    assert "partial overlap by people, furniture or plants is not a defect" in instructions
+    assert seen[0]["text"]["format"]["schema"]["required"] == ["passed", "reasons", "request_conflict"]
     assert context["reference_description"] == plan["physical_description"]
     assert video_job.state == "failed" and len(provider.submitted) == 1
     assert refs.current_plan(video_job)["scene_check"]["passed"] is False
+
+
+def test_rule_wording_release_keeps_a_saved_paid_scene(db, settings, video_job, monkeypatch):
+    provider = Provider(db, video_job, settings)
+    for _ in range(2):
+        process_jobs(db, settings, provider)
+    saved = refs.current_plan(video_job)
+    assert saved["scene_reference"] and saved["request_digest"]
+    # A release changes the rule text in the planning basis, but not the request.
+    monkeypatch.setattr(refs, "policy", lambda: {"version": "next", "rules": ["Reworded rule."]})
+    monkeypatch.setattr(refs, "select_reference", lambda *args: pytest.fail("Replanned a paid scene"))
+    reviewed = []
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: reviewed.append(1) or scenes.SceneCheck(
+        passed=True, reasons=[]))
+    process_jobs(db, settings, provider)
+    assert reviewed == [1]
+    assert refs.current_plan(video_job)["scene_reference"] == saved["scene_reference"]
+    assert [e for e, _ in provider.submitted] == ["text_to_image", "image_to_video"]
+
+
+def test_single_shot_jobs_carry_the_approved_configuration(db, settings, video_job):
+    shot = {"setting": "backyard dinner in steady rain", "system": "Pergolas",
+            "configuration": "black pergola with an insulated solid panel roof for rain cover"}
+    video_job.brief = video_job.brief | {"shots": [shot]}
+    db.commit()
+    assert refs.request_intent(video_job)["approved_shot"] == shot
+    assert refs.approved_shot(video_job) == shot

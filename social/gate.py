@@ -386,14 +386,20 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
             "product_rules_checked": bool(product_reviewed), "review_scope": "media_only",
             "product_constraints": current_constraints(),
         }
+        if result.request_conflict.strip():
+            # Shown on the held post; automatic replacement stops because the shot itself must change.
+            details["reasons"] = list(dict.fromkeys([
+                *result.reasons, "The approved shot asks for something Tudelu doesn't make: "
+                + result.request_conflict.strip()]))
         if not product_reviewed:
-            details["reasons"] = list(result.reasons) + result.product_mismatches
+            details["reasons"] = list(details.get("reasons", result.reasons)) + result.product_mismatches
             if facts.visual_guidance and result.product_rules_version != facts.visual_guidance.version:
                 details["reasons"].append("Visual review did not confirm the selected Builder product rules.")
             if result.product_constraints_version != PRODUCT_CONSTRAINTS_VERSION:
                 details["reasons"].append("Visual review did not confirm the current owner product corrections.")
         return result.passed and product_reviewed and not (
             result.garbled_text or result.misused_logos or result.unexpected_people
+            or result.request_conflict.strip()
         ) and all(c in approved for c in result.visible_claims), details
 
     check("audio_review", lambda: review_audio(db, settings, assets, context, facts, at, providers))

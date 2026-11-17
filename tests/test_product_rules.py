@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -9,28 +10,34 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from social.app import create_app
-from social.facts import Facts, load_facts, save_facts
+from social.facts import Facts, active, load_facts, save_facts
 from social.gate import evaluate
 from social.idea_plan import catalog_for, plan_idea
 from social.media_studio import CreativeBrief, process_jobs, queue_jobs
 from social.models import FactSheet
 from social.product_rules import (
+    FRAMING_RULE,
     HANGER_ROD_CUE,
     HANGER_ROD_RULE,
     PRODUCT_CONSTRAINTS_VERSION,
+    SCOPE_REASONING,
+    SCOPE_RULE,
+    WEATHER_GUIDANCE,
+    WEATHER_RULE,
     VisualGuidance,
     constrain_prompt,
     current_constraints,
     enforce_job_prompt,
     profile_for,
 )
-from social.prompting import PROMPT_LIMIT, write_prompt
-from social.providers import Claude, OpenAI, Providers, VisionReview
+from social.prompting import PROMPT_LIMIT, gather_sources, write_prompt
+from social.providers import Claude, OpenAI, Providers, VisionReview, vision_context
 from social.security import digest
 from social.video_segments import segment_brief
 
 GUIDE_PATH = Path("social/resources/visual-guidance.builder.yaml")
 SHEET_PATH = Path("config/facts.tudelu-2026-11-16-builder-v1.yaml")
+RENEWED_PATH = Path("config/facts.tudelu-2026-11-17-builder-v2.yaml")
 
 
 @pytest.fixture
@@ -134,7 +141,9 @@ def test_writer_receives_rules_and_persists_exact_source_provenance(db, settings
     monkeypatch.setattr(Claude, "call", respond)
     result = write_prompt(db, settings, job)
     instructions, context = observed[0]
-    assert "override conflicting website" in instructions
+    # The Builder rules are read as Tudelu's offerings, customized the way a product brief is.
+    assert SCOPE_REASONING in instructions and WEATHER_GUIDANCE in instructions
+    assert "Return problem only for a hard limit" in instructions
     assert context["rules"]["visual_guidance"] == sheet.document["visual_guidance"]
     assert context["rules"]["product_constraints"] == current_constraints()
     assert result["generation_prompt"].endswith(
@@ -402,3 +411,40 @@ def test_fact_editor_shows_new_version_as_default_and_preserves_guidance(setting
         create = client.get("/admin/create")
         assert create.status_code == 200
         assert f'value="{sheet.id}" selected' in create.text
+
+
+def test_owner_scope_allows_customization_and_keeps_hard_limits():
+    rules = {r["id"]: r["instruction"] for r in current_constraints()["rules"]}
+    assert list(rules) == [SCOPE_RULE, WEATHER_RULE, FRAMING_RULE, HANGER_ROD_RULE]
+    assert "hanger rods below a canopy" in rules[SCOPE_RULE]
+    assert "'only when selected' describe a starting point" in rules[SCOPE_RULE]
+    assert "A pergola can take an insulated solid panel or glass roof" in rules[WEATHER_RULE]
+    assert "Partial overlap is not a defect" in rules[FRAMING_RULE]
+    assert [s["recorded_on"] for s in current_constraints()["sources"]] == ["2026-11-16", "2026-11-17"]
+
+
+def test_image_side_models_get_product_names_not_caption_limits(db, settings, sheet):
+    limits = ["rainproof seating", "claim_provenance", "policy_metadata", "AI-generated concept"]
+    catalog = catalog_for(db, sheet.id, {}, "company")
+    writer = gather_sources(db, settings, job_for(db, settings, sheet))[0]
+    reviewer = vision_context({"facts": sheet.document})
+    for products in (catalog["products"], writer["rules"]["products"], reviewer["facts"]["products"]):
+        assert {"id": "pergolas", "name": "Pergolas", "status": "presented_on_site"} in products
+        assert not any(text in json.dumps(products) for text in limits)
+    # The approved fact itself stays available, and the caption review still gets every limit.
+    assert any("do not form a waterproof roof" in f["text"] for f in reviewer["facts"]["facts"])
+    assert "rainproof seating" in json.dumps(sheet.document["products"])
+
+
+def test_renewed_sheet_keeps_the_guidance_and_extends_only_verified_facts(db, settings):
+    original = yaml.safe_load(SHEET_PATH.read_text(encoding="utf-8"))
+    renewed = yaml.safe_load(RENEWED_PATH.read_text(encoding="utf-8"))
+    assert renewed["visual_guidance"] == original["visual_guidance"]
+    facts = Facts.model_validate(renewed)
+    assert sorted(f.id for f in facts.facts if not active(f, datetime(2026, 12, 10))) == [
+        "R06", "R07", *sorted(f.id for f in facts.facts if f.id.startswith("availability."))
+    ]
+    assert all(active(f, datetime(2026, 11, 20)) for f in facts.facts)
+    assert "AI-generated concept" not in RENEWED_PATH.read_text(encoding="utf-8")
+    load_facts(db, settings.facts_path)
+    assert load_facts(db, RENEWED_PATH).version == "tudelu-2026-11-17-builder-v2"

@@ -1,6 +1,6 @@
 """Owner-requested reference workflow; product dimensions still come from the Builder."""
 
-VERSION = "tudelu-reference-rendering-2026-11-17-v3"
+VERSION = "tudelu-reference-rendering-2026-11-17-v4"
 
 DEFAULT_VISUAL_DIRECTION = (
     "Photorealistic architectural film, natural soft light, balanced exposure, restrained contrast and "
@@ -10,25 +10,26 @@ DEFAULT_VISUAL_DIRECTION = (
 
 # Prompt guidance is separate from the persisted rendering-policy digest: changing the writer
 # must not invalidate a paid scene or an in-flight task that uses an older saved plan.
-SELECTION_VERSION = "reference-faithful-2026-11-17-v1"
+SELECTION_VERSION = "product-brief-scope-2026-11-17-v2"
 STRUCTURE_SELECTION = (
-    "Preserve the matching reference's structural arrangement unless the actual admin idea, reviewed shot "
-    "or explicit operator edit requests a Builder-supported change. Generated prose is a creative draft, "
-    "not an additional user specification. Do not invent exact post counts, dimensions, removed beams, "
-    "uninterrupted spans or extra roof layers when the request does not choose them. Builder dimensions "
-    "and post-count examples apply to their stated configuration, not every scene. A single roof plane "
-    "may contain multiple louver bays and a connected intermediate beam; that is not a stacked roof. "
-    "Seat louver ends in the perimeter or intermediate supporting frame shown by a compatible reference. "
-    "Keep ordinary perspective overlap distinct from physical interpenetration or disconnected members. "
-    "References never override explicit Builder restrictions or owner corrections."
+    "Use the matching reference as the starting point for construction details the approved shot leaves "
+    "open, and adapt it where the shot's configuration or the situation reasonably calls for a supported "
+    "change, such as a panel or glass roof for rain cover, an extra post or beam for a longer span, or a "
+    "different finish. Generated prose and earlier reviews are drafts, not user specifications: an "
+    "unrequested post count, dimension, removed beam or span that only they mention is not mandatory. "
+    "Builder dimensions and post-count examples apply to their stated configuration, not every scene. A "
+    "single roof plane may contain multiple louver bays and a connected intermediate beam; that is not a "
+    "stacked roof. Seat louver ends in the perimeter or intermediate supporting frame. Keep ordinary "
+    "perspective overlap distinct from physical interpenetration or disconnected members."
 )
 
 
 RULES = [
     "Use actual matching company photographs from the Public asset library, including Google Drive imports, "
     "and the product images on tudelu.com. A description or a previous AI generation is not a visual reference.",
-    "Current owner corrections and the AI Builder drawing guide define product geometry and supported options. "
-    "The user's prompt controls the creative direction. References supply product identity, not a locked scene, "
+    "Current owner corrections and the AI Builder drawing guide describe Tudelu's products and supported "
+    "options; customize within them to fit the scene, as a product brief would. The approved plan controls "
+    "the creative direction. References supply product identity, not a locked scene, "
     "background or color. Website illustrations are not verified installations or new caption facts.",
     "Choose references separately for every product scene, including later clips and regenerated clips. "
     "Match the product family and use its visible construction as evidence. Prefer real company photos when "
@@ -51,9 +52,9 @@ RULES = [
     "and joints in every frame. Members never appear, vanish, duplicate, bend, stretch, slide or change thickness "
     "as the camera moves.",
     "Compose scenes so the generator doesn't have to invent structure: the whole structure, or a deliberate "
-    "close detail, seen at eye level or slightly above, usually from a three-quarter view, with the supports and "
-    "their connections in frame and clear of foreground objects. Avoid cropping a structure partway along a post "
-    "or roof edge, mirror-like reflections of it, and rows of identical structures receding into the distance. "
+    "close detail, seen at eye level or slightly above, usually from a three-quarter view, with the roof edge "
+    "and most supports in frame. People, furniture and plants may overlap parts of it. Avoid cropping a "
+    "structure partway along a post or roof edge, mirror-like reflections of it, and rows of identical structures receding into the distance. "
     "Surrounding signs, awnings and walls are plain and unmarked.",
     "Animate each clip with one slow, steady camera move while the structure stays completely still, written as "
     "'The camera [move] as the structure stays completely still': a slow push-in, a gentle lateral truck, a slow "
@@ -74,6 +75,8 @@ RULES = [
     "Use adjacent compositions for natural match cuts; avoid abrupt changes of rendering style or random "
     "day/night jumps. Variety does not require every clip to look identical. A prior generated scene can guide "
     "style only, never establish product facts or override the current shot's product and requested differences.",
+    "Weather, seasons and people are part of the setting. Choose the supported roof a weather scene needs, "
+    "such as a panel or glass pergola roof when people stay dry in rain.",
     "If no compatible reference is available, stop with the missing product/configuration named. Never silently "
     "fall back to text-only product generation. Existing usage permissions and independent publication review apply.",
 ]

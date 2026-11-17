@@ -434,6 +434,9 @@ def auto_regenerate(db, settings, post):
     job = source_job(db, post)
     if not vision or not job or job.brief.get("as_uploaded") or replacement(db, post):
         return None
+    if str(vision.get("request_conflict") or "").strip():
+        # The shot itself asks for something Tudelu doesn't make; another take would fail the same way.
+        return None
     attempt = auto_attempts(job) + 1
     if attempt > limit:
         return None

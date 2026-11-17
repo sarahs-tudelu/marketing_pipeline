@@ -11,8 +11,14 @@ import httpx
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from .facts import composed, part_fact_ids
-from .product_rules import PRODUCT_CONSTRAINTS_VERSION, current_constraints
+from .facts import composed, part_fact_ids, product_index
+from .product_rules import (
+    FRAMING_GUIDANCE,
+    PRODUCT_CONSTRAINTS_VERSION,
+    SCOPE_REASONING,
+    WEATHER_GUIDANCE,
+    current_constraints,
+)
 from .provider_errors import ProviderError, request_json
 from .rendering_guidelines import policy as rendering_policy
 from .storage import ingest, storage
@@ -67,6 +73,8 @@ class VisionReview(BaseModel):
     product_rules_version: str = ""
     product_constraints_version: str = ""
     product_mismatches: list[str] = []
+    # The approved shot itself asks for something Tudelu doesn't make: regenerating can't pass.
+    request_conflict: str = ""
 
 
 def vision_context(context):
@@ -93,7 +101,10 @@ def vision_context(context):
         "rendering_guidelines": rendering_policy(),
         **{key: context[key] for key in ("platform", "product", "at", "execution_mode", "public_publication")
            if key in context},
-        "facts": {key: facts[key] for key in ("version", "products", "facts", "visual_guidance") if key in facts},
+        # Product names and availability only. Claim limits ("do not imply rainproof seating") are caption
+        # rules that the caption review applies; read as picture rules they forbid ordinary scenes.
+        "facts": {key: facts[key] for key in ("version", "facts", "visual_guidance") if key in facts}
+        | ({"products": product_index(facts["products"])} if "products" in facts else {}),
         "assets": assets,
     }
 
@@ -461,15 +472,18 @@ class OpenAI:
                 "Flag it only if it is distorted, cropped or not Tudelu's. Logos or brand text inside the "
                 "generated scenes before the end card remain misused logos. "
                 "When facts.visual_guidance is present, independently compare every depicted product with its "
-                "matching product profile and global_rules. Those Builder rules override conflicting website "
-                "examples or generation prompts. Check materials, frame proportions, louver connections, "
-                "supports, roof type and visible operation. Reject unsupported products and configurations. "
+                "matching product profile and global_rules, read through product_constraints, the owner's current "
+                "instructions: " + SCOPE_REASONING + " " + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " "
+                "Check materials, frame proportions, louver connections, supports, roof type and visible "
+                "operation. Reject products Tudelu doesn't offer and anything past a hard limit; a supported "
+                "customization of a Tudelu system passes even when the reference or prompt shows it differently. "
                 "reference_inputs are comparison images, not output video frames. product_construction images "
                 "guide product identity and connections, not a locked background or finish. generated_scene "
                 "images show the intended starting scene, but remain AI output, not proof of product accuracy. "
                 "Honor requested_scene and creative_changes when Builder-supported: different backgrounds, "
                 "architecture, configurations, colors and finishes are allowed. Do not reject those differences "
-                "merely because they differ from the original photo. Where request_intent is supplied, use it "
+                "merely because they differ from the original photo. Where request_intent is supplied, its "
+                "approved_shot is the setting, system and configuration the admin approved; use it "
                 "to distinguish the actual request from model-authored restrictions in requested_scene and "
                 "creative_changes. Only the changed text in operator_edits is a new instruction; honor any "
                 "legacy_operator_prompt as a whole. Preserve a reference-supported intermediate beam unless "
@@ -505,9 +519,12 @@ class OpenAI:
                 "Set product_constraints_version to product_constraints.version after checking these rules, "
                 "including when no canopy is depicted. Any mismatch means passed=false. "
                 "Visual guidance is not additional approved text for visible claims or caption claims. "
+                "Set request_conflict to one sentence only when the media fails because its approved shot "
+                "itself asks for something past a hard limit, so generating again cannot fix it; otherwise "
+                "leave it empty. "
                 "Return JSON with passed, reasons, garbled_text, "
                 "misused_logos, unexpected_people, visible_claims, problem_seconds, product_rules_version, "
-                "product_constraints_version, product_mismatches. "
+                "product_constraints_version, product_mismatches, request_conflict. "
                 + media_guidance
                 + "Context: "
                 + json.dumps(vision_context(context) | {"media_inputs": media_inputs, "reference_inputs": reference_inputs}, default=str),

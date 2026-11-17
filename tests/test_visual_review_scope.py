@@ -175,3 +175,24 @@ def test_caption_reviewer_scores_its_own_findings_instead_of_inheriting_visual_f
     assert review.score == 1
     assert "do not lower its score solely because another check failed" in seen[0]
     assert "application independently blocks failed" in seen[0]
+
+
+def test_request_conflict_holds_the_post_with_its_reason(db, settings, post, assets):
+    assets[0].source, assets[0].generator, assets[0].prompt = "ai_generated", "test", "A concept"
+
+    class Reviewer(Providers):
+        def vision(self, supplied, context):
+            return VisionReview(
+                passed=True,
+                reasons=["Observed geometry"],
+                garbled_text=False,
+                misused_logos=False,
+                unexpected_people=False,
+                product_constraints_version=PRODUCT_CONSTRAINTS_VERSION,
+                request_conflict="The shot asks for opening pergola louvers.",
+            )
+
+    result = checks(db, settings, post, providers=Reviewer(settings))["vision_review"]
+    assert result.passed is False
+    expected = "The approved shot asks for something Tudelu doesn't make: The shot asks for opening pergola louvers."
+    assert expected in result.details["reasons"]

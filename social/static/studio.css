@@ -187,7 +187,11 @@ pre{overflow:auto;padding:16px;font-family:var(--mono);font-size:12.5px;white-sp
 .plan-notes{margin:6px 0 0;padding-left:20px;color:var(--ink-soft)}
 .plan-notes li{margin:4px 0}
 .clip-list{margin:0;padding:0;list-style:none;counter-reset:clip}
-.clip-list li{display:grid;grid-template-columns:96px 1fr 1fr;gap:14px;align-items:end;padding:4px 0;border-bottom:1px solid var(--divider);counter-increment:clip}
+.clip-list li{display:grid;grid-template-columns:96px 1fr 1fr;gap:0 14px;align-items:end;padding:4px 0;border-bottom:1px solid var(--divider);counter-increment:clip}
+.clip-list .clip-configuration{grid-column:2/-1}
+.plan-conflicts{display:block}
+.plan-conflicts ul{margin:6px 0;padding-left:20px}
+.plan-conflicts p{margin:0}
 .clip-list label{margin:6px 0}
 .clip-length{padding-bottom:14px;font-size:12.5px;color:var(--muted)}
 .clip-length::before{content:"Clip " counter(clip) " · ";font-weight:600;color:var(--accent-text)}
@@ -309,6 +313,7 @@ body.standalone h1{margin-bottom:12px}
   .steps li{flex:0 0 auto}
   .two{row-gap:0}
   .two,.status-strip,.clip-list li{grid-template-columns:1fr}
+  .clip-list .clip-configuration{grid-column:auto}
   .metrics{grid-template-columns:1fr 1fr;gap:12px}
   .metrics>div{padding:16px}
   .metrics strong{font-size:24px}

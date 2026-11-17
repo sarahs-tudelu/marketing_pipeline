@@ -4,11 +4,48 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-16-v1"
+PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-17-v2"
 HANGER_ROD_RULE = "canopy.hanger_rods_above"
 HANGER_ROD_CUE = (
     "Any hanger rods rise above the canopy roof from its outer fascia to higher wall anchors, "
     "with clear open space underneath."
+)
+SCOPE_RULE = "scope.product_brief"
+WEATHER_RULE = "scope.weather"
+FRAMING_RULE = "scope.people_and_framing"
+
+# How every planner, writer and reviewer reads the Builder guidance: as a description of what Tudelu
+# offers, customized to the situation the way a product brief is, with a short list of hard limits.
+SCOPE_REASONING = (
+    "Judge every depiction the way a Tudelu product brief is written: start from what Tudelu offers (its "
+    "product families, components and options in the Builder guidance) and reason about whether the shown "
+    "configuration could reasonably be specified for that situation. Customization is expected: footprint, "
+    "size, height, post count and spacing, beams for longer spans, roof type (open fixed louvers, insulated "
+    "solid panels or glass), building attachment, finishes, trim, lighting and accessories can all change "
+    "to fit the scene, as can the setting, weather, season, time of day and people. Builder defaults, typical "
+    "values, dimensional examples and wording such as 'only when selected' describe a starting point: a "
+    "supported option counts as selected once the approved plan, the prompt or the situation calls for it. "
+    "Hard limits are only what Tudelu does not make: configurations the owner has ruled out (hanger rods "
+    "below a canopy), operable, rotating or motorized pergola louvers, a MUTE partition that slides or folds "
+    "instead of retracting vertically, a different kind of product (timber framing, a fabric awning, a tent "
+    "or a generic structure) and the coming-soon families. Physically broken rendering (floating, "
+    "disconnected, bent or interpenetrating members, or geometry that changes between frames) is a defect, "
+    "not a scope question. Pass anything a reasonable Tudelu product brief could specify; when unsure whether "
+    "an option is offered, use the nearest supported option rather than refusing."
+)
+WEATHER_GUIDANCE = (
+    "Weather is part of the setting: rain, snow, wind, wet paving and overcast light are allowed in any scene. "
+    "Tudelu structures can be configured for weather cover. A pergola can take an insulated solid panel or "
+    "glass roof, and canopies, walkways, carports and drive-through systems have solid panel roofs. Show the "
+    "roof the scene needs: people kept dry in rain are under a panel or glass roof, while under open louvers "
+    "rain falls between the blades. Depicting weather cover is not a caption claim; captions still use only "
+    "approved facts."
+)
+FRAMING_GUIDANCE = (
+    "People, furniture, grills, plants and vehicles may stand in front of parts of a structure, as in any "
+    "lifestyle photo. Keep enough of it visible that the construction reads clearly, such as the roof edge "
+    "and most supports. Partial overlap is not a defect. A member that visibly stops at an object without "
+    "continuing, a post that doesn't reach the ground, or framing that leaves the structure unreadable is."
 )
 
 
@@ -16,13 +53,27 @@ def current_constraints():
     """Current owner corrections supplement, but never rewrite, immutable facts versions."""
     return {
         "version": PRODUCT_CONSTRAINTS_VERSION,
-        "source": {
-            "type": "owner_instruction",
-            "recorded_on": "2026-11-16",
-            "record": "docs/builder-visual-guidance.md#owner-correction-hanger-rod-canopies",
-            "statement": "Tudelu does not offer bottom-supported hanger-rod canopies.",
-        },
-        "rules": [{
+        "sources": [
+            {
+                "type": "owner_instruction",
+                "recorded_on": "2026-11-16",
+                "record": "docs/builder-visual-guidance.md#owner-correction-hanger-rod-canopies",
+                "statement": "Tudelu does not offer bottom-supported hanger-rod canopies.",
+            },
+            {
+                "type": "owner_instruction",
+                "recorded_on": "2026-11-17",
+                "record": "docs/builder-visual-guidance.md#owner-instruction-product-brief-scope",
+                "statement": (
+                    "Generate within Tudelu's product offerings, customized to fit a variety of situations "
+                    "the way product briefs are. Weatherproofing a pergola is possible; a hanger-rod canopy "
+                    "with its supports below the deck is not."
+                ),
+            },
+        ],
+        "rules": [{"id": SCOPE_RULE, "instruction": SCOPE_REASONING},
+                  {"id": WEATHER_RULE, "instruction": WEATHER_GUIDANCE},
+                  {"id": FRAMING_RULE, "instruction": FRAMING_GUIDANCE}, {
             "id": HANGER_ROD_RULE,
             "instruction": (
                 "For any rod-hung canopy, hanger/tie rods must run entirely ABOVE the canopy roof, from "

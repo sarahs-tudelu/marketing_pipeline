@@ -80,6 +80,16 @@ def load_facts(db, path):
     return save_facts(db, yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
+def product_index(products):
+    """What media planners and visual reviewers need from the product records: names and availability.
+
+    Each record's claim_provenance limits (and the company record's policy metadata) govern caption
+    wording. Given to an image reviewer they read as picture bans, such as treating any rain scene as
+    an implied weather-protection claim, so only the caption review receives them.
+    """
+    return [{k: p[k] for k in ("id", "name", "status") if k in p} for p in products if isinstance(p, dict)]
+
+
 def active(fact, at):
     # Normalize explicit offsets rather than discarding them.
     from datetime import timezone

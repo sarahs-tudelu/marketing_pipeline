@@ -801,9 +801,13 @@ def create_app(settings=None):
         return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
 
     def plan_from_form(form):
+        places, systems = form.getlist("shot_setting"), form.getlist("shot_system")
+        configurations = form.getlist("shot_configuration")
+        # A page opened before the configuration field existed still submits its clips.
+        configurations += [""] * (len(places) - len(configurations))
         shots = [
-            Shot(setting=setting, system=system)
-            for setting, system in zip(form.getlist("shot_setting"), form.getlist("shot_system"), strict=False)
+            Shot(setting=setting, system=system, configuration=configuration)
+            for setting, system, configuration in zip(places, systems, configurations, strict=False)
             if str(setting).strip() or str(system).strip()
         ]
         operation = str(form.get("operation", ""))
@@ -826,6 +830,7 @@ def create_app(settings=None):
             end_card=operation in {"video", "video_edit"},
             available_systems=[str(s) for s in form.getlist("available_systems")][:40],
             notes=[str(n) for n in form.getlist("notes")][:8],
+            conflicts=[str(c) for c in form.getlist("conflicts")][:6],
             planner=str(form.get("planner", ""))[:100],
         )
 

@@ -5,6 +5,18 @@ existing `tudelu-2026-11-04-v2` document. Existing caption facts, their validity
 and product provenance are preserved. The new section is for product appearance and
 motion; it does not grant new caption claims or engineering approval.
 
+`tudelu-2026-11-17-builder-v2` (`config/facts.tudelu-2026-11-17-builder-v2.yaml`) renews
+it with the same `visual_guidance`. Each fact was checked against its cited tudelu.com page
+on 2026-11-17. The 33 claims the pages still back run to 2026-12-17, and the five
+coming-soon availability facts run to 2026-11-24. R06 (AI Design Studio) and R07 (shop)
+keep their 2026-12-04 expiry: their "confirm through project assessment" and "a listing
+does not confirm stock" cautions are not on the cited pages, so they need a reviewer's
+decision. W01 now also cites /partition-walls, which states its ceiling-assessment
+caution. The E03 variant typo is fixed ("assess supports"), and the visual policy no
+longer asks for "AI-generated concept" labels: labels come from platform-native flags
+and embedded metadata. Load it from **Facts** as a new version; the newest version is
+the default for new posts.
+
 ## Sources found
 
 The website repository is `tudelu-system/tudelu-frontend`. Its current fetched staging
@@ -102,6 +114,43 @@ the replacement receives the current constraints and must pass checks and human
 review again. Already-running Runway tasks finish with their submitted prompts,
 and their outputs still require the corrected visual review. No paid regeneration
 or public publishing is triggered by this code change.
+
+### Owner instruction: product-brief scope
+
+On 2026-11-17, the owner asked for generation and checks to reason about what Tudelu
+can reasonably build instead of enforcing every Builder default literally: "within the
+scope of Tudelu's product offerings but able to be customized to fit a variety of
+situations the same way product briefs are created". Weatherproofing a pergola is
+possible; a hanger-rod canopy with its supports below the deck is not.
+
+`tudelu-owner-visual-2026-11-17-v2` in `social/product_rules.py` adds three rules that
+every planner, prompt writer, scene check and video check reads alongside the Builder
+snapshot:
+
+- `scope.product_brief`: the Builder guidance describes Tudelu's offerings and defaults.
+  Footprint, size, post count and spacing, beams for longer spans, roof type (open louvers,
+  insulated panels or glass), attachment, finish, trim, lighting, setting, weather and
+  people may all change to fit the scene. Wording such as "only when selected" means the
+  option counts as selected once the approved plan, the prompt or the situation calls for
+  it. Hard limits are only what Tudelu doesn't make: rods below a canopy, operable pergola
+  louvers, a MUTE partition that slides or folds, a different kind of product, and the
+  coming-soon families. Physically broken rendering is still a defect.
+- `scope.weather`: rain, snow and wet scenes are allowed. A pergola can take a panel or
+  glass roof for weather cover; people kept dry in rain stand under one.
+- `scope.people_and_framing`: people, furniture and plants may overlap parts of a structure.
+  Framing fails only when the construction can't be read.
+
+The idea planner now records each clip's **configuration** (for example "black pergola
+with an insulated solid panel roof for rain cover"), shown and editable on the plan page.
+Requests past a hard limit are listed in a warning at the top of the plan, with what the
+plan shows instead. Later steps follow the approved shot; the original idea is kept for
+mood and intent only. The image-side models receive product names and availability, not
+the caption-claim limits in the fact sheet, which stay with the caption review.
+
+When a scene check or video check reports that the approved shot itself asks for something
+past a hard limit (`request_conflict`), automatic retries stop and the job or post waits
+for a person to change the shot. A paid scene saved before a rule-wording release is kept
+and reviewed under the current rules; plans saved before this release are planned once more.
 
 ### Updating the Builder snapshot
 

@@ -21,9 +21,18 @@ from sqlalchemy import select
 
 from .config import profiles
 from .db import now
-from .facts import Facts, active
+from .facts import Facts, active, product_index
 from .models import Asset, FactSheet, MediaJob, Post
-from .product_rules import VisualGuidance, constrain_prompt, context_for, current_constraints, profile_for
+from .product_rules import (
+    FRAMING_GUIDANCE,
+    SCOPE_REASONING,
+    WEATHER_GUIDANCE,
+    VisualGuidance,
+    constrain_prompt,
+    context_for,
+    current_constraints,
+    profile_for,
+)
 from .provider_errors import ProviderError
 from .rendering_guidelines import DEFAULT_VISUAL_DIRECTION, STRUCTURE_SELECTION
 from .rendering_guidelines import policy as rendering_policy
@@ -55,15 +64,16 @@ WRITER_INSTRUCTIONS = (
     "rules.facts, uploaded_media or selected_references. Choose the system that best fits admin_idea; if "
     "product is not 'company', depict that product. If the idea cannot be shown with a system Tudelu offers "
     "in those sources, return empty system and prompt and explain in problem. "
-    "When rules.visual_guidance is present, its global_rules and the matching product profile are authoritative "
-    "for geometry, materials, supports and operation. Choose only a system in its products. These Builder rules "
-    "override conflicting website examples, admin ideas and generated or uploaded references. Explain an "
-    "unsupported configuration in problem instead of inventing it. Use references for finish and composition "
-    "only within these rules. The admin idea controls new settings, architecture and supported colors, finishes "
-    "and configurations; reference photos do not lock the scene. Include the physical product cues in every shot; fixed louvers remain stationary "
+    "When rules.visual_guidance is present, its global_rules and the matching product profile describe each "
+    "system's construction, materials, supports and operation. Choose only a system in its products. Read them "
+    "through rules.product_constraints, the owner's current instructions, which apply even when visual_guidance "
+    "is absent: " + SCOPE_REASONING + " " + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " "
+    "Return problem only for a hard limit you can't work around; otherwise depict the nearest supported "
+    "option. Use references for finish and composition. The approved shot controls new settings, "
+    "architecture and supported colors, finishes and configurations; reference photos do not lock the scene. "
+    "Include the physical product cues in every shot; fixed louvers remain stationary "
     "in video. The camera may move. Never turn installation-angle options into operable blades. "
-    "Always apply rules.product_constraints, including when visual_guidance is absent. These current owner "
-    "corrections override older rules and references. A rod-hung canopy has rods above the roof running up "
+    "A rod-hung canopy has rods above the roof running up "
     "to higher wall anchors; bottom-supported rods are not a Tudelu configuration. Describe the correct "
     "orientation in each relevant clip. If an idea or starting image requires a forbidden configuration, "
     "return problem rather than preserve or copy it. An explicit video-edit request to correct the geometry "
@@ -84,11 +94,13 @@ WRITER_INSTRUCTIONS = (
     "For video_edit, describe the change to apply to the supplied video while preserving the system's geometry. "
     "Keep prompt under 900 characters. sources_used lists which sources informed it, such as "
     "'website', 'rules', 'uploaded:<asset_id>', 'reference:<asset_id>', 'previous:<asset_id>'. "
-    "When requested_shot is present, depict that setting and, if named, that system. "
+    "When requested_shot is present, depict that setting and, if named, that system and configuration. The "
+    "admin approved each planned shot after it was fitted to what Tudelu offers: where admin_idea differs from "
+    "a shot, follow the shot and use admin_idea for mood and intent. "
     "When storyboard is present, the video is a series of separate clips joined in order: also return "
     '"shots":[{"system":"...","prompt":"..."}] with exactly one entry per storyboard clip, in order. Each '
     "clip prompt describes one continuous shot of its own setting and one Tudelu system (the clip's named "
-    "system when given, otherwise one you choose; give clips different systems when the idea asks for several "
+    "system in its configuration when given, otherwise one you choose; give clips different systems when the idea asks for several "
     "products), with a specific camera move for its seconds. Keep one consistent cinematic look across clips "
     "(compatible light, exposure, color grade, lens and camera pacing). Return visual_direction: a concise "
     "shared art direction for the whole film, at most 350 characters, grounded in the admin idea. Allow a "
@@ -174,7 +186,8 @@ def gather_sources(db, settings, job):
         "facts_version": facts.version,
         "brand_voice": facts.brand_voice,
         "banned_phrases": facts.banned_phrases,
-        "products": facts.products,
+        # Caption limits stay with the caption review; the writer needs names and availability.
+        "products": product_index(facts.products),
         "visual_guidance": context_for(facts.visual_guidance),
         "product_constraints": current_constraints(),
         "rendering_guidelines": rendering_policy(),

@@ -289,6 +289,18 @@ def auto_retry(db, settings, job):
     step = retry_option(job)
     if not step or step["kind"] != "scene" or not step["scene_reasons"]:
         return False
+    from .reference_grounding import current_plan
+
+    conflict = str(((current_plan(job) or {}).get("scene_check") or {}).get("request_conflict") or "").strip()
+    if conflict:
+        # Making the scene again can't fix a shot that asks for something Tudelu doesn't make.
+        if "doesn't make" not in job.error:
+            job.error += (
+                f" The review found the shot itself asks for something Tudelu doesn't make: {conflict[:400]} "
+                "Change the scene below, or plan the idea again, then generate it."
+            )
+            db.commit()
+        return False
     tries = automatic_scene_retries(job, step["index"])
     if tries >= settings.media_auto_retries:
         if "automatically" not in job.error:
