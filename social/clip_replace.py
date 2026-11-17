@@ -78,6 +78,61 @@ def flagged(vision, segments):
     }
 
 
+def scene_plan(target):
+    """The saved plan of a clip or single take animated from a generated scene image, or {}."""
+    plan = target.get("reference_plan") or {}
+    return plan if plan.get("scene_reference") and plan.get("scene_prompt") else {}
+
+
+def findings(vision, segments, part):
+    """The visual check's reasons that concern one part: those placing a problem in its time range. A reason
+    that doesn't say where goes to the clips the check's frame times flagged, or to every clip if none were."""
+    reasons = [r for r in vision.get("reasons", []) if isinstance(r, str) and r.strip()]
+    if part["kind"] == "clip":
+        anywhere = part["flagged"] or not flagged(vision, segments)
+        reasons = [
+            r
+            for r in reasons
+            if (part["index"] in where if (where := flagged({"reasons": [r]}, segments)) else anywhere)
+        ]
+    if not reasons and (part["flagged"] or part["kind"] != "clip"):
+        reasons = [
+            text
+            for key, text in (
+                ("garbled_text", "Garbled or invented lettering is visible."),
+                ("misused_logos", "An invented or misused logo is visible."),
+                ("unexpected_people", "People appear who weren't requested."),
+            )
+            if vision.get(key)
+        ]
+    return reasons
+
+
+def correction(job, part, prompt, vision, plan):
+    """What the planner needs to make this part again: what the visual check found in it, the scene it
+    was animated from and the operator's edit. Corrections saved during the first run don't carry over."""
+    reasons = findings(vision, job.brief.get("video_segments") or [], part)
+    edited = prompt != " ".join(part["base"].split())
+    retry = {
+        "source": "held_post",
+        "previous_prompt": part["base"],
+        "creative_changes": plan.get("creative_changes", ""),
+        "scene_requirements": plan.get("scene_requirements", []),
+        "requested_prompt": prompt,
+        "prompt_edited": edited,
+        **({"operator_prompt": prompt} if edited else {}),
+    }
+    if reasons:
+        covers = (
+            f"{part['start']}–{part['end']} seconds of the video" if part["kind"] == "clip" else part["label"]
+        )
+        retry["video_check"] = {"reasons": reasons, "covers": covers}
+        retry["review"] = {"passed": False, "reasons": reasons}
+        if plan:
+            retry["scene"] = plan["scene_reference"]
+    return retry
+
+
 def suggested_prompt(segment, details):
     """The clip's prompt plus positive wording for what the visual check found."""
     extra = []
@@ -113,6 +168,10 @@ def parts(db, job, vision, audio):
                 prompt = s.get("prompt") or prompts.get(s["index"], "")
                 if not prompt:
                     return []
+                # A clip animated from a generated scene image is corrected through that scene: its
+                # description is edited, and the camera movement is planned again with it.
+                plan = scene_plan(s)
+                base = plan.get("scene_prompt") or prompt
                 result.append(
                     {
                         "key": str(s["index"]),
@@ -125,13 +184,18 @@ def parts(db, job, vision, audio):
                         "duration": s["duration"],
                         "setting": (s.get("shot") or {}).get("setting", ""),
                         "system": s.get("system") or (s.get("shot") or {}).get("system", ""),
-                        "prompt": suggested_prompt({"prompt": prompt}, vision),
+                        "base": base,
+                        "prompt": suggested_prompt({"prompt": base}, vision),
+                        "scene": bool(plan),
+                        "camera": prompt if plan else "",
                         "flagged": s["index"] in marked,
                         "limit": PROMPT_LIMIT,
                     }
                 )
     elif not segments and brief["operation"] in {"video", "image"} and brief.get("generation_prompt"):
         noun = "image" if brief["operation"] == "image" else "video"
+        plan = scene_plan(brief) if noun == "video" else {}
+        base = plan.get("scene_prompt") or brief["generation_prompt"]
         result.append(
             {
                 "key": "visual",
@@ -139,7 +203,10 @@ def parts(db, job, vision, audio):
                 "label": f"the {noun}",
                 "title": f"The {noun}",
                 "duration": brief["duration"] if noun == "video" else 0,
-                "prompt": suggested_prompt({"prompt": brief["generation_prompt"]}, vision),
+                "base": base,
+                "prompt": suggested_prompt({"prompt": base}, vision),
+                "scene": bool(plan),
+                "camera": brief["generation_prompt"] if plan else "",
                 "flagged": bool(vision),
                 "limit": PROMPT_LIMIT,
             }
@@ -220,9 +287,8 @@ def replace_part(db, post, key, prompt, actor):
         raise ValueError(
             "The generation record for this media wasn't found. Create the post again from the idea instead."
         )
-    options = {
-        p["key"]: p for p in parts(db, job, failed_vision(db, post), failed_check(db, post, "audio_review"))
-    }
+    vision = failed_vision(db, post)
+    options = {p["key"]: p for p in parts(db, job, vision, failed_check(db, post, "audio_review"))}
     if not options:
         raise ValueError("This media can't be split into parts. Create the post again from the idea instead.")
     part = options.get(str(key))
@@ -236,7 +302,10 @@ def replace_part(db, post, key, prompt, actor):
     )
     if too_long:
         raise ValueError(f"Keep the prompt under {part['limit']} characters")
-    brief = deepcopy(job.brief) | {
+    # The first run's retries and last step are its own history, not the replacement's.
+    brief = {
+        k: v for k, v in deepcopy(job.brief).items() if k not in {"failed_tasks", "active_generation"}
+    } | {
         "workflow": "immediate",
         "create_posts": True,
         "replaces": {
@@ -253,11 +322,16 @@ def replace_part(db, post, key, prompt, actor):
     stage = "visual"
     if part["kind"] == "clip":
         old = next(s for s in job.brief["video_segments"] if s["index"] == part["index"])
-        clip = {k: v for k, v in old.items() if k != "output_asset_id"} | {
+        plan = scene_plan(old)
+        # A scene clip is planned again from the edited scene description, like Generate corrected
+        # scene; the old plan's scene stays in the correction for the planner to diagnose.
+        dropped = {"output_asset_id", "scene_retry"} | ({"reference_plan"} if plan else set())
+        clip = {k: v for k, v in old.items() if k not in dropped} | {
             "prompt": prompt,
             # A different seed gives a different take even when the prompt is unchanged.
             "seed": (old["seed"] + 1) % 2**32,
             "replaced_asset_id": old["output_asset_id"],
+            "scene_retry": correction(job, part, prompt, vision, plan),
         }
         brief["video_segments"] = [
             clip if s["index"] == part["index"] else s for s in job.brief["video_segments"]
@@ -268,10 +342,14 @@ def replace_part(db, post, key, prompt, actor):
         # Reused clips and music stay in the sources; the new clip is added when it is saved.
         sources = [i for i in sources if i != old["output_asset_id"]]
     elif part["kind"] == "visual":
+        plan = scene_plan(job.brief) if part["scene"] else {}
+        if plan:
+            brief.pop("reference_plan", None)
         brief |= {
             "generation_prompt": prompt,
             "seed": (job.brief["seed"] + 1) % 2**32,
             "soundtrack_asset_id": soundtrack,
+            "scene_retry": correction(job, part, prompt, vision, plan),
         }
         sources = [i for i in sources if i == soundtrack]
     else:

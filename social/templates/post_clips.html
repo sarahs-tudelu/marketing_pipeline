@@ -9,17 +9,18 @@
     <a class="button" href="/admin/create?from_post={{ post.id }}">New post from an idea</a>
   {% else %}
     <p>Describe the changes in the prompt for the image, clip or music below. Everything else is reused, and the new {{ clip_fix.noun }} goes through the checks again as a new post. This post is marked replaced when the new one is ready. The replacement waits for your review before it can be scheduled.</p>
+    {% if clip_fix.parts|selectattr('scene')|list %}<p class="muted">Generated {{ 'clips are' if clip_fix.parts|selectattr('kind', 'eq', 'clip')|list else 'video is' }} animated from a scene image, and problems such as lettering or a wrong roof come from that scene, so you edit the scene. The planner also gets what the visual check found and the old scene image to correct, and the new scene is checked for the same problems before it's animated.</p>{% endif %}
     {% if clip_fix.reasons %}<div class="idea-quote"><b>What the visual check found</b>{% for r in clip_fix.reasons %}<br>{{ r }}{% endfor %}</div>
       {% if not clip_fix.parts|rejectattr('kind', 'eq', 'music')|selectattr('flagged')|list %}<p class="muted">The check didn't say which clip shows this. Open the clip whose setting matches what it found.</p>{% endif %}
     {% endif %}
     <ol class="fix-clips">
     {% for c in clip_fix.parts %}<li><details id="part-{{ c.key }}" {{ 'open' if c.flagged else '' }}><summary><b>{{ c.title }}</b>{% if c.kind == 'clip' %} · {{ c.start }}–{{ c.end }} s{% if c.setting %} · {{ c.setting }}{% endif %}{% if c.system %} · {{ c.system }}{% endif %}{% elif c.duration %} · {{ c.duration }} s{% endif %}{% if c.flagged %} <span class="tag">Flagged by the check</span>{% endif %}</summary>
-      {% set what = {'clip': 'one new ' ~ c.duration ~ '-second ', 'visual': 'a new ' ~ (c.duration ~ '-second ' if c.duration else ''), 'music': 'a new ' ~ c.duration ~ '-second '}[c.kind] %}
+      {% set what = ('a new scene image, then ' if c.scene else '') ~ {'clip': 'one new ' ~ c.duration ~ '-second ', 'visual': 'a new ' ~ (c.duration ~ '-second ' if c.duration else ''), 'music': 'a new ' ~ c.duration ~ '-second '}[c.kind] %}
       {% set thing = {'clip': 'clip', 'visual': clip_fix.noun, 'music': 'music track'}[c.kind] %}
       <form method="post" action="/forms/posts/{{ post.id }}/parts/{{ c.key }}/regenerate" data-confirm="Regenerate {{ c.label }}? This makes {{ what }}{{ 'Runway ' if clip_fix.live else 'simulated ' }}{{ thing }}.">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label>{{ 'Music prompt' if c.kind == 'music' else 'Prompt for this ' ~ thing }}<textarea name="prompt" rows="6" maxlength="{{ c.limit }}">{{ c.prompt }}</textarea></label>
-        <small class="muted">{% if c.kind == 'music' %}Edit it if you like. A new track is composed even if you leave it unchanged.{% else %}Edit it if you like. Wording that keeps signs, lettering and people out of frame is added when the check found them. A new take is generated even if you leave it unchanged.{% endif %}</small>
+        <label>{{ 'Music prompt' if c.kind == 'music' else ('Scene for this ' if c.scene else 'Prompt for this ') ~ thing }}<textarea name="prompt" rows="6" maxlength="{{ c.limit }}">{{ c.prompt }}</textarea></label>
+        <small class="muted">{% if c.kind == 'music' %}Edit it if you like. A new track is composed even if you leave it unchanged.{% elif c.scene %}This describes the scene image the {{ thing }} is animated from. Edit it if you like. Wording that keeps signs, lettering and people out of frame is added when the check found them. A new scene is planned even if you leave it unchanged, and the camera movement is planned again with it. Last time the camera movement was: <i>{{ c.camera }}</i>{% else %}Edit it if you like. Wording that keeps signs, lettering and people out of frame is added when the check found them. A new take is generated even if you leave it unchanged.{% endif %}</small>
         <div class="actions"><button class="primary">Regenerate {{ c.label }}</button></div>
       </form>
     </details></li>{% endfor %}

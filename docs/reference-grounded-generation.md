@@ -56,6 +56,18 @@ image fails with identical error text. The exact scene prompt and review time ar
 under the product reference. Generation remains probabilistic; these changes do not
 guarantee that a new image will pass review.
 
+**Regenerate clip** on a held post corrects a scene-based clip through its scene. The
+prompt box holds the scene description the clip was animated from, with positive wording
+added when the check found lettering, logos or people; the last camera movement is shown
+for reference and is planned again with the new scene. The replacement job carries the
+visual check's findings for that clip's time range (and any that don't say where), the old
+scene image for diagnosis, its scene prompt, requirements and intended changes, and any
+edit. The planner corrects them as it does for **Generate corrected scene**, and the scene
+review fails a new scene that visibly repeats them, before animation is bought. Corrections
+saved during the first run, its retry count and its last step don't carry over. If the old
+scene's permissions changed since, it isn't shown to the planner, but its findings still
+apply. A clip made before scene images existed also passes the findings to the planner.
+
 Offline fixtures make no reference-selection or generation calls. Existing real-media uploads retain their own-media workflow. Existing video edits retain their source video and Builder constraints. Already-running tasks keep their recorded inputs; completed clips are not automatically regenerated or republished. A replacement affects the requested clip, so other flagged clips still need correction.
 
 ## Release and verification
