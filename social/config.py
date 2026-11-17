@@ -1,7 +1,9 @@
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, Field, SecretStr, model_validator
@@ -11,6 +13,15 @@ PLATFORMS = ("linkedin", "instagram", "facebook", "x", "tiktok", "pinterest")
 # Real photos and videos imported from Google Drive only; never generated media.
 REAL_MEDIA_ONLY = frozenset({"pinterest"})
 OAUTH_CLIENT_ID_FIELDS = frozenset({"linkedin_client_id", "x_client_id", "tiktok_client_id", "pinterest_client_id"})
+
+
+def validate_crm_access(endpoint: str, cookie_name: str):
+    url = urlsplit(endpoint)
+    if (url.scheme != "https" or not url.hostname or url.username or url.password or url.query
+            or url.fragment or not url.path.endswith("/auth/social-studio/access")):
+        raise ValueError("CRM_ACCESS_URL must be the HTTPS CRM Social Studio access endpoint")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", cookie_name):
+        raise ValueError("Invalid CRM_SESSION_COOKIE")
 
 
 class Settings(BaseSettings):
@@ -42,7 +53,9 @@ class Settings(BaseSettings):
     aws_secret_access_key: SecretStr = SecretStr("")
     token_encryption_key: SecretStr = SecretStr("")
     session_secret: SecretStr = SecretStr("")
-    auth_mode: Literal["basic", "proxy", "dev"] = "dev"
+    auth_mode: Literal["basic", "proxy", "crm", "dev"] = "dev"
+    crm_access_url: str = ""
+    crm_session_cookie: str = "TUDELU_TOKEN"
     admin_username: str = ""
     admin_password: SecretStr = SecretStr("")
     proxy_auth_secret: SecretStr = SecretStr("")
@@ -170,6 +183,8 @@ class Settings(BaseSettings):
                 raise ValueError("Production/live requires authentication and SESSION_SECRET")
             if not self.token_encryption_key.get_secret_value():
                 raise ValueError("Production/live requires TOKEN_ENCRYPTION_KEY")
+        if self.auth_mode == "crm":
+            validate_crm_access(self.crm_access_url, self.crm_session_cookie)
         if self.auth_mode == "basic" and (
             not self.admin_username or not self.admin_password.get_secret_value()
         ):

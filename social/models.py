@@ -90,6 +90,8 @@ class Account(Base):
 
 class Post(Base):
     __tablename__ = "posts"
+    prompted_by: Mapped[str | None] = mapped_column(String(200), index=True)
+    prompted_by_label: Mapped[str | None] = mapped_column(String(320))
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     platform: Mapped[str] = mapped_column(ForeignKey("accounts.platform"), index=True)
     account_id: Mapped[str] = mapped_column(String(200), default="")

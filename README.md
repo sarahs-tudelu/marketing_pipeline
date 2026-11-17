@@ -33,6 +33,8 @@ No credentials are needed for these commands. `AI_MODE=fixture` calls neither Ru
 
 ## Docker Compose
 
+For CRM sign-in, Social Editor assignments, and post ownership, see [CRM access](docs/crm-access.md).
+
 For local Docker, copy `.env.example` to `.env.local`. Generate a random alphanumeric `POSTGRES_PASSWORD` and set `AUTH_MODE=basic`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `SESSION_SECRET` in that file. Docker requests arrive from the container network, so the loopback-only development login is intentionally unsuitable. Keep the Droplet `.env` separate. Then:
 
 ```sh

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Social Studio ? My ideas</title><link rel="stylesheet" href="/static/studio.css?v={{ static_version }}">
+<script src="/static/studio.js?v={{ static_version }}" defer></script></head>
+<body><aside><a class="brand" href="/admin/create">Social Studio</a><nav aria-label="Main">
+<a href="/admin/create">New post from an idea</a><a href="/admin/create#my-posts">My posts</a></nav></aside>
+<main>{% if error_message %}<p role="alert">{{ error_message }}</p>{% endif %}
+{% if view == "plan" %}<h1>Review your idea</h1>{% include "idea_plan.html" %}
+{% elif view == "post" %}<h1>{{ post.campaign }}</h1><p>Prompted by {{ post.prompted_by_label }}</p>
+<p>{{ post.platform|platform }} ? {{ post.status|replace('_', ' ') }}</p><p>{{ post.caption }}</p>
+{% for asset in posting_assets %}{% if asset.media.mime.startswith('image/') %}<img src="/posts/{{ post.id }}/media/{{ asset.id }}" alt="Post image">
+{% elif asset.media.mime.startswith('video/') %}<video controls src="/posts/{{ post.id }}/media/{{ asset.id }}"></video>{% endif %}{% endfor %}
+{% else %}<h1>New post from an idea</h1>{% include "idea_create.html" %}
+<section id="my-posts"><h2>My posts</h2>{% for job in my_jobs %}<p>{{ job.brief.campaign }} ? {{ job.platform|platform }} ? {{ job.state }}</p>{% endfor %}
+{% for p in posts %}<p><a href="/posts/{{ p.id }}">{{ p.campaign }}</a> ? {{ p.platform|platform }} ? {{ p.status|replace('_', ' ') }}</p>
+{% else %}{% if not my_jobs %}<p>Your posts will appear here after you submit an idea.</p>{% endif %}{% endfor %}</section>
+{% endif %}</main></body></html>

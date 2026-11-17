@@ -35,9 +35,11 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `AWS_SECRET_ACCESS_KEY` | `(unset secret)` | Spaces secret key; accepts a gsm:// reference with SECRET_BACKEND=google. |
 | `TOKEN_ENCRYPTION_KEY` | `(unset secret)` | Required for storing tokens: Fernet key, or comma-separated new,old keys during rotation. |
 | `SESSION_SECRET` | `(unset secret)` | Required for production/live: random 32+ byte session signing secret. |
-| `AUTH_MODE` | `"dev"` | dev = loopback only. basic = internal/VPN. proxy = trusted SSO proxy with shared secret. |
+| `AUTH_MODE` | `"dev"` | dev = loopback only. basic = internal/VPN. proxy = trusted SSO proxy. crm = verify CRM session and Social Studio role on each request. |
 | `ADMIN_USERNAME` | `(unset)` | Related configuration in the group above. |
 | `ADMIN_PASSWORD` | `(unset secret)` | Related configuration in the group above. |
+| `CRM_ACCESS_URL` | `(unset)` | Full HTTPS URL of the CRM API's `/auth/social-studio/access` route, including its API prefix. |
+| `CRM_SESSION_COOKIE` | `"TUDELU_TOKEN"` | CRM session cookie name for this environment. |
 | `PROXY_AUTH_SECRET` | `(unset secret)` | Proxy must strip incoming auth headers and set X-Authenticated-User and X-Tudelu-Proxy-Secret. |
 | `META_API_VERSION` | `"v26.0"` | Verified/pinned platform API versions; review docs before updating. |
 | `META_APP_ID` | `(unset)` | Optional Meta App ID. Not used for publishing: Facebook videos upload as Reels with the Page token. |

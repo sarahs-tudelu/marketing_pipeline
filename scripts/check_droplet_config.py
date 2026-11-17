@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from sqlalchemy.engine import make_url
 
 from social.cloud_secrets import SecretLoadError, resource_name
-from social.config import OAUTH_CLIENT_ID_FIELDS, Settings
+from social.config import OAUTH_CLIENT_ID_FIELDS, Settings, validate_crm_access
 
 
 def validate(values):
@@ -19,10 +19,16 @@ def validate(values):
     for key, expected in {
         "ENVIRONMENT": "production",
         "SECRET_BACKEND": "google",
-        "AUTH_MODE": "basic",
     }.items():
         if values.get(key) != expected:
             errors.append(f"{key} must be {expected} for this Droplet compose file")
+    if values.get("AUTH_MODE") not in {"basic", "crm"}:
+        errors.append("AUTH_MODE must be basic or crm for this Droplet compose file")
+    if values.get("AUTH_MODE") == "crm":
+        try:
+            validate_crm_access(values.get("CRM_ACCESS_URL") or "", values.get("CRM_SESSION_COOKIE") or "TUDELU_TOKEN")
+        except ValueError:
+            errors.append("Set a valid HTTPS CRM_ACCESS_URL and CRM_SESSION_COOKIE")
     backend = values.get("STORAGE_BACKEND")
     if backend not in {"local", "s3"}:
         errors.append("STORAGE_BACKEND must be local or s3")
@@ -129,7 +135,10 @@ def validate(values):
         errors.append(
             "DATABASE_CA_HOST_DIR must be an absolute Linux directory, mounted at /run/database-certs"
         )
-    for key in ("DATABASE_PASSWORD", "TOKEN_ENCRYPTION_KEY", "SESSION_SECRET", "ADMIN_PASSWORD"):
+    required_secrets = ["DATABASE_PASSWORD", "TOKEN_ENCRYPTION_KEY", "SESSION_SECRET"]
+    if values.get("AUTH_MODE") == "basic":
+        required_secrets.append("ADMIN_PASSWORD")
+    for key in required_secrets:
         if not values.get(key):
             errors.append(f"{key} must reference an existing Secret Manager version")
     if values.get("AI_MODE") == "live":

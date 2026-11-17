@@ -5,10 +5,11 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ValidationError
@@ -18,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import connections
+from . import connections, crm_access
 from .clip_replace import clip_options, needs_runway_music, replace_part
 from .config import PLATFORMS, REAL_MEDIA_ONLY, get_settings, profiles
 from .db import make_engine, schema_gaps, sessions
@@ -124,7 +125,13 @@ def create_app(settings=None):
     @app.middleware("http")
     async def auth(request: Request, call_next):
         path = request.url.path
-        if path == "/health" or path.startswith(("/media/", "/static/")):
+        public_media = path.startswith("/media/") and (
+            settings.auth_mode != "crm" or (
+                settings.media_base_url and request.url.hostname == urlsplit(settings.media_base_url).hostname
+                and request.url.hostname != urlsplit(settings.app_base_url).hostname
+            )
+        )
+        if path == "/health" or path.startswith("/static/") or public_media:
             response = await call_next(request)
             if path.startswith("/media/"):
                 response.headers["Cache-Control"] = (
@@ -134,11 +141,26 @@ def create_app(settings=None):
                 )
                 response.headers["X-Content-Type-Options"] = "nosniff"
             return response
-        if path.startswith("/oauth/") and path.endswith("/callback"):
+        if settings.auth_mode != "crm" and path.startswith("/oauth/") and path.endswith("/callback"):
             return await call_next(request)  # Bound state + signed session checked at callback.
         user = "local-developer"
         valid = False
-        if settings.auth_mode == "dev":
+        request.state.editor = False
+        if settings.auth_mode == "crm":
+            try:
+                user, label, role = await crm_access.identity(settings, request.cookies.get(settings.crm_session_cookie))
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers={"Cache-Control": "no-store"})
+            if request.session.get("crm_actor") != user:
+                request.session.clear()
+                request.session["crm_actor"] = user
+            request.state.editor = role == "editor"
+            if request.state.editor and not crm_access.editor_route(request.method, path):
+                return JSONResponse({"detail": "Access denied"}, status_code=403, headers={"Cache-Control": "no-store"})
+            if request.state.editor and path == "/":
+                return RedirectResponse("/admin/create", status_code=303, headers={"Cache-Control": "no-store"})
+            valid = True
+        elif settings.auth_mode == "dev":
             valid = request.client is not None and request.client.host in {"127.0.0.1", "::1", "testclient"}
         elif settings.auth_mode == "basic":
             try:
@@ -166,6 +188,10 @@ def create_app(settings=None):
                 headers={"WWW-Authenticate": 'Basic realm="Tudelu"'},
             )
         request.state.actor = user
+        request.state.prompt_account = {
+            "prompted_by": user if settings.auth_mode == "crm" else f"{settings.auth_mode}:{user}",
+            "prompted_by_label": label if settings.auth_mode == "crm" else user,
+        }
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -306,6 +332,8 @@ def create_app(settings=None):
                 | ((Post.status == "published") & Post.id.in_(select(PostAvailability.post_id).where(
                     PostAvailability.state.in_(["unavailable", "unknown"]))))
             )
+        if request.state.editor:
+            post_query = post_query.where(Post.prompted_by == request.state.actor)
         posts = db.scalars(post_query.order_by(Post.created_at.desc()).limit(200)).all()
         from .analytics import report
 
@@ -319,21 +347,32 @@ def create_app(settings=None):
             )
         )
         assets = db.scalars(select(Asset).order_by(Asset.created_at.desc())).all()
+        if request.state.editor:
+            assets = [a for a in assets if crm_access.editor_asset(a, request.state.actor)]
         facts = db.scalars(select(FactSheet).order_by(FactSheet.created_at.desc())).all()
         idea_form = idea_form or {}
-        if view == "create" and not idea_form and (old := db.get(Post, request.query_params.get("from_post", ""))):
+        if view == "create" and not idea_form and (source_id := request.query_params.get("from_post")):
+            old = db.get(Post, source_id)
+            if not old:
+                raise HTTPException(404)
             from .clip_replace import source_job
 
+            if request.state.editor and old.prompted_by != request.state.actor:
+                raise HTTPException(404)
             source = source_job(db, old)
             brief = source.brief if source else {}
             idea_form = {"prompt": brief.get("prompt", old.campaign), "platforms": [old.platform], "product": old.product, "kind": old.kind, "rights": brief.get("rights", "public"), "owner": brief.get("owner", ""), "reference_ids": brief.get("reference_ids", old.asset_ids if not source else [])}
         default_facts = next((f.id for f in facts if not f.document.get("demo_only")), facts[0].id if facts else "")
         return templates.TemplateResponse(
             request=request,
-            name="studio.html",
+            name="editor.html" if request.state.editor else "studio.html",
             status_code=status_code,
             context={
                 "view": view,
+                "editor": request.state.editor,
+                "my_jobs": db.scalars(select(MediaJob).where(
+                    MediaJob.brief["prompted_by"].as_string() == request.state.actor, MediaJob.post_id.is_(None)
+                ).order_by(MediaJob.created_at.desc()).limit(100)).all() if request.state.editor and view == "create" else [],
                 "static_version": static_version,
                 "error_message": error_message,
                 "asset_form": asset_form or {},
@@ -476,9 +515,23 @@ def create_app(settings=None):
     @app.get("/posts/{post_id}", response_class=HTMLResponse)
     def detail(post_id: str, request: Request, db: DB):
         post = db.get(Post, post_id)
-        if not post or post.status == "deleted":
+        if not post or post.status == "deleted" or (request.state.editor and post.prompted_by != request.state.actor):
             raise HTTPException(404)
         return page(request, db, "post", post_id)
+
+    @app.get("/posts/{post_id}/media/{asset_id}")
+    def post_media(post_id: str, asset_id: str, request: Request, db: DB):
+        post = db.get(Post, post_id)
+        if (not post or post.status == "deleted" or asset_id not in post.asset_ids
+                or (request.state.editor and post.prompted_by != request.state.actor)):
+            raise HTTPException(404)
+        asset = db.get(Asset, asset_id)
+        if not asset:
+            raise HTTPException(404)
+        if settings.storage_backend == "local":
+            return FileResponse(storage(settings).path(asset.storage_key), media_type=asset.media["mime"])
+        from .media import public_media
+        return public_media(asset.storage_key, request)
 
     @app.get("/api/session")
     def session(request: Request):
@@ -486,16 +539,23 @@ def create_app(settings=None):
         return {"csrf": request.session["csrf"]}
 
     @app.get("/api/posts")
-    def list_posts(db: DB):
+    def list_posts(request: Request, db: DB):
         from .models import PostAvailability
 
-        availability = {a.post_id: a for a in db.scalars(select(PostAvailability))}
+        query = select(Post).where(Post.status != "deleted")
+        if request.state.editor:
+            query = query.where(Post.prompted_by == request.state.actor)
+        posts = db.scalars(query.order_by(Post.created_at.desc()).limit(500)).all()
+        availability = {a.post_id: a for a in db.scalars(select(PostAvailability).where(
+            PostAvailability.post_id.in_([p.id for p in posts])))}
         return [
             {
                 "id": p.id,
                 "platform": p.platform,
                 "status": p.status,
                 "caption": p.caption,
+                "prompted_by": p.prompted_by,
+                "prompted_by_label": p.prompted_by_label,
                 "scheduled_at": p.scheduled_at,
                 "url": p.live_url,
                 "dry_run": p.dry_run,
@@ -503,14 +563,18 @@ def create_app(settings=None):
                                   "last_seen_at": a.last_seen_at, "next_check_at": a.next_check_at}
                                  if (a := availability.get(p.id)) else None),
             }
-            for p in db.scalars(
-                select(Post).where(Post.status != "deleted").order_by(Post.created_at.desc()).limit(500)
-            )
+            for p in posts
         ]
 
+    def queue_prompt(db, brief, account):
+        jobs = queue_jobs(db, settings, brief)
+        for job in jobs:
+            job.brief = job.brief | account
+        return jobs
+
     @app.post("/api/media-jobs", dependencies=mutation)
-    def create_media_job(payload: CreativeBrief, db: DB):
-        jobs = queue_jobs(db, settings, payload)
+    def create_media_job(payload: CreativeBrief, request: Request, db: DB):
+        jobs = queue_prompt(db, payload, request.state.prompt_account)
         db.commit()
         return {"jobs": [{"id": j.id, "platform": j.platform, "state": j.state} for j in jobs]}
 
@@ -578,9 +642,9 @@ def create_app(settings=None):
                 validate_sources(db, brief)
                 if not brief.create_posts or brief.operation == "audio":
                     raise ValueError("Recurring campaigns must create image/video posts")
-                db.add(MediaCampaign(name=brief.campaign, brief=brief.model_dump(), enabled=False))
+                db.add(MediaCampaign(name=brief.campaign, brief=brief.model_dump() | request.state.prompt_account, enabled=False))
             else:
-                await run_in_threadpool(queue_jobs, db, settings, brief)
+                await run_in_threadpool(queue_prompt, db, brief, request.state.prompt_account)
             db.commit()
         except ValueError as exc:
             db.rollback()
@@ -617,7 +681,7 @@ def create_app(settings=None):
         values["upload_use"] = "reference" if form.get("upload_use") == "reference" else "as_is"
         return values
 
-    async def save_idea_uploads(db, form, values):
+    async def save_idea_uploads(db, form, values, actor):
         """Save files added with an idea to the asset library as real company media."""
         files = [f for f in form.getlist("files") if isinstance(f, UploadFile) and f.filename]
         if len(values["upload_ids"]) + len(files) > MAX_IDEA_UPLOADS:
@@ -637,7 +701,7 @@ def create_app(settings=None):
                     file.filename,
                     rights=usage_rights(values["rights"]),
                     owner=owner_value(values["owner"]),
-                    tags={"product": values["product"] or "company", "uploaded_with_idea": True},
+                    tags={"product": values["product"] or "company", "uploaded_with_idea": True, "submitted_by": actor},
                 )
                 db.commit()
             except Exception as exc:
@@ -655,6 +719,21 @@ def create_app(settings=None):
             raise ValueError("A file you added is no longer in the asset library. Add it again.")
         return uploads
 
+    def check_editor_inputs(request, db, form, values):
+        if not request.state.editor:
+            return
+        actor = request.state.actor
+        for asset_id in values["reference_ids"] + values["upload_ids"]:
+            asset = db.get(Asset, asset_id)
+            if not crm_access.editor_asset(asset, actor):
+                raise HTTPException(404, "Media not found")
+            if asset_id in values["upload_ids"] and asset.tags.get("submitted_by") != actor:
+                raise HTTPException(404, "Upload not found")
+        if logo_id := form.get("logo_id"):
+            asset = db.get(Asset, logo_id)
+            if not crm_access.editor_asset(asset, actor) or not logo_assets([asset]):
+                raise HTTPException(404, "Logo not found")
+
     def friendly(exc):
         if isinstance(exc, ValidationError):
             return " ".join(
@@ -666,6 +745,7 @@ def create_app(settings=None):
     async def plan_from_idea(request: Request, db: DB):
         form = await request.form()
         values = idea_values(form)
+        check_editor_inputs(request, db, form, values)
         try:
             idea = " ".join(values["prompt"].split())
             if not idea:
@@ -686,7 +766,7 @@ def create_app(settings=None):
             )
             if not db.get(FactSheet, values["facts_id"]):
                 raise ValueError("Save an approved facts version first")
-            await save_idea_uploads(db, form, values)
+            await save_idea_uploads(db, form, values, request.state.actor)
             uploads = idea_uploads(db, values)
             if uploads and values["upload_use"] == "as_is":
                 videos = [a for a in uploads if a.media["mime"].startswith("video/")]
@@ -753,6 +833,7 @@ def create_app(settings=None):
     async def create_from_plan(request: Request, db: DB):
         form = await request.form()
         values = idea_values(form)
+        check_editor_inputs(request, db, form, values)
         mode = str(form.get("mode", "once"))
         if mode == "back":
             return page(request, db, "create", idea_form=values)
@@ -763,6 +844,12 @@ def create_app(settings=None):
             video = plan.operation != "image"
             # Blank picks the newest logo; with none in the library, queueing explains how to add it.
             logo_id = str(form.get("logo_id", "")) if video else ""
+            if video and request.state.editor and not logo_id:
+                allowed_logos = logo_assets([a for a in db.scalars(select(Asset).order_by(Asset.created_at.desc()))
+                                            if crm_access.editor_asset(a, request.state.actor)])
+                if not allowed_logos:
+                    raise ValueError("Ask an admin to add a company logo before creating a video")
+                logo_id = allowed_logos[0].id
             uploads = idea_uploads(db, values)
             sounds = [a.id for a in uploads if a.media["mime"].startswith("audio/")]
             pictures = [a.id for a in uploads if a.id not in sounds]
@@ -787,9 +874,9 @@ def create_app(settings=None):
                     as_uploaded=True,
                     ambient_music=video and plan.ambient_music and not sounds,
                 )
-                await run_in_threadpool(queue_jobs, db, settings, brief)
+                await run_in_threadpool(queue_prompt, db, brief, request.state.prompt_account)
                 db.commit()
-                return RedirectResponse("/admin/media-queue", status_code=303)
+                return RedirectResponse("/admin/create#my-posts" if request.state.editor else "/admin/media-queue", status_code=303)
             brief = CreativeBrief(
                 campaign=plan.title,
                 prompt=values["prompt"],
@@ -810,7 +897,7 @@ def create_app(settings=None):
                 shots=plan.shots if plan.operation == "video" else plan.shots[:1] if not video else [],
                 end_card_asset_id=logo_id,
             )
-            await run_in_threadpool(queue_jobs, db, settings, brief)
+            await run_in_threadpool(queue_prompt, db, brief, request.state.prompt_account)
             db.commit()
         except ValueError as exc:
             db.rollback()
@@ -823,7 +910,7 @@ def create_app(settings=None):
                 plan=plan_from_form(form),
                 status_code=400,
             )
-        return RedirectResponse("/admin/media-queue", status_code=303)
+        return RedirectResponse("/admin/create#my-posts" if request.state.editor else "/admin/media-queue", status_code=303)
 
     @app.post("/forms/media-campaigns/{campaign_id}", dependencies=mutation)
     async def toggle_campaign(campaign_id: str, request: Request, db: DB):

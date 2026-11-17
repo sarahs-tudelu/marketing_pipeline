@@ -22,7 +22,7 @@
     </fieldset>
     <fieldset><legend>Platforms — each gets its own framing and caption</legend>
       {% for c in connections if c.account.platform not in real_media_only %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ c.account.platform }}" {{ 'checked' if c.account.platform in idea_form.get('platforms', ['instagram']) else '' }}>{{ c.account.platform|platform }}<span class="tag">{{ 'Simulated' if c.dry else 'Live' }}</span></label>{% endfor %}
-      <small class="muted">Pinterest posts only real photos and videos from Google Drive, so it's in <a href="/admin/compose">Post from library media</a>.</small>
+{% if not editor %}      <small class="muted">Pinterest posts only real photos and videos from Google Drive, so it's in <a href="/admin/compose">Post from library media</a>.</small>{% endif %}
     </fieldset>
     {% set needs_options = not idea_form.get('rights', 'public') %}
     <details {{ 'open' if needs_options else '' }}><summary>More options</summary>
@@ -38,11 +38,11 @@
       <fieldset><legend>Reference media (optional)</legend>
         <p class="muted">Pick product photos to guide new scenes, or one uploaded video to edit. Videos are only used when the format is Edit an uploaded video.</p>
         <div class="reference-list">
-        {% for a in assets if not a.media.mime.startswith('audio/') and 'rendition' not in a.tags %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in idea_form.get('reference_ids', []) else '' }}>{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span>{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<p><a href="/admin/upload">Upload reference media</a></p>{% endfor %}
+        {% for a in assets if not a.media.mime.startswith('audio/') and 'rendition' not in a.tags %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in idea_form.get('reference_ids', []) else '' }}>{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span>{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<p>{% if editor %}Add a file above to use it as a reference.{% else %}<a href="/admin/upload">Upload reference media</a>{% endif %}</p>{% endfor %}
         </div>
       </fieldset>
     </details>
-    <p class="muted">{% if logos %}End cards use <b>{{ logos[0].original_name }}</b>.{% else %}No logo is in the library yet. To end videos with the Tudelu logo, <a href="/admin/upload">upload it</a> and tick <i>This is the Tudelu logo</i>.{% endif %}</p>
+    <p class="muted">{% if logos %}End cards use <b>{{ logos[0].original_name }}</b>.{% else %}No logo is in the library yet. To end videos with the Tudelu logo, {% if editor %}ask an admin to upload it{% else %}<a href="/admin/upload">upload it</a>{% endif %} and tick <i>This is the Tudelu logo</i>.{% endif %}</p>
     <div class="actions"><button class="primary">Plan this idea</button></div>
     <div data-form-status></div>
     </div>

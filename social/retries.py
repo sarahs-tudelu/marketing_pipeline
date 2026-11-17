@@ -59,7 +59,7 @@ def retry_post(db, settings, post, actor):
 
     retry = draft(db, post.platform, post.campaign, deepcopy(post.asset_ids), post.facts_id,
                   post.product, post.kind, commit=False)
-    for field in ("caption", "parts", "fact_ids", "ai_disclosure", "dry_run", "account_id"):
+    for field in ("prompted_by", "prompted_by_label", "caption", "parts", "fact_ids", "ai_disclosure", "dry_run", "account_id"):
         setattr(retry, field, deepcopy(getattr(post, field)))
     db.add(PostRetry(original_post_id=post.id, retry_post_id=retry.id, actor=actor))
     transition(db, retry, "generated", f"Retry requested for failed post {post.id}; reused caption and media, fresh checks required", actor)

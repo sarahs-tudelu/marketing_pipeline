@@ -546,7 +546,9 @@ def replenish_campaigns(db, settings):
             db.commit()
             continue
         try:
-            queue_jobs(db, settings, brief, campaign=campaign, sequence=campaign.sequence)
+            jobs = queue_jobs(db, settings, brief, campaign=campaign, sequence=campaign.sequence)
+            for job in jobs:
+                job.brief = job.brief | {k: campaign.brief[k] for k in ("prompted_by", "prompted_by_label") if k in campaign.brief}
             campaign.sequence += 1
             campaign.next_run_at = now() + timedelta(hours=brief.interval_hours)
             campaign.error = ""
@@ -870,6 +872,8 @@ def _finish(db, settings, job):
             commit=False,
             human_review_required=not bool(job.campaign_id),
         )
+        post.prompted_by = brief.get("prompted_by")
+        post.prompted_by_label = brief.get("prompted_by_label")
         job.post_id = post.id
         replaced = brief.get("replaces")
         held = db.get(Post, replaced["post_id"]) if replaced else None

@@ -68,7 +68,7 @@ def create(db, settings, original, actor, confirmed_removed=False, client=None):
         commit=False,
         human_review_required=True,
     )
-    for name in ("caption", "parts", "fact_ids", "ai_disclosure", "account_id", "dry_run"):
+    for name in ("prompted_by", "prompted_by_label", "caption", "parts", "fact_ids", "ai_disclosure", "account_id", "dry_run"):
         setattr(post, name, deepcopy(getattr(original, name)))
     db.add(PostRepost(original_post_id=original.id, repost_post_id=post.id, actor=actor))
     transition(
