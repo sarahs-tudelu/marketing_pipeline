@@ -158,7 +158,8 @@ def test_held_video_regenerates_only_the_flagged_clip(db, settings, facts, logo,
     # A clip made without a scene image still tells the planner what the check found.
     assert new[2]["scene_retry"]["review"] == {"passed": False, "reasons": [REASON]}
     assert new[2]["scene_retry"]["video_check"]["covers"] == "14–21 seconds of the video"
-    assert "scene" not in new[2]["scene_retry"] and new[2]["scene_retry"]["prompt_edited"] is True
+    assert "scene" not in new[2]["scene_retry"] and new[2]["scene_retry"]["prompt_edited"] is False
+    assert "operator_edits" not in new[2]["scene_retry"]
     assert [new[i] for i in (0, 1, 3)] == [old[i] for i in (0, 1, 3)]
 
     run(db, settings, redo)

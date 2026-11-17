@@ -498,4 +498,5 @@ def test_final_visual_review_gets_reference_images_separately(
     assert context["reference_inputs"][1]["image_number"] == 2
     assert context["reference_inputs"][1]["creative_changes"] == "Wood Look at a cafe"
     assert context["reference_inputs"][0]["role"] == "product_construction"
+    assert context["reference_inputs"][0]["request_intent"]["admin_idea"] == reference_job.brief["prompt"]
     assert len([p for p in content if p["type"] == "input_image"]) == 2

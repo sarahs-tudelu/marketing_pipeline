@@ -515,3 +515,113 @@ def test_scene_review_receives_actual_pixels_and_creative_intent(db, settings, v
     assert "courtyard" in context["creative_changes"]
     assert context["visual_direction"] == video_job.brief["visual_direction"]
     assert context["builder"]["products"]
+
+
+def test_edit_scope_and_original_request_survive_a_failed_correction(
+    db, settings, video_job, monkeypatch
+):
+    original_idea = "Friends eat at a backyard pergola."
+    video_job.brief = video_job.brief | {"prompt": original_idea}
+    before = "Six posts and perimeter-only framing. A dining table beside the left post."
+    after = before.replace("beside the left post", "in the middle")
+    monkeypatch.setattr(refs, "select_reference", lambda s, r, c: choice(r[0]).model_copy(update={
+        "scene_prompt": before,
+        "scene_requirements": ["Connected fixed louvers"],
+    }))
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(
+        passed=False, reasons=["An intermediate beam is present."]))
+    provider = Provider(db, video_job, settings)
+    for _ in range(3):
+        process_jobs(db, settings, provider)
+    submitted = retry_option(video_job)["prompt"]
+    edited = submitted.replace(before, after)
+    retry_step(db, video_job, edited)
+    observed = []
+
+    def choose(s, r, context):
+        observed.append(context)
+        return choice(r[0]).model_copy(update={"scene_requirements": ["Connected fixed louvers"]})
+
+    monkeypatch.setattr(refs, "select_reference", choose)
+    process_jobs(db, settings, provider)
+    intent = refs.current_plan(video_job)["request_intent"]
+    assert intent == observed[0]["request_intent"]
+    assert intent["admin_idea"] == original_idea
+    assert intent["operator_edits"] == [{"before": submitted, "after": edited}]
+    assert intent["legacy_operator_prompt"] == ""
+    assert observed[0]["scene_retry"]["review"]["reasons"] == ["An intermediate beam is present."]
+    assert observed[0]["scene_retry"]["operator_prompt"] == edited
+    monkeypatch.setattr(provider, "task", lambda _: {"status": "FAILED", "failureCode": "INTERNAL.ERROR"})
+    process_jobs(db, settings, provider)
+    retry_step(db, video_job, retry_option(video_job)["prompt"])
+    assert refs.request_intent(video_job) == intent
+    process_jobs(db, settings, provider)
+    process_jobs(db, settings, provider)
+    next_before = retry_option(video_job)["prompt"]
+    retry_step(db, video_job, "Use a white finish and a central dining table.")
+    assert refs.request_intent(video_job)["operator_edits"] == [
+        *intent["operator_edits"],
+        {"before": next_before, "after": "Use a white finish and a central dining table."},
+    ]
+
+
+def test_new_edit_does_not_erase_legacy_operator_instructions(db, settings, video_job, monkeypatch):
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(
+        passed=False, reasons=["The roof is floating."]))
+    provider = Provider(db, video_job, settings)
+    for _ in range(3):
+        process_jobs(db, settings, provider)
+    legacy = "Keep the requested six posts and white finish."
+    video_job.brief = video_job.brief | {"scene_retry": {"operator_prompt": legacy}}
+    db.commit()
+    assert refs.request_intent(video_job)["legacy_operator_prompt"] == legacy
+    before = retry_option(video_job)["prompt"]
+    retry_step(db, video_job, before + " Center the table.")
+    assert refs.request_intent(video_job)["operator_edits"] == [
+        {"before": "", "after": legacy},
+        {"before": before, "after": before + " Center the table."},
+    ]
+
+
+def test_selection_instruction_update_does_not_discard_or_reapprove_paid_scene(
+    db, settings, video_job, monkeypatch
+):
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(
+        passed=False, reasons=["The roof is floating."]))
+    provider = Provider(db, video_job, settings)
+    for _ in range(3):
+        process_jobs(db, settings, provider)
+    saved = refs.current_plan(video_job)
+    monkeypatch.setattr(refs, "SELECTION_VERSION", "future-selection-rules")
+    monkeypatch.setattr(refs, "select_reference", lambda *args: pytest.fail("Replanned a paid scene"))
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: pytest.fail("Re-reviewed a saved rejection"))
+    video_job.state = "queued"
+    db.commit()
+    process_jobs(db, settings, provider)
+    assert video_job.state == "failed"
+    assert refs.current_plan(video_job) == saved
+    assert len(provider.submitted) == 1
+
+
+def test_scene_review_receives_authored_intent_and_keeps_real_defects(db, settings, video_job, monkeypatch):
+    provider = Provider(db, video_job, settings)
+    for _ in range(2):
+        process_jobs(db, settings, provider)
+    plan = refs.current_plan(video_job)
+    seen = []
+
+    def respond(self, endpoint, payload):
+        seen.append(payload)
+        return {"status": "completed", "output": [{"type": "message", "content": [{
+            "type": "output_text", "text": json.dumps({"passed": False, "reasons": ["A post floats above paving."]})
+        }]}]}
+
+    monkeypatch.setattr(OpenAI, "call", respond)
+    monkeypatch.setattr(scenes, "review_scene", REAL_REVIEW)
+    process_jobs(db, settings, provider)
+    context = json.loads(seen[0]["input"][0]["content"][0]["text"].split("Context: ")[1])
+    assert context["request_intent"] == plan["request_intent"]
+    assert context["request_intent"]["admin_idea"] == video_job.brief["prompt"]
+    assert context["reference_description"] == plan["physical_description"]
+    assert video_job.state == "failed" and len(provider.submitted) == 1
+    assert refs.current_plan(video_job)["scene_check"]["passed"] is False

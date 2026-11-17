@@ -8,6 +8,22 @@ DEFAULT_VISUAL_DIRECTION = (
     "match composition and movement across adjacent cuts. Follow explicitly requested lighting and mood."
 )
 
+# Prompt guidance is separate from the persisted rendering-policy digest: changing the writer
+# must not invalidate a paid scene or an in-flight task that uses an older saved plan.
+SELECTION_VERSION = "reference-faithful-2026-11-17-v1"
+STRUCTURE_SELECTION = (
+    "Preserve the matching reference's structural arrangement unless the actual admin idea, reviewed shot "
+    "or explicit operator edit requests a Builder-supported change. Generated prose is a creative draft, "
+    "not an additional user specification. Do not invent exact post counts, dimensions, removed beams, "
+    "uninterrupted spans or extra roof layers when the request does not choose them. Builder dimensions "
+    "and post-count examples apply to their stated configuration, not every scene. A single roof plane "
+    "may contain multiple louver bays and a connected intermediate beam; that is not a stacked roof. "
+    "Seat louver ends in the perimeter or intermediate supporting frame shown by a compatible reference. "
+    "Keep ordinary perspective overlap distinct from physical interpenetration or disconnected members. "
+    "References never override explicit Builder restrictions or owner corrections."
+)
+
+
 RULES = [
     "Use actual matching company photographs from the Public asset library, including Google Drive imports, "
     "and the product images on tudelu.com. A description or a previous AI generation is not a visual reference.",

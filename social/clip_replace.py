@@ -114,7 +114,9 @@ def correction(job, part, prompt, vision, plan):
     """What the planner needs to make this part again: what the visual check found in it, the scene it
     was animated from and the operator's edit. Corrections saved during the first run don't carry over."""
     reasons = findings(vision, job.brief.get("video_segments") or [], part)
-    edited = prompt != " ".join(part["base"].split())
+    # The displayed suggestion already includes model-written corrections; submitting it unchanged
+    # does not turn those suggestions (or the original generated text) into an operator instruction.
+    edited = prompt != " ".join(part["prompt"].split())
     retry = {
         "source": "held_post",
         "previous_prompt": part["base"],
@@ -122,7 +124,10 @@ def correction(job, part, prompt, vision, plan):
         "scene_requirements": plan.get("scene_requirements", []),
         "requested_prompt": prompt,
         "prompt_edited": edited,
-        **({"operator_prompt": prompt} if edited else {}),
+        **({
+            "operator_prompt": prompt,
+            "operator_edits": [{"before": part["prompt"], "after": prompt}],
+        } if edited else {}),
     }
     if reasons:
         covers = (

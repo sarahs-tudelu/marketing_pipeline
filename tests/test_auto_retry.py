@@ -122,6 +122,10 @@ def test_held_post_regenerates_flagged_clip_automatically_up_to_the_limit(
         gate.run_gate(db, settings, current)
         assert current.status == "held"
         redo = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc())).first()
+        correction = redo.brief["video_segments"][2]["scene_retry"]
+        assert correction["prompt_edited"] is False
+        assert "operator_prompt" not in correction and "operator_edits" not in correction
+        assert correction["review"]["reasons"] == [REASON]
         assert redo.brief["replaces"] | {"post_id": None, "media_job_id": None} == {
             "post_id": None,
             "media_job_id": None,

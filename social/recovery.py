@@ -342,6 +342,10 @@ def retry_step(db, job, prompt, *, automatic=False):
             retry["operator_prompt"] = retry.get("requested_prompt", "")
         edited = text != " ".join(step["prompt"].split())
         if edited:
+            edits = retry.get("operator_edits", [])
+            if not edits and retry.get("operator_prompt"):
+                edits = [{"before": "", "after": retry["operator_prompt"]}]
+            retry["operator_edits"] = [*edits, {"before": step["prompt"], "after": text}]
             retry["operator_prompt"] = text
         retry.update(
             {

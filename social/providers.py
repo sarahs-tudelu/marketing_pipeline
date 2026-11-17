@@ -419,6 +419,7 @@ class OpenAI:
                     reference_inputs.append({"image_number": reference_seen[record["checksum"]], "system": plan["system"],
                                              "role": role, "requested_scene": plan.get("scene_prompt", ""),
                                              "creative_changes": plan.get("creative_changes", ""),
+                                             "request_intent": plan.get("request_intent"),
                                              "visual_direction": plan.get("visual_direction", ""),
                                              "origin": record["origin"], "source_url": record.get("source_url", ""),
                                              "physical_description": plan["physical_description"]})
@@ -468,7 +469,13 @@ class OpenAI:
                 "images show the intended starting scene, but remain AI output, not proof of product accuracy. "
                 "Honor requested_scene and creative_changes when Builder-supported: different backgrounds, "
                 "architecture, configurations, colors and finishes are allowed. Do not reject those differences "
-                "merely because they differ from the original photo. Compare consecutive frames of each video: "
+                "merely because they differ from the original photo. Where request_intent is supplied, use it "
+                "to distinguish the actual request from model-authored restrictions in requested_scene and "
+                "creative_changes. Only the changed text in operator_edits is a new instruction; honor any "
+                "legacy_operator_prompt as a whole. Preserve a reference-supported intermediate beam unless "
+                "an explicit supported request changes it; multiple louver bays in one plane are not a "
+                "stacked roof. Builder dimensional/post-count examples are configuration-specific, not universal. "
+                "Compare consecutive frames of each video: "
                 "a post, louver, rod, roof layer or joint that appears, vanishes, duplicates, bends, stretches, "
                 "slides or changes count or thickness between frames is a product defect; report it with its "
                 "frame times in problem_seconds. Check that no member passes through or overlaps another member, "

@@ -25,7 +25,7 @@ from .facts import Facts, active
 from .models import Asset, FactSheet, MediaJob, Post
 from .product_rules import VisualGuidance, constrain_prompt, context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
-from .rendering_guidelines import DEFAULT_VISUAL_DIRECTION
+from .rendering_guidelines import DEFAULT_VISUAL_DIRECTION, STRUCTURE_SELECTION
 from .rendering_guidelines import policy as rendering_policy
 
 # promptText limit for gen4_image, gen4.5 and aleph2, in UTF-16 code units (Runway OpenAPI).
@@ -99,7 +99,8 @@ WRITER_INSTRUCTIONS = (
     "new scene image grounded in company product references. Keep the Builder's construction accurate while "
     "following each shot's requested setting and supported appearance. "
     "Set the top-level system and prompt to clip 1's. When end_card is true, the app appends the official logo "
-    "afterwards, so never show logos or brand names in any clip."
+    "afterwards, so never show logos or brand names in any clip. "
+    + STRUCTURE_SELECTION
 )
 
 

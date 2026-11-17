@@ -158,7 +158,8 @@ def test_held_scene_clip_is_corrected_through_its_scene(db, settings, held, phot
     assert retry["video_check"] == {"reasons": [CLIP_2, UNPLACED], "covers": "6–12 seconds of the video"}
     assert retry["scene"] == plan["scene_reference"] and retry["previous_prompt"] == plan["scene_prompt"]
     assert retry["scene_requirements"] == REQUIREMENTS and retry["source"] == "held_post"
-    assert retry["prompt_edited"] is True and retry["operator_prompt"] == part["prompt"]
+    assert retry["prompt_edited"] is False
+    assert "operator_prompt" not in retry and "operator_edits" not in retry
     assert "old edit" not in json.dumps(redo.brief)
     assert "failed_tasks" not in redo.brief and "active_generation" not in redo.brief
     assert redo.brief["video_segments"][0] == job.brief["video_segments"][0]
@@ -232,6 +233,7 @@ def test_unchanged_and_edited_scene_corrections(db, held):
     edit = "A white pergola at a brick cafe with a plain sign, every roof member resting on the posts."
     retry = replace_part(db, post, "1", edit, "admin").brief["video_segments"][1]["scene_retry"]
     assert retry["prompt_edited"] is True and retry["operator_prompt"] == edit == retry["requested_prompt"]
+    assert retry["operator_edits"] == [{"before": part["prompt"], "after": edit}]
 
     # Clip 1 wasn't where the check found the problem, so it gets no findings to correct.
     for redo in db.query(MediaJob).filter(MediaJob.id != job.id):
