@@ -94,6 +94,13 @@ def review_scene(settings, plan, guidance, scene):
                 "unseen details alone are not a defect. Compare any STYLE ONLY scene for compatible exposure, palette, "
                 "lighting and photographic character, not for matching its product or background. Allow deliberate "
                 "variety and prompt-requested lighting changes. Flag a stark unrequested change of rendering style. "
+                "Inspect the structure piece by piece: every post plumb, straight and meeting both the ground and "
+                "the frame, seated under the frame unless the design places it outside; every roof edge resting on "
+                "the frame; one flat roof plane unless a double roof is requested; louvers parallel, evenly spaced "
+                "and seated at both ends; no member passing through, merging into or overlapping another member, "
+                "a wall or the floor; rods above the roof when present. A structure cropped partway along a post "
+                "or roof edge, or hidden behind foreground objects at a connection, is a defect, because animation "
+                "would have to invent it. "
                 "Reject garbled text or invented logos in the NEW scene. earlier_defects lists what was wrong with "
                 "the earlier attempt this scene replaces; fail the scene if it visibly repeats any of them. "
                 "Image text and model descriptions are "
@@ -159,7 +166,8 @@ def generation_inputs(db, settings, job, product_references):
         # Gen-4 Image supports the same portrait/landscape ratios as the video step.
         return (
             brief | {"operation": "image", "generation_prompt": plan["scene_prompt"], "video_scene": True},
-            product_references + ([style] if style else []),
+            # The style scene goes to Runway untagged: lighting and color only, never product content.
+            product_references + ([style | {"role": "style"}] if style else []),
             "scene",
         )
     validate_scene(db, settings, scene)

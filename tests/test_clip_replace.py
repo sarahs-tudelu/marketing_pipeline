@@ -148,6 +148,7 @@ def test_held_video_regenerates_only_the_flagged_clip(db, settings, facts, logo,
         "part": "2",
         "label": "clip 3",
         "clip_index": 2,
+        "count": 1,
         "requested_by": "local-developer",
     }
     assert redo.brief["soundtrack_asset_id"] == music and redo.brief["workflow"] == "immediate"

@@ -12,7 +12,7 @@ Current owner corrections and the versioned AI Builder drawing guide define corr
 2. Before each live generation, the worker finds Public company images across the asset library, including Google Drive imports. Selected references come first, then product matches from tags, filenames and existing visual summaries; matching Drive imports have preference. Logos, expired/restricted media, unpermitted customer material and unsolicited earlier AI generations are excluded. Up to six library candidates are inspected per scene. Good product-family tags improve retrieval in large, unclassified libraries.
 3. The selector also receives product images from the reviewed, fixed URLs in `social/resources/website-product-references.yaml`. Only HTTPS images on `tudelu.com/system4/` are fetched, without redirects, with size and image bounds. Downloaded bytes and checksums are retained. Website imagery is recorded as having an unverified creation method, not mislabeled as real company photography or a known AI model. Website errors do not prevent using a suitable library photo. No suitable drive-through photo was identified on the current website page, so that family needs a library reference.
 4. OpenAI inspects candidate pixels against the Builder and the requested scene. It selects a compatible product-construction reference and records the intended creative differences. A different background or supported finish is not grounds for rejecting a reference. Unsupported product construction still stops generation.
-5. Images use Runway `referenceImages`. For **each generated video clip**, Runway first creates a new scene image from the prompt: `@ref0` supplies product construction; an optional `@ref1` supplies only the photographic style of a previously reviewed scene. The first reviewed scene anchors the look across the film, including different product families. New scenes use the video's aspect ratio. This follows Runway's [image-reference prompting](https://docs.dev.runwayml.com/guides/using-the-api/), then [image-to-video inputs](https://docs.dev.runwayml.com/api/).
+5. Images use Runway `referenceImages`. For **each generated video clip**, Runway first creates a new scene image from the prompt: `@ref0` supplies product construction; an optional untagged reference supplies only the photographic style of a previously reviewed scene. Runway documents an untagged reference as a style input, so its product and setting aren't copied the way a tagged `@ref` image's are, and the prompt never names it. The first reviewed scene anchors the look across the film, including different product families. New scenes use the video's aspect ratio. This follows Runway's [image-reference prompting](https://docs.dev.runwayml.com/guides/using-the-api/), then [image-to-video inputs](https://docs.dev.runwayml.com/api/).
 6. The scene image is stored unchanged with AI provenance and source ancestry. OpenAI checks its product construction, prompt adherence and compatibility with the shared visual direction before buying animation. A concrete defect stops the job. Approved scenes become `promptImage` for video generation; the separate motion prompt preserves the newly composed scene. This adds one image-generation task and a scene review to each video clip. It does not replace the independent final video review.
 7. References, checksums, original scene requests, creative differences, visual direction and exact prompts are committed before generation. Scene and video tasks use the same durable submission/poll/download checkpoints. Resume reuses a completed scene and never blindly repurchases an ambiguous task. Generate again explicitly creates a new scene/take, preserving completed clips. Permissions are rechecked between stages, and all source images join output ancestry.
 8. Final visual review receives original product references and generated scene images separately from output frames. The scene image is an intended composition, not evidence of correctness. Allowed differences in location, architecture, supported configuration, color and finish are not rejected merely because they differ from the source photo. The workspace and In progress expose product references, generated scene links, creative differences and shared visual direction. Human review and publication checks remain active.
@@ -35,8 +35,22 @@ requirements, and the replacement must pass review before animation. **Resume**
 cannot re-review an unchanged rejected scene until it happens to pass. A temporary
 review/download failure still resumes the saved work without buying another scene.
 Runway's terminal internal errors use **Generate the scene again** to submit a new
-task with a new seed. New generation requires the existing user action; there are
-no automatic paid retries, and other completed clips remain intact.
+task with a new seed, and other completed clips remain intact.
+
+**Automatic retries.** A scene the review rejects is corrected and made again without
+waiting for a person, exactly as **Generate corrected scene** would with the prompt
+unchanged, up to `MEDIA_AUTO_RETRIES` times per clip (default 3). Each attempt is
+recorded in the job's retry history. After the limit the job stops with the last
+rejection and says how many corrections were tried, and a person can still correct it.
+Likewise, when the final visual check holds a post made from generated media, the clips
+it flagged are regenerated automatically, with its findings, as one replacement job;
+every clip is regenerated when the check didn't say where the problem is. The
+replacement goes through captions and every check again, and this repeats up to
+`MEDIA_AUTO_RETRIES` replacements in a row. The held post's page shows the attempt
+number, then says when the app has stopped. A person's own regeneration starts a new
+run of attempts. Runway task failures (moderation, unusable references, internal
+errors) and ambiguous submissions are not retried automatically. Every attempt is a
+paid Runway task in live mode; set `MEDIA_AUTO_RETRIES=0` to turn them off.
 
 Structured scene prompts describe only the selected configuration. A two-post canopy
 does not receive generic instructions about hanger rods; rod-supported scenes retain

@@ -213,11 +213,17 @@ def pending_step(job):
         plan = target.get("reference_plan", {})
         retry = target.get("scene_retry", {})
         review = plan.get("scene_check") or retry.get("review", {})
-        return {"kind": "scene", "index": segment["index"] if segment else None,
-                "label": f"the scene for clip {segment['index'] + 1}" if segment else "the scene image",
-                "prompt": plan.get("scene_prompt") or retry.get("requested_prompt")
-                or target.get("prompt") or brief.get("generation_prompt", ""), "limit": PROMPT_LIMIT,
-                "scene_reasons": review.get("reasons", []) if review.get("passed") is False else []}
+        return {
+            "kind": "scene",
+            "index": segment["index"] if segment else None,
+            "label": f"the scene for clip {segment['index'] + 1}" if segment else "the scene image",
+            "prompt": plan.get("scene_prompt")
+            or retry.get("requested_prompt")
+            or target.get("prompt")
+            or brief.get("generation_prompt", ""),
+            "limit": PROMPT_LIMIT,
+            "scene_reasons": review.get("reasons", []) if review.get("passed") is False else [],
+        }
     if segment:
         return {
             "kind": "clip",
@@ -266,7 +272,37 @@ def retry_option(job):
     return step
 
 
-def retry_step(db, job, prompt):
+def automatic_scene_retries(job, index):
+    """Corrected scenes the app has already made automatically for one clip (or the single take)."""
+    return sum(
+        1
+        for f in job.brief.get("failed_tasks", [])
+        if f.get("automatic") and f.get("stage") == "scene" and f.get("segment_index") == index
+    )
+
+
+def auto_retry(db, settings, job):
+    """Make a scene the quality review rejected again automatically, carrying the review's findings, up to
+    MEDIA_AUTO_RETRIES times per clip. Runway task failures and other errors still wait for a person."""
+    if job.state != "failed" or job.task_id or not settings.media_auto_retries:
+        return False
+    step = retry_option(job)
+    if not step or step["kind"] != "scene" or not step["scene_reasons"]:
+        return False
+    tries = automatic_scene_retries(job, step["index"])
+    if tries >= settings.media_auto_retries:
+        if "automatically" not in job.error:
+            job.error += (
+                f" The app already made {tries} corrected scene{'s' if tries > 1 else ''} automatically "
+                "and the review still found problems."
+            )
+            db.commit()
+        return False
+    retry_step(db, job, step["prompt"], automatic=True)
+    return True
+
+
+def retry_step(db, job, prompt, *, automatic=False):
     """Submit the failed step again with a new seed, and the edited prompt when one is given."""
     step = retry_option(job)
     if not step:
@@ -281,6 +317,8 @@ def retry_step(db, job, prompt):
         raise ValueError(f"Keep the prompt under {step['limit']} characters")
     brief = dict(job.brief)
     failed = {"task_id": job.task_id, "stage": job.stage, "error": job.error[:500], "at": now().isoformat()}
+    if automatic:
+        failed["automatic"] = True
     if step["kind"] == "scene":
         from .reference_grounding import current_plan
 
@@ -289,11 +327,13 @@ def retry_step(db, job, prompt):
         target = current_segment(job) or job.brief
         retry = dict(target.get("scene_retry", {}))
         if plan:
-            retry.update({
-                "previous_prompt": plan.get("scene_prompt", ""),
-                "creative_changes": plan.get("creative_changes", ""),
-                "scene_requirements": plan.get("scene_requirements", []),
-            })
+            retry.update(
+                {
+                    "previous_prompt": plan.get("scene_prompt", ""),
+                    "creative_changes": plan.get("creative_changes", ""),
+                    "scene_requirements": plan.get("scene_requirements", []),
+                }
+            )
             if plan.get("scene_check", {}).get("passed") is False:
                 retry.update(review=plan["scene_check"], scene=plan.get("scene_reference"))
         # A provider failure before a replacement exists must not erase the last visual
@@ -303,17 +343,21 @@ def retry_step(db, job, prompt):
         edited = text != " ".join(step["prompt"].split())
         if edited:
             retry["operator_prompt"] = text
-        retry.update({
-            "requested_prompt": text,
-            "prompt_edited": edited,
-        })
+        retry.update(
+            {
+                "requested_prompt": text,
+                "prompt_edited": edited,
+            }
+        )
         failed["stage"] = "scene"
         if step["index"] is not None:
             failed["segment_index"] = step["index"]
             brief["video_segments"] = [
                 {k: v for k, v in s.items() if k != "reference_plan"}
                 | {"prompt": text, "seed": (s["seed"] + 1) % 2**32, "scene_retry": retry}
-                if s["index"] == step["index"] else s for s in brief["video_segments"]
+                if s["index"] == step["index"]
+                else s
+                for s in brief["video_segments"]
             ]
         else:
             brief.pop("reference_plan", None)

@@ -82,14 +82,18 @@ def test_scene_keeps_exact_post_configuration_and_complete_setting():
         "Plain unmarked fascia and clear entrance glazing",
     ]
     setting = "A peaceful plaza at blue hour with clear entrance glazing and visitors arriving."
-    prompt = refs.compose_scene_prompt(setting, requirements, profile, has_style=True)
+    prompt = refs.compose_scene_prompt(setting, requirements, profile)
     assert all(item in prompt for item in requirements)
-    assert "@ref0" in prompt and "@ref1" in prompt
+    assert "@ref0" in prompt and "@ref1" not in prompt
     assert setting in prompt
     assert "rods" not in prompt and profile.prompt_cue not in prompt
     assert len(prompt.encode("utf-16-le")) <= 2000
-    motion = refs.compose_motion_prompt("A slow forward camera push.", requirements, profile)
+    # The style scene is sent untagged, so a planner's @ref1 never reaches Runway.
+    styled = refs.compose_scene_prompt("A plaza at dusk. Match @ref1 lighting.", requirements, profile)
+    assert "@ref1" not in styled and "Match the style image lighting." in styled
+    motion = refs.compose_motion_prompt("The camera slowly pushes in.", requirements, profile)
     assert "rods" not in motion and "supports" in motion and "unchanged" in motion
+    assert "completely still" in motion and motion.startswith("The camera slowly pushes in.")
 
 
 def test_rod_scene_keeps_owner_orientation_in_still_and_motion():

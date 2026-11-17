@@ -8,15 +8,17 @@ from .prompting import utf16_trim
 from .renditions import video_rendition
 from .storage import ingest, storage
 
+# One slow move per clip while the structure stays still. Pull-back reveals and orbits are left out:
+# they make the model invent parts of the structure the first frame doesn't show.
 SHOT_DIRECTIONS = (
-    "Establish the setting with a slow wide reveal.",
-    "Move closer to the same system's materials and joints.",
+    "Establish the whole system in its setting; the camera slowly pushes in.",
+    "Move closer to the same system's materials and joints with a slow push-in.",
     "Show a complementary side angle with a gentle lateral camera move.",
-    "Frame the same system's repeating lines and existing light patterns.",
-    "Return to a medium view that connects the details to the setting.",
-    "Explore a different close-up of the existing finish and supports.",
+    "Frame the same system's repeating lines and existing light patterns; the camera holds steady.",
+    "Return to a medium view that connects the details to the setting, with a gentle lateral move.",
+    "Explore a different close-up of the existing finish and supports with a slow push-in.",
     "Use a low viewpoint with a restrained upward camera tilt.",
-    "Widen gradually to show the same system in its surroundings.",
+    "Show the whole system in its surroundings from a fixed viewpoint with a slow pedestal move.",
     "Finish with a calm, wide composition and a gentle camera settle.",
 )
 
@@ -42,8 +44,11 @@ def segment_brief(job):
     if segment is None:
         return job.brief
     if segment.get("prompt"):
-        return job.brief | {"duration": segment["duration"], "generation_prompt": segment["prompt"],
-                            "seed": segment["seed"]}
+        return job.brief | {
+            "duration": segment["duration"],
+            "generation_prompt": segment["prompt"],
+            "seed": segment["seed"],
+        }
     base = job.brief["generation_prompt"]
     if job.brief["operation"] == "video":
         count = len(job.brief["video_segments"])
@@ -52,17 +57,25 @@ def segment_brief(job):
             f" Shot {segment['index'] + 1} of {count}. {direction} "
             "Keep the same system, setting, geometry, materials and lighting throughout this sequence."
         )
-    return job.brief | {"duration": segment["duration"], "generation_prompt": utf16_trim(base),
-                        "seed": (job.brief["seed"] + segment["index"]) % (2 ** 32)}
+    return job.brief | {
+        "duration": segment["duration"],
+        "generation_prompt": utf16_trim(base),
+        "seed": (job.brief["seed"] + segment["index"]) % (2**32),
+    }
 
 
 def save_segment_prompt(db, job):
     segment = current_segment(job) if job.stage == "visual" else None
     if segment and not segment.get("prompt"):
         prepared = segment_brief(job)
-        job.brief = job.brief | {"video_segments": [s | {"prompt": prepared["generation_prompt"], "seed": prepared["seed"]}
-                                                 if s["index"] == segment["index"] else s
-                                                 for s in job.brief["video_segments"]]}
+        job.brief = job.brief | {
+            "video_segments": [
+                s | {"prompt": prepared["generation_prompt"], "seed": prepared["seed"]}
+                if s["index"] == segment["index"]
+                else s
+                for s in job.brief["video_segments"]
+            ]
+        }
         db.commit()
 
 
@@ -78,19 +91,41 @@ def edit_reference(db, settings, job):
         raise ValueError("Source integrity failed before splitting the video")
     width, height = original.media["width"], original.media["height"]
     scale = min(1, 1920 / max(width, height), 1080 / min(width, height))
-    data = video_rendition(data, int(width * scale) // 2 * 2, int(height * scale) // 2 * 2,
-                           segment["duration"], start=segment["start"])
-    asset = ingest(db, settings, data, f"edit-input-{job.id}-{segment['index'] + 1}.mp4",
-                   source=original.source, generator=original.generator, prompt=original.prompt,
-                   rights=original.rights, owner=original.owner, rights_expire_at=original.rights_expire_at,
-                   customer_permission=original.customer_permission, permission_reference=original.permission_reference,
-                   demo_only=original.demo_only, tags=original.tags | {
-                       "source_asset_ids": [original.id], "source_checksum": original.checksum,
-                       "edit_interval": {"start": segment["start"], "duration": segment["duration"]},
-                   })
+    data = video_rendition(
+        data,
+        int(width * scale) // 2 * 2,
+        int(height * scale) // 2 * 2,
+        segment["duration"],
+        start=segment["start"],
+    )
+    asset = ingest(
+        db,
+        settings,
+        data,
+        f"edit-input-{job.id}-{segment['index'] + 1}.mp4",
+        source=original.source,
+        generator=original.generator,
+        prompt=original.prompt,
+        rights=original.rights,
+        owner=original.owner,
+        rights_expire_at=original.rights_expire_at,
+        customer_permission=original.customer_permission,
+        permission_reference=original.permission_reference,
+        demo_only=original.demo_only,
+        tags=original.tags
+        | {
+            "source_asset_ids": [original.id],
+            "source_checksum": original.checksum,
+            "edit_interval": {"start": segment["start"], "duration": segment["duration"]},
+        },
+    )
     if asset.media["duration"] + 0.1 < segment["duration"] or asset.media["duration"] > 30.1:
         raise ValueError("The edit interval does not fit the source or Runway's 30-second limit")
-    job.brief = job.brief | {"video_segments": [s | {"input_asset_id": asset.id} if s["index"] == segment["index"] else s
-                                             for s in job.brief["video_segments"]]}
+    job.brief = job.brief | {
+        "video_segments": [
+            s | {"input_asset_id": asset.id} if s["index"] == segment["index"] else s
+            for s in job.brief["video_segments"]
+        ]
+    }
     db.commit()
     return asset

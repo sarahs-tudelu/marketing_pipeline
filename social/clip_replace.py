@@ -1,4 +1,6 @@
-"""Redo one part of a held post's generated media (a clip, a single take or the music), reusing the rest."""
+"""Redo parts of a held post's generated media (clips, a single take or the music), reusing the rest.
+
+A failed visual check starts this automatically (see auto_regenerate); a person can also start it."""
 
 import re
 from copy import deepcopy
@@ -265,6 +267,9 @@ def clip_options(db, post):
         ) + "Create the post again from the idea for new media."
     return {
         "pending": pending,
+        # Automatic replacements already made in a row, and the limit, when this media came from one.
+        "auto_attempts": auto_attempts(job),
+        "auto_limit": int((job.brief.get("replaces") or {}).get("auto_limit") or 0) if job else 0,
         "live": bool(job and job.brief["execution_mode"] == "live"),
         "noun": "image" if job and job.brief["operation"] == "image" else "video",
         "reasons": vision.get("reasons", []),
@@ -275,6 +280,21 @@ def clip_options(db, post):
 
 def replace_part(db, post, key, prompt, actor):
     """Queue a media job that makes one part again; the held post is replaced when the new media is ready."""
+    return replace_parts(db, post, [(key, prompt)], actor)
+
+
+def _label(chosen, clips):
+    if len(chosen) == 1:
+        return chosen[0]["label"]
+    if len(chosen) == len(clips):
+        return f"all {len(chosen)} clips"
+    numbers = [str(p["index"] + 1) for p in chosen]
+    return "clips " + ", ".join(numbers[:-1]) + " and " + numbers[-1]
+
+
+def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0):
+    """Queue one media job that makes the requested parts again, reusing the rest. Several clips can be
+    made again together. The held post is replaced when the new media is ready."""
     lock_post(db, post)
     if post.status not in {"held", "awaiting_review"}:
         raise ValueError("Stop scheduled delivery before changing the media")
@@ -288,20 +308,28 @@ def replace_part(db, post, key, prompt, actor):
             "The generation record for this media wasn't found. Create the post again from the idea instead."
         )
     vision = failed_vision(db, post)
-    options = {p["key"]: p for p in parts(db, job, vision, failed_check(db, post, "audio_review"))}
+    listed = parts(db, job, vision, failed_check(db, post, "audio_review"))
+    options = {p["key"]: p for p in listed}
     if not options:
         raise ValueError("This media can't be split into parts. Create the post again from the idea instead.")
-    part = options.get(str(key))
-    if not part:
-        raise ValueError("Choose one of the parts listed on the post page")
-    prompt = " ".join(str(prompt or "").split()) or part["prompt"]
-    too_long = (
-        len(prompt) > MUSIC_PROMPT_LIMIT
-        if part["kind"] == "music"
-        else len(prompt.encode("utf-16-le")) > PROMPT_LIMIT * 2
-    )
-    if too_long:
-        raise ValueError(f"Keep the prompt under {part['limit']} characters")
+    chosen = []
+    for key, prompt in requests:
+        part = options.get(str(key))
+        if not part:
+            raise ValueError("Choose one of the parts listed on the post page")
+        prompt = " ".join(str(prompt or "").split()) or part["prompt"]
+        too_long = (
+            len(prompt) > MUSIC_PROMPT_LIMIT
+            if part["kind"] == "music"
+            else len(prompt.encode("utf-16-le")) > PROMPT_LIMIT * 2
+        )
+        if too_long:
+            raise ValueError(f"Keep the prompt under {part['limit']} characters")
+        chosen.append((part, prompt))
+    if len(chosen) > 1 and {p["kind"] for p, _ in chosen} != {"clip"}:
+        raise ValueError("Only clips can be made again together")
+    chosen.sort(key=lambda c: c[0].get("index") or 0)
+    first = chosen[0][0]
     # The first run's retries and last step are its own history, not the replacement's.
     brief = {
         k: v for k, v in deepcopy(job.brief).items() if k not in {"failed_tasks", "active_generation"}
@@ -311,50 +339,55 @@ def replace_part(db, post, key, prompt, actor):
         "replaces": {
             "post_id": post.id,
             "media_job_id": job.id,
-            "part": part["key"],
-            "label": part["label"],
-            "clip_index": part.get("index"),
+            "part": ",".join(p["key"] for p, _ in chosen),
+            "label": _label([p for p, _ in chosen], [p for p in listed if p["kind"] == "clip"]),
+            "clip_index": first.get("index"),
+            "count": len(chosen),
             "requested_by": actor,
+            **({"auto_attempt": auto_attempt, "auto_limit": auto_limit} if auto_attempt else {}),
         },
     }
     sources = list(job.source_asset_ids)
     soundtrack = _soundtrack(db, job)
     stage = "visual"
-    if part["kind"] == "clip":
-        old = next(s for s in job.brief["video_segments"] if s["index"] == part["index"])
-        plan = scene_plan(old)
-        # A scene clip is planned again from the edited scene description, like Generate corrected
-        # scene; the old plan's scene stays in the correction for the planner to diagnose.
-        dropped = {"output_asset_id", "scene_retry"} | ({"reference_plan"} if plan else set())
-        clip = {k: v for k, v in old.items() if k not in dropped} | {
-            "prompt": prompt,
-            # A different seed gives a different take even when the prompt is unchanged.
-            "seed": (old["seed"] + 1) % 2**32,
-            "replaced_asset_id": old["output_asset_id"],
-            "scene_retry": correction(job, part, prompt, vision, plan),
-        }
-        brief["video_segments"] = [
-            clip if s["index"] == part["index"] else s for s in job.brief["video_segments"]
-        ]
+    if first["kind"] == "clip":
+        segments = list(job.brief["video_segments"])
+        for part, prompt in chosen:
+            old = next(s for s in segments if s["index"] == part["index"])
+            plan = scene_plan(old)
+            # A scene clip is planned again from the edited scene description, like Generate corrected
+            # scene; the old plan's scene stays in the correction for the planner to diagnose.
+            dropped = {"output_asset_id", "scene_retry"} | ({"reference_plan"} if plan else set())
+            clip = {k: v for k, v in old.items() if k not in dropped} | {
+                "prompt": prompt,
+                # A different seed gives a different take even when the prompt is unchanged.
+                "seed": (old["seed"] + 1) % 2**32,
+                "replaced_asset_id": old["output_asset_id"],
+                "scene_retry": correction(job, part, prompt, vision, plan),
+            }
+            segments = [clip if s["index"] == part["index"] else s for s in segments]
+            if part["index"] == 0:
+                brief["generation_prompt"] = prompt
+            # Reused clips and music stay in the sources; the new clip is added when it is saved.
+            sources = [i for i in sources if i != old["output_asset_id"]]
+        brief["video_segments"] = segments
         brief["soundtrack_asset_id"] = soundtrack
-        if part["index"] == 0:
-            brief["generation_prompt"] = prompt
-        # Reused clips and music stay in the sources; the new clip is added when it is saved.
-        sources = [i for i in sources if i != old["output_asset_id"]]
-    elif part["kind"] == "visual":
-        plan = scene_plan(job.brief) if part["scene"] else {}
+    elif first["kind"] == "visual":
+        prompt = chosen[0][1]
+        plan = scene_plan(job.brief) if first["scene"] else {}
         if plan:
             brief.pop("reference_plan", None)
         brief |= {
             "generation_prompt": prompt,
             "seed": (job.brief["seed"] + 1) % 2**32,
             "soundtrack_asset_id": soundtrack,
-            "scene_retry": correction(job, part, prompt, vision, plan),
+            "scene_retry": correction(job, first, prompt, vision, plan),
         }
         sources = [i for i in sources if i == soundtrack]
     else:
         from .video_rules import AMBIENT_STYLES
 
+        prompt = chosen[0][1]
         brief |= {"audio_prompt": prompt, "soundtrack_asset_id": ""}
         if not job.brief.get("audio_reference_ids"):
             brief["soundtrack_model"] = "music"
@@ -364,7 +397,7 @@ def replace_part(db, post, key, prompt, actor):
         sources = [i for i in sources if i != soundtrack]
         stage = "audio"
     created = MediaJob(
-        batch_key=f"replace-{part['kind']}:{uid()}:{job.platform}",
+        batch_key=f"replace-{first['kind']}:{uid()}:{job.platform}",
         platform=job.platform,
         brief=brief,
         state="queued",
@@ -378,3 +411,35 @@ def replace_part(db, post, key, prompt, actor):
         transition(db, post, "held", "Media changes requested; waiting for replacement", actor)
     db.commit()
     return created
+
+
+def auto_attempts(job):
+    """How many automatic replacements in a row led to this job's media (0 when a person asked for it)."""
+    return int((job.brief.get("replaces") or {}).get("auto_attempt") or 0) if job else 0
+
+
+def auto_regenerate(db, settings, post):
+    """When the visual check holds generated media, make the clips it flagged again without waiting for a
+    person, up to MEDIA_AUTO_RETRIES replacements in a row. Every clip is made again when the check didn't
+    say where the problem is. Returns the queued job, or None when nothing was started."""
+    limit = settings.media_auto_retries
+    if post.status != "held" or not limit:
+        return None
+    vision = failed_vision(db, post)
+    job = source_job(db, post)
+    if not vision or not job or job.brief.get("as_uploaded") or replacement(db, post):
+        return None
+    attempt = auto_attempts(job) + 1
+    if attempt > limit:
+        return None
+    visual = [p for p in parts(db, job, vision, {}) if p["kind"] != "music"]
+    chosen = [p for p in visual if p["flagged"]] or visual
+    if not chosen:
+        return None
+    try:
+        return replace_parts(
+            db, post, [(p["key"], "") for p in chosen], "pipeline", auto_attempt=attempt, auto_limit=limit
+        )
+    except ValueError:
+        db.rollback()
+        return None

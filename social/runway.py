@@ -1,4 +1,5 @@
-"""Official Runway task API. Submissions are never automatically retried."""
+"""Official Runway task API. A submission is never sent twice; an automatic retry after a failed quality
+review is a new task with a new seed (see recovery.auto_retry and clip_replace.auto_regenerate)."""
 
 import hashlib
 import re
@@ -121,8 +122,11 @@ class Runway:
             ) from None
 
 
-def payload_for(settings, brief, platform, references, *, audio=False):
-    """Only emit fields supported by the selected model's official request schema."""
+def payload_for(settings, brief, platform, references, *, audio=False, style=None):
+    """Only emit fields supported by the selected model's official request schema.
+
+    `style` is an image Runway uses only to style an image's output; it is sent untagged, as Runway
+    documents, so its product and setting aren't copied the way a tagged @ref image's are."""
     from .config import profiles
 
     p = profiles(settings)[platform]
@@ -150,8 +154,9 @@ def payload_for(settings, brief, platform, references, *, audio=False):
         )
         if brief.get("video_scene"):
             result["ratio"] = "720:1280" if p.video_height > p.video_width else "1280:720"
-        if references:
+        if references or style:
             result["referenceImages"] = [{"uri": uri, "tag": f"ref{i}"} for i, uri in enumerate(references)]
+            result["referenceImages"] += [{"uri": style}] if style else []
         return "text_to_image", result
     if brief["operation"] == "video_edit":
         result.update(

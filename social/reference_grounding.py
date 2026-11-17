@@ -57,14 +57,15 @@ class Selection(BaseModel):
     scene_requirements: list[str] = Field(default_factory=list, max_length=12)
 
 
-def compose_scene_prompt(prompt, requirements, profile, *, has_style=False):
+def compose_scene_prompt(prompt, requirements, profile):
     """Send the selected configuration and complete setting, without unrelated product options."""
+    # A style scene is sent to Runway untagged, its documented way to style an output without copying
+    # its content, so the prompt never names it.
+    setting = re.sub(r"@ref[1-9]\b", "the style image", " ".join(prompt.split()))
     if not requirements:
-        return constrain_prompt(prompt, profile, profile.product_id)
+        return constrain_prompt(setting, profile, profile.product_id)
     details = " ".join(" ".join(item.split()).rstrip(". ") + "." for item in requirements if item.strip())
-    parts = ["A new design using @ref0 for product construction.", details, " ".join(prompt.split())]
-    if has_style:
-        parts.append("Match @ref1 lighting and color only.")
+    parts = ["A new design using @ref0 for product construction.", details, setting]
     # The complete Builder/owner rules remain in planning and independent review. Putting
     # an alternative support system in every canopy prompt was introducing unwanted rods.
     if re.search(r"\brods?\b", details + " " + prompt, re.I):
@@ -82,7 +83,11 @@ def compose_scene_prompt(prompt, requirements, profile, *, has_style=False):
 def compose_motion_prompt(prompt, requirements, profile):
     if not requirements:
         return constrain_prompt(prompt, profile, profile.product_id)
-    cue = "Keep the scene's exact roof, supports, joints, materials, finish and lighting unchanged."
+    # Runway: image-to-video prompts describe motion; a still subject is stated as completely motionless.
+    cue = (
+        "The structure stays completely still: its roof, supports and joints are rigid and unchanged. "
+        "One continuous, steady shot."
+    )
     if re.search(r"\brods?\b", " ".join(requirements), re.I):
         cue += " " + HANGER_ROD_CUE
     return utf16_trim(prompt, PROMPT_LIMIT - len(cue) - 1) + " " + cue
@@ -281,11 +286,20 @@ def select_reference(settings, records, context):
                 "or finish. Keep aluminum construction and supported roof/connections; Wood Look is not timber. "
                 "For video the app FIRST generates a new scene image, checks it, THEN animates it. Return "
                 "scene_prompt describing the desired complete still scene using @ref0 for product construction, "
-                "not its original background or finish. Return prompt describing only the subsequent camera and "
-                "subject motion while preserving the NEW scene. For image generation prompt describes the complete "
-                "new image using @ref0. Respect visual_direction in both prompts. When style_reference is present, "
-                "scene_prompt uses @ref1 for lighting, exposure, color treatment and lens character ONLY; its "
-                "product and setting must not replace this shot's subject. Keep critical connections visible. "
+                "not its original background or finish. Compose that still so nothing structural has to be invented "
+                "later: the whole structure (or a deliberate close detail) at eye level or slightly above, usually a "
+                "three-quarter view, with the supports and their connections in frame, unobstructed and uncropped, "
+                "and plain unmarked signs and walls around it. Return prompt describing only the subsequent camera "
+                "motion, in the form 'The camera [one slow move] as the structure stays completely still': a slow "
+                "push-in, gentle lateral truck, slow pedestal or locked-off shot. Never an orbit, arc, pull-back or "
+                "crane reveal, fast move or zoom through the structure, because those make the video model invent "
+                "geometry; only a MUTE partition may move, and only as its rules allow. For image generation prompt "
+                "describes the complete new image using @ref0. Respect visual_direction in both prompts. When "
+                "style_reference is present, the app sends it to Runway untagged so Runway takes only its lighting, "
+                "exposure, color treatment and lens character; never mention @ref1, and its product and setting "
+                "must not replace this shot's subject. Keep critical connections visible. "
+                "Among equally suitable references, prefer evenly lit photos without watermarks, overlaid text or "
+                "readable signage, because text in a reference tends to reappear in the output. "
                 "Keep configurations consistent only across views of the SAME installation; a montage can mix "
                 "different locations and supported configurations. Make adjacent shots cohesive through compatible "
                 "lighting, composition, scale and camera speed/direction, without erasing requested variety. "
@@ -529,7 +543,7 @@ def prepare(db, settings, job):
     validate_record(db, settings, record)
     still_prompt = choice.scene_prompt if job.brief["operation"] == "video" else choice.prompt
     scene_prompt = compose_scene_prompt(
-        still_prompt or choice.prompt, choice.scene_requirements, profile, has_style=bool(style)
+        still_prompt or choice.prompt, choice.scene_requirements, profile
     )
     prompt = (
         scene_prompt if job.brief["operation"] == "image"

@@ -442,4 +442,9 @@ def run_gate(db, settings, post, *, human_actor=None, **kwargs):
         else:
             transition(db, post, "approved", "Human approved this media and caption; all checks passed" if human_actor else "All checks passed", human_actor or "pipeline")
     db.commit()
+    if "vision_review" in failures:
+        from .clip_replace import auto_regenerate
+
+        # Generated media the visual check rejected is made again without waiting for a person.
+        auto_regenerate(db, settings, post)
     return results

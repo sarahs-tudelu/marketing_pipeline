@@ -1,6 +1,6 @@
 """Owner-requested reference workflow; product dimensions still come from the Builder."""
 
-VERSION = "tudelu-reference-rendering-2026-11-16-v2"
+VERSION = "tudelu-reference-rendering-2026-11-17-v3"
 
 DEFAULT_VISUAL_DIRECTION = (
     "Photorealistic architectural film, natural soft light, balanced exposure, restrained contrast and "
@@ -24,6 +24,26 @@ RULES = [
     "Keep each generated scene's selected structural arrangement, straight fascia cross-sections, connected "
     "members, roof type, supports, attachment points and finish consistent within that scene. Preserve stainless rod fittings. "
     "Wood Look is a finish on aluminum, not timber. Add only selected, Builder-supported accessories.",
+    # Builder PRODUCT-RULES.md (no-overlap rule, seated posts, panel grid) at the snapshot commit.
+    "Every product piece is solid: no member passes through, merges into, hides inside or overlaps another "
+    "member, the fascia, a wall, the floor or an attachment, and connections touch flush or seat into each other. "
+    "Posts stand plumb and straight from the ground to the frame, seated fully under the fascia's bottom "
+    "perimeter unless the selected design places them outside. The roof is one flat plane resting on the frame "
+    "(two only for a selected double roof), with evenly spaced panel seams aligned to the frame. Louvers in one "
+    "run are parallel, evenly spaced and the same profile, and each end is seated in the frame.",
+    "Within a clip the structure is rigid and unchanged: the same number of posts, louvers, roof layers, rods "
+    "and joints in every frame. Members never appear, vanish, duplicate, bend, stretch, slide or change thickness "
+    "as the camera moves.",
+    "Compose scenes so the generator doesn't have to invent structure: the whole structure, or a deliberate "
+    "close detail, seen at eye level or slightly above, usually from a three-quarter view, with the supports and "
+    "their connections in frame and clear of foreground objects. Avoid cropping a structure partway along a post "
+    "or roof edge, mirror-like reflections of it, and rows of identical structures receding into the distance. "
+    "Surrounding signs, awnings and walls are plain and unmarked.",
+    "Animate each clip with one slow, steady camera move while the structure stays completely still, written as "
+    "'The camera [move] as the structure stays completely still': a slow push-in, a gentle lateral truck, a slow "
+    "pedestal or a locked-off shot. Avoid orbits and arcs around the structure, pull-back or crane reveals of "
+    "parts the scene image doesn't show, fast moves and zooms through the structure; they make the model "
+    "invent geometry.",
     "For rod-hung canopies show the continuous rods above the roof, connecting the outer fascia to higher wall "
     "anchors. Choose framing that makes that connection visible. Do not crop the critical connection or orbit "
     "behind a structure whose unseen geometry would have to be invented.",

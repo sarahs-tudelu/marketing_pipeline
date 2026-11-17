@@ -42,11 +42,14 @@ from .video_segments import current_segment, edit_reference, plan_segments, save
 CONCEPTS = (
     ("detail", "Close-up of the system's materials, joints and finish in soft side light."),
     ("space", "Wide view of the installed system in its setting at human scale, natural light."),
-    ("process", "The system in operation: its panels, louvers or blades moving through their range."),
+    (
+        "process",
+        "The system in use: a MUTE partition retracting overhead, or light and shade moving across a fixed system.",
+    ),
     ("daylight", "Light and shadow moving across the installed system through the day, warm editorial mood."),
     ("geometry", "Graphic composition of the system's lines and rhythm, restrained colors, clean lines."),
     ("seasonal", "The installed system in an inviting seasonal setting with subtle environmental movement."),
-    ("focus", "One defining feature of the system with generous negative space and a slow reveal."),
+    ("focus", "One defining feature of the system with generous negative space and a slow push-in."),
     ("inspiration", "An unexpected viewpoint of the installed system, refined textures, calm atmosphere."),
 )
 
@@ -874,7 +877,9 @@ def _finish(db, settings, job):
                 held,
                 "failed",
                 f"Replaced by post {post.id} after {replaced.get('label') or 'clip ' + str(replaced['clip_index'] + 1)} "
-                "was regenerated",
+                + ("were" if replaced.get("count", 1) > 1 else "was")
+                + " regenerated"
+                + (" automatically" if replaced.get("auto_attempt") else ""),
                 replaced.get("requested_by") or "admin",
             )
     job.state, job.error = "complete", ""
@@ -1199,15 +1204,24 @@ def process_jobs(db, settings, provider=None):
                     ids = []
                 if brief.operation == "audio":
                     ids = list(dict.fromkeys(ids + brief.audio_reference_ids))[:3]
+                style_uri = None
                 if grounded_references:
-                    references = [runway.reference(SimpleNamespace(**r)) for r in grounded_references]
+                    references = [
+                        runway.reference(SimpleNamespace(**r))
+                        for r in grounded_references
+                        if r.get("role") != "style"
+                    ]
+                    style_uri = next(
+                        (runway.reference(SimpleNamespace(**r)) for r in grounded_references if r.get("role") == "style"),
+                        None,
+                    )
                 elif job.stage == "visual" and brief.operation == "video_edit" and current_segment(job):
                     # Never send the unsplit original to Runway for a segmented edit.
                     references = [runway.reference(edit_reference(db, settings, job))]
                 else:
                     references = [runway.reference(db.get(Asset, i)) for i in ids]
                 endpoint, payload = payload_for(
-                    settings, generation_brief, job.platform, references, audio=job.stage == "audio"
+                    settings, generation_brief, job.platform, references, audio=job.stage == "audio", style=style_uri
                 )
                 db.refresh(control)
                 db.refresh(account)
@@ -1250,6 +1264,10 @@ def process_jobs(db, settings, provider=None):
                         )
                     )
                 db.commit()
+                from .recovery import auto_retry
+
+                # A scene the quality review rejected is corrected and made again without waiting.
+                auto_retry(db, settings, job)
     finally:
         if provider is None:
             runway.close()

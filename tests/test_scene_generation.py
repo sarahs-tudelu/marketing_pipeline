@@ -34,6 +34,8 @@ def video_job(db, settings, reference_job, photo, monkeypatch):
         "visual_direction": "Warm soft daylight, natural grade, 35mm lens, slow left-to-right tracking.",
     }
     settings.ai_mode, settings.runway_api_key = "live", SecretStr("test")
+    # These tests cover the manual correction a person makes once automatic retries are used up.
+    settings.media_auto_retries = 0
     monkeypatch.setattr(refs, "select_reference", lambda s, r, c: choice(r[0]))
     monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(passed=True, reasons=[]))
     db.commit()
@@ -328,10 +330,12 @@ def test_later_scene_uses_shared_style_without_reusing_its_background(
     assert first["scene_prompt"] != second["scene_prompt"]
     assert "brick cafe" in second["scene_prompt"]
     assert second["style_reference"]["asset_id"] == first["scene_reference"]["asset_id"]
+    # The style scene is untagged: Runway styles the output with it without copying its content.
     assert provider.submitted[2][1]["referenceImages"] == [
         {"tag": "ref0", "uri": "runway://" + photo.id},
-        {"tag": "ref1", "uri": "runway://" + first["scene_reference"]["asset_id"]},
+        {"uri": "runway://" + first["scene_reference"]["asset_id"]},
     ]
+    assert "@ref1" not in provider.submitted[2][1]["promptText"]
     assert observed[1]["style_reference"]["role"] == "style only"
     # Replacing the first clip still has the second clip as its style anchor.
     for _ in range(3):
