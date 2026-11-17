@@ -635,3 +635,75 @@ def test_session_refresh_failure_keeps_entries_and_allows_retry(db, settings, as
 
     with TestClient(create_app(settings), base_url="http://studio.test") as client:
         asyncio.run(exercise(client))
+
+
+DROP_FILE = """([selector, name]) => {
+  const data = new DataTransfer();
+  data.items.add(new File(["x"], name, {type: "image/jpeg"}));
+  const target = document.querySelector(selector);
+  for (const type of ["dragenter", "dragover", "drop"]) {
+    target.dispatchEvent(new DragEvent(type, {bubbles: true, cancelable: true, dataTransfer: data}));
+  }
+  return [...document.querySelector('#idea-media input[type="file"]').files].map((file) => file.name);
+}"""
+
+
+def test_idea_page_fits_a_desktop_browser_and_accepts_dropped_files(db, settings):
+    playwright = pytest.importorskip("playwright.async_api")
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            page = await browser.new_page(viewport={"width": 1440, "height": 900})
+            page.set_default_timeout(5000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            release = asyncio.get_running_loop().create_future()
+            requests = []
+
+            async def serve(route):
+                if urlsplit(route.request.url).path == "/api/session":
+                    await release  # Hold the submission while its progress is checked.
+                    await route.abort()
+                    return
+                if route.request.method == "POST":
+                    requests.append(route.request)
+                await serve_studio_request(route, client)
+
+            await page.route("**/*", serve)
+            await page.goto("http://studio.test/admin/create")
+            form = page.locator("#new-idea")
+            button = form.get_by_role("button", name="Plan this idea")
+            # The idea and the choices sit side by side, with Plan this idea on screen.
+            main = await form.locator(".idea-main").bounding_box()
+            side = await form.locator(".idea-side").bounding_box()
+            assert side["x"] >= main["x"] + main["width"] and side["y"] < main["y"] + 100
+            await playwright.expect(button).to_be_in_viewport()
+            # It stays on screen while the long side of the form is scrolled.
+            await form.get_by_text("More options").click()
+            await page.mouse.wheel(0, 1200)
+            await playwright.expect(button).to_be_in_viewport()
+            # Files dropped on the files box are added; a drop that misses it doesn't open the file.
+            assert await page.evaluate(DROP_FILE, ["#idea-media small", "terrace.jpg"]) == ["terrace.jpg"]
+            assert await page.evaluate(DROP_FILE, ['textarea[name="prompt"]', "other.jpg"]) == ["terrace.jpg"]
+            assert urlsplit(page.url).path == "/admin/create"
+            # Progress and errors show under the button, not at the end of the long column.
+            await form.get_by_label("Your idea", exact=True).fill("A pergola at dusk")
+            await button.click()
+            await playwright.expect(form.locator(".idea-side").get_by_role("status")).to_contain_text(
+                "Planning your idea"
+            )
+            release.set_result(None)
+            await playwright.expect(form.locator(".idea-side").get_by_role("alert")).to_contain_text(
+                "Nothing was submitted"
+            )
+            assert not requests
+            await page.set_viewport_size({"width": 390, "height": 844})
+            assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            assert not errors
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))

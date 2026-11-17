@@ -120,7 +120,9 @@
     note.textContent = detail;
     message.append(title, note);
     status.append(spinner, message);
-    form.append(status);
+    // A form can mark where its progress shows, such as under a button in a side column.
+    const statusSlot = form.querySelector("[data-form-status]") || form;
+    statusSlot.append(status);
     form.setAttribute("aria-busy", "true");
     pending.set(form, {states, status});
     // Keep named submitters in the native request even after disabling buttons.
@@ -153,9 +155,35 @@
       error.className = "error session-error";
       error.setAttribute("role", "alert");
       error.textContent = "We couldn't refresh your session. Nothing was submitted. Your entries are still here; check your connection and try again, or reload this page.";
-      form.append(error);
+      statusSlot.append(error);
     }
   });
+
+  // New post from an idea: files dropped anywhere on the files box are added to it, and a
+  // drop that misses the box is ignored instead of the browser opening the file in this tab.
+  const ideaMedia = document.getElementById("idea-media");
+  const ideaFiles = ideaMedia?.querySelector('input[type="file"]');
+  if (ideaFiles) {
+    const carriesFiles = (event) => [...(event.dataTransfer?.types || [])].includes("Files");
+    document.addEventListener("dragover", (event) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      const inside = ideaMedia.contains(event.target) && !ideaFiles.disabled;
+      event.dataTransfer.dropEffect = inside ? "copy" : "none";
+      ideaMedia.classList.toggle("dragging", inside);
+    });
+    document.addEventListener("dragleave", (event) => {
+      if (!event.relatedTarget || !ideaMedia.contains(event.relatedTarget)) ideaMedia.classList.remove("dragging");
+    });
+    document.addEventListener("drop", (event) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      ideaMedia.classList.remove("dragging");
+      if (!ideaMedia.contains(event.target) || ideaFiles.disabled || !event.dataTransfer.files.length) return;
+      ideaFiles.files = event.dataTransfer.files;
+      ideaFiles.dispatchEvent(new Event("change", {bubbles: true}));
+    });
+  }
 
   // Restore controls when the browser brings a submitted page back from its cache.
   window.addEventListener("pageshow", () => {

@@ -202,6 +202,31 @@ pre{overflow:auto;padding:16px;font-family:var(--mono);font-size:12.5px;white-sp
 .held-problems small{color:var(--ink-soft)}
 .clip-summary{margin:6px 0 12px;padding-left:20px;font-size:13.5px;color:var(--ink-soft)}
 
+/* New post from an idea: one column on phones and tablets; on a desktop browser the
+   idea and files sit on the left and the choices with Plan this idea stay in view on the right. */
+.idea-page{max-width:850px}
+#idea-media input[type=file]{padding:18px 16px;background:var(--background);border:1.5px dashed var(--input);cursor:pointer}
+#idea-media input[type=file]:hover,#idea-media.dragging input[type=file]{border-color:var(--accent);background:var(--accent-tint)}
+#idea-media.dragging{border-color:var(--accent)}
+[data-form-status]>.loading-state{margin-top:12px}
+@media(min-width:1240px){
+  .idea-page{max-width:1240px}
+  .idea-form{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:32px;align-items:start}
+  .idea-main>p:first-of-type{margin-bottom:8px}
+  .idea-form textarea[name=prompt]{min-height:190px}
+  .idea-side{padding:18px 20px 20px;background:var(--background);border:1px solid var(--border);border-radius:var(--radius)}
+  .idea-side fieldset{margin:0 0 16px;padding:0;border:0}
+  .idea-side legend{margin-bottom:8px;padding:0}
+  .idea-side .choice-row{flex-direction:column;gap:6px}
+  .idea-side .choice{padding:7px 12px;font-size:14px;background:var(--card)}
+  .idea-side .checkbox{margin:6px 0;font-size:14px}
+  .idea-side small{margin-top:8px}
+  .idea-side>p{margin:0;font-size:13px}
+  .idea-side .actions{margin-top:12px}
+  .idea-side .primary{width:100%}
+}
+@media(min-width:1240px) and (min-height:700px){.idea-side{position:sticky;top:20px}}
+
 /* Overview */
 .status-strip{display:grid;grid-template-columns:1fr 1fr auto;gap:18px;align-items:center}
 .status-strip>div{display:flex;flex-direction:column;gap:2px}
