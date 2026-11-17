@@ -46,9 +46,9 @@ def wave_bytes():
 @pytest.mark.parametrize(
     "operation,refs,endpoint,model",
     [
-        ("image", ["runway://example"], "text_to_image", "gen4_image"),
-        ("video", [], "text_to_video", "gen4.5"),
-        ("video", ["runway://example"], "image_to_video", "gen4.5"),
+        ("image", ["runway://example"], "text_to_image", "nano_banana_2.1"),
+        ("video", [], "text_to_video", "veo3.1"),
+        ("video", ["runway://example"], "image_to_video", "veo3.1"),
         ("video_edit", ["runway://example"], "video_to_video", "aleph2"),
         ("audio", ["runway://example"], "sound_effect", "seed_audio"),
     ],
@@ -70,7 +70,13 @@ def test_official_runway_payloads(settings, operation, refs, endpoint, model):
     if endpoint == "text_to_video":
         assert "promptImage" not in payload and payload["ratio"] == "720:1280"
     if endpoint == "image_to_video":
-        assert payload["promptImage"] == refs[0]
+        assert payload["promptImage"] == [{"uri": refs[0], "position": p} for p in ("first", "last")]
+    if operation == "video":
+        assert payload["duration"] == 6 and payload["audio"] is False
+        assert "outputFormat" not in payload
+    if operation == "image":
+        assert "seed" not in payload and payload["thinkingLevel"] == "high"
+        assert payload["ratio"] == "928:1152"
     if operation == "audio":
         assert payload["referenceAudios"] == refs and "seed" not in payload
 

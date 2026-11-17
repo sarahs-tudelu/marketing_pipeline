@@ -248,7 +248,7 @@ def test_review_flow_creates_the_reported_idea_as_a_video_with_music_and_logo(
         if job.state == "complete":
             break
     assert job.state == "complete", job.error
-    assert [h["model"] for h in job.task_history] == ["gen4.5"] * 4 + ["eleven_music_v2_5"]
+    assert [h["model"] for h in job.task_history] == ["veo3.1"] * 4 + ["eleven_music_v2_5"]
     assert [s["system"] for s in job.brief["video_segments"]] == PRODUCTS
     assert all(s["shot"]["setting"] in s["prompt"] for s in job.brief["video_segments"])
     result = db.get(Asset, job.output_asset_id)
@@ -291,22 +291,23 @@ def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, l
         "system": "Pergolas",
         "prompt": "One",
         "shots": [
-            {"system": name, "prompt": f"{name} clip"} for name in ("Pergolas", "Canopies", "Sunshades")
+            {"system": name, "prompt": f"{name} clip"} for name in ("Pergolas", "Pergolas", "Canopies", "Sunshades")
         ],
     }
     written = write_prompt(db, settings, job)
-    assert replies[0]["storyboard"][0] == {"clip": 1, "seconds": 9, "setting": "backyard", "system": ""}
+    assert replies[0]["storyboard"][0] == {"clip": 1, "seconds": 7, "setting": "backyard", "system": ""}
     assert replies[0]["end_card"] is True
     assert [s["prompt"] for s in written["video_segments"]] == [
+        "Pergolas clip",
         "Pergolas clip",
         f"Canopies clip {HANGER_ROD_CUE}",
         f"Sunshades clip {HANGER_ROD_CUE}",
     ]
     assert written["depicted_system"] == "Pergolas, Canopies, Sunshades"
     reply["shots"] = reply["shots"][:2]
-    with pytest.raises(ProviderError, match="one prompt for each of the 3"):
+    with pytest.raises(ProviderError, match="one prompt for each of the 4"):
         write_prompt(db, settings, job)
-    reply["shots"] = [{"system": "Gazebos", "prompt": "x"}] * 3
+    reply["shots"] = [{"system": "Gazebos", "prompt": "x"}] * 4
     with pytest.raises(ValueError, match="'Gazebos', which is not named"):
         write_prompt(db, settings, job)
 
@@ -360,7 +361,9 @@ def test_new_scene_is_generated_for_every_planned_clip(db, settings, assets, hou
     for _ in range(8):
         process_jobs(db, settings, FakeRunway())
     assert [e for e, _ in submitted] == ["text_to_image", "image_to_video"] * 2, job.error
-    assert all(payload["promptImage"] == "runway://start" for e, payload in submitted if e == "image_to_video")
+    assert all(payload["promptImage"] == [
+        {"uri": "runway://start", "position": p} for p in ("first", "last")
+    ] for e, payload in submitted if e == "image_to_video")
     assert len(submitted[2][1]["referenceImages"]) == 2  # product geometry + first scene's style
     assert clip and re.fullmatch(r"task-\d", job.task_history[-1]["task_id"])
 

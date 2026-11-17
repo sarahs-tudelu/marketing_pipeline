@@ -10,9 +10,13 @@ The ignored root `.env` now contains a blank slot:
 RUNWAY_API_KEY=
 IMAGE_PROVIDER=runway
 VIDEO_PROVIDER=runway
+RUNWAY_IMAGE_MODEL=nano_banana_2.1
+RUNWAY_VIDEO_MODEL=veo3.1
 ```
 
 Paste the key after `RUNWAY_API_KEY=`. `gsm://projects/PROJECT/secrets/tudelu-runway-api-key/versions/1` is also supported when `SECRET_BACKEND=google`. `.env.example`, `.env.local` and the Droplet template include the same settings. `TUDELU_ENV_FILE` selects a different environment file; the local demo uses `.env.local`. Restart both web and worker after editing configuration. Do not commit keys.
+
+New jobs use Nano Banana 2.1 for images and scene stills, and standard Veo 3.1 for animation. Existing environment overrides take precedence: update `RUNWAY_IMAGE_MODEL` and `RUNWAY_VIDEO_MODEL` in the deployment environment when pulling this change. Each job saves its image/video models so recovery and replacements retain the original models and provenance. Older saved jobs without these fields retain Gen-4 Image / Gen-4.5; create a new job to use the new defaults. `gen4_image` and `gen4.5` remain supported explicit overrides.
 
 `AI_MODE=live` permits paid generation. The checked-in defaults remain offline fixtures. Creating an idea queues a background job; run the worker to advance it. No API call is made by simply opening a page or saving a paused recurring campaign. `LIVE_PLATFORMS` and the existing account/fact checks separately govern publication.
 
@@ -22,13 +26,13 @@ Before starting updated services, run `tudelu init` (or `alembic upgrade head`) 
 
 | Operation | Runway endpoint / model | Inputs |
 |---|---|---|
-| Image | `text_to_image` / `gen4_image` | Prompt and up to three uploaded images |
-| Video | `text_to_video` / `gen4.5` | Prompt; up to 90 seconds using clips of 2–10 seconds |
-| Image animation | `image_to_video` / `gen4.5` | Prompt and one uploaded image; up to 90 seconds using clips of 2–10 seconds |
+| Image / scene still | `text_to_image` / `nano_banana_2.1` | Prompt, tagged product references and optional untagged style reference; high thinking, no seed |
+| Video | `text_to_video` / `veo3.1` | Prompt; 4-, 6- or 8-second generation, native audio off |
+| Image animation | `image_to_video` / `veo3.1` | Reviewed scene as first and last frame; 4-, 6- or 8-second generation, native audio off |
 | Video edit | `video_to_video` / `aleph2` | Prompt and one uploaded video; edits up to 90 seconds, split into inputs of at most 30 seconds |
 | Audio / audio reworking | `sound_effect` / `seed_audio` | Prompt and up to three uploaded audio references |
 
-The request shapes and model IDs were checked against the [official Runway API specification](https://docs.dev.runwayml.com/openapi.json) and [API reference](https://docs.dev.runwayml.com/api.md) on November 11, 2026. The supported model settings intentionally accept only the implemented schemas. Changing to a different model requires updating its payload contract.
+The request shapes and model IDs were checked against the [official Runway API specification](https://docs.dev.runwayml.com/openapi.json) and [API reference](https://docs.dev.runwayml.com/api.md) on November 17, 2026. The supported model settings intentionally accept only the implemented schemas. Changing to a different model requires updating its payload contract.
 
 Upload company media in Asset library. Images, videos and MP3/WAV/M4A/OGG/FLAC audio are supported. Usage rights are **Public** (may be published) or **Not public** (internal use and dry runs only); the owner is a separate optional field. A Public idea cannot use a Not public reference, and media generated from a Not public reference is Not public. The gate holds Not public media from live publication. Rights saved as free text before this choice existed show as *Unclassified* and keep their earlier behavior; re-upload an asset to classify it. Objects already uploaded directly into the configured media bucket can be registered using **Import bucket asset** and their exact object key, rights, source and provenance. The existing object remains intact. Reference assets are read from the local store or private bucket, checked against their checksum, and sent through Runway's ephemeral upload API. Runway never receives the bucket credentials. Missing, expired or unpermitted references fail before generation.
 
@@ -53,13 +57,13 @@ For a video soundtrack, enter a music direction. Without audio references, Runwa
 
 ## Finished videos up to 90 seconds
 
-The length field on the plan review and in Campaigns & advanced accepts 3–90 seconds for immediate, waiting and recurring ideas. New video generation uses an ordered shot plan with clips no longer than 10 seconds; a 90-second video uses nine scene-image tasks followed by nine animation tasks, plus its soundtrack. Editing 90 seconds of uploaded footage uses three inputs of at most 30 seconds. Each source interval is saved separately with its original checksum, rights and provenance; the uploaded original is unchanged. An edit cannot request more footage than the source provides. Longer source files can supply the requested opening interval.
+The length field on the plan review and in Campaigns & advanced accepts 3–90 seconds for immediate, waiting and recurring ideas. New Veo video generation uses an ordered shot plan with clips no longer than 8 seconds. Each task requests the smallest supported length (4, 6 or 8 seconds) that covers its planned clip; assembly trims surplus footage, keeping the chosen finished length and three-second logo ending. Provider charges cover the generated seconds, including trimmed footage. A 90-second video uses eleven scene-image tasks and eleven animation tasks for 87 seconds of footage, plus its soundtrack and logo ending. Explicit Gen-4.5 jobs retain the 10-second clip maximum. Editing 90 seconds of uploaded footage uses three inputs of at most 30 seconds. Each source interval is saved separately with its original checksum, rights and provenance; the uploaded original is unchanged. An edit cannot request more footage than the source provides. Longer source files can supply the requested opening interval.
 
 Each clip's prompt, seed, source interval, Runway task and result asset are saved. Prompts can mix settings and supported product configurations while sharing photographic direction; shots of the same installation retain its configuration. Continuity between independently generated shots is not guaranteed; the finished montage still goes through vision review. Each generated clip incurs a scene-image cost, scene-review cost and video-generation cost. The queue reports the number of saved clips, and recovery reuses completed clips and known tasks. Ambiguous submissions still require reconciliation before continuing.
 
 Assembly joins clips in order into one H.264 video at the destination dimensions, with continuous timestamps and original clip audio (silence where a clip has no track). An optional generated soundtrack replaces the combined audio. Short or missing generated clips hold the job instead of stretching footage to fill the requested duration. The maximum is also enforced before generation and at publication; configured lower platform limits remain effective. Existing campaigns keep their saved duration until a new brief is saved.
 
-The per-task bounds were checked on November 12, 2026 against [Runway Gen-4.5](https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5) and [Aleph 2 video editing](https://dev.runwayml.com/learn/edit-and-finish-video-api). Platform references are in [platform verification](platform-verification.md).
+The Veo per-task bounds were checked on November 17, 2026 against the [Runway API specification](https://docs.dev.runwayml.com/openapi.json). Legacy generation and edit bounds were checked on November 12, 2026 against [Runway Gen-4.5](https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5) and [Aleph 2 video editing](https://dev.runwayml.com/learn/edit-and-finish-video-api). Platform references are in [platform verification](platform-verification.md).
 
 ## Audio review
 

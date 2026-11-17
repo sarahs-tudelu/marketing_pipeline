@@ -20,12 +20,12 @@ from .models import FactSheet
 from .product_rules import context_for, current_constraints, profile_for
 from .provider_errors import ProviderError
 from .rendering_guidelines import policy as rendering_policy
+from .runway import video_clip_limit
 
 END_CARD_SECONDS = 3
 MAX_CLIPS = 9
-# Runway gen4.5 generates 2-10 second clips; longer videos join several clips.
+# Finished clips can be trimmed from the model's supported generated lengths.
 MIN_CLIP_SECONDS = 2
-MAX_CLIP_SECONDS = 10
 
 FORMATS = {
     "auto": "Let the idea decide",
@@ -551,19 +551,19 @@ def logo_assets(assets, *, live=False):
     return sorted(found, key=lambda a: (not a.tags.get("brand_logo"), -a.created_at.timestamp()))
 
 
-def clip_seconds_preview(plan):
+def clip_seconds_preview(plan, video_model="veo3.1"):
     """Clip lengths shown on the review page; mirrors queue_jobs and plan_segments."""
     if plan.operation != "video":
         return []
     clip_seconds, _ = clip_limits(plan.duration, plan.end_card)
-    count = max(len(plan.shots), math.ceil(clip_seconds / MAX_CLIP_SECONDS), 1)
+    count = max(len(plan.shots), math.ceil(clip_seconds / video_clip_limit(video_model)), 1)
     base, extra = divmod(clip_seconds, count)
     return [base + (i < extra) for i in range(count)]
 
 
-def shot_seconds(plan):
+def shot_seconds(plan, video_model="veo3.1"):
     """Seconds of footage each planned shot gets (queue_jobs maps extra clips to the nearest shot)."""
-    clips = clip_seconds_preview(plan)
+    clips = clip_seconds_preview(plan, video_model)
     if len(plan.shots) <= 1:
         return [sum(clips)] if clips else []
     totals = [0] * len(plan.shots)
@@ -579,7 +579,7 @@ def _platform_names(platforms):
     )
 
 
-def plan_summary(plan, platforms):
+def plan_summary(plan, platforms, video_model="veo3.1"):
     """One plain sentence describing what will be made."""
     where = _platform_names(platforms)
     if plan.as_uploaded:
@@ -593,7 +593,7 @@ def plan_summary(plan, platforms):
     if plan.operation == "video_edit":
         extras = [music] + (["a logo end card"] if plan.end_card else [])
         return f"A {plan.duration}-second edit of your uploaded video with {' and '.join(extras)}, for {where}."
-    clips = clip_seconds_preview(plan)
+    clips = clip_seconds_preview(plan, video_model)
     parts = [f"{len(clips)} clip{'s' if len(clips) != 1 else ''}"]
     if plan.end_card:
         parts.append(f"a {END_CARD_SECONDS}-second logo end card")
@@ -607,7 +607,7 @@ def plan_summary(plan, platforms):
     )
 
 
-def work_summary(plan, platforms):
+def work_summary(plan, platforms, video_model="veo3.1"):
     """What Runway is asked to generate, so cost is visible before anything starts."""
     if plan.as_uploaded:
         ending = (
@@ -627,7 +627,7 @@ def work_summary(plan, platforms):
     if plan.operation == "video_edit":
         work = "Runway edits your uploaded video in segments of up to 30 seconds"
     else:
-        clips = clip_seconds_preview(plan)
+        clips = clip_seconds_preview(plan, video_model)
         footage = sum(clips)
         work = (
             f"{len(clips)} Runway video clip{'s' if len(clips) != 1 else ''} ({footage} seconds of footage)"
@@ -635,6 +635,10 @@ def work_summary(plan, platforms):
     # Every video has sound: the described music, or calm ambient music in a style not used recently.
     work += f" and 1 {'instrumental' if plan.soundtrack else 'ambient'} music track ({plan.duration} seconds)"
     summary = f"{work} {each}."
+    if plan.operation == "video" and video_model.startswith("veo"):
+        generated = sum(next(d for d in (4, 6, 8) if d >= seconds) for seconds in clips)
+        if generated > footage:
+            summary += f" Veo generates {generated} seconds {each}; extra footage is trimmed to your chosen length."
     if count > 1:
         summary += f" {count} platforms are selected, and each gets its own generation."
     if plan.end_card:

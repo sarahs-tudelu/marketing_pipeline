@@ -21,7 +21,7 @@ from .provider_errors import ProviderError
 from .recovery import runway_failure
 from .renditions import fitted_size, image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
-from .runway import Runway, payload_for
+from .runway import Runway, job_settings, payload_for, video_clip_limit
 from .storage import ingest, storage
 from .video_rules import (
     AMBIENT_STYLES,
@@ -386,6 +386,8 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             website_snapshot=snapshot,
             seed=int(hashlib.sha256((batch + platform).encode()).hexdigest()[:8], 16),
             execution_mode=settings.ai_mode,
+            runway_image_model=settings.runway_image_model,
+            runway_video_model=settings.runway_video_model,
         )
         if operation in {"video", "video_edit"}:
             if brief.duration > profile.max_duration:
@@ -404,7 +406,7 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
                 values.update(audio_prompt=AMBIENT_STYLES[style][1], ambient_style=style)
             # Generated or edited footage; the logo end card is rendered locally after it.
             footage = brief.duration - (END_CARD_SECONDS if end_card else 0)
-            maximum = 30 if operation == "video_edit" else 10
+            maximum = 30 if operation == "video_edit" else video_clip_limit(settings.runway_video_model)
             shots = brief.shots if operation == "video" else []
             edit_source = db.get(Asset, refs[0]) if operation == "video_edit" and refs else None
             if edit_source and footage > 10 and edit_source.media["duration"] + 0.1 < footage:
@@ -1110,8 +1112,10 @@ def process_jobs(db, settings, provider=None):
         .limit(settings.media_jobs_per_tick)
     ).all()
     runway = provider or Runway(settings)
+    configured = settings
     try:
         for job in jobs:
+            settings = job_settings(configured, job.brief)
             db.refresh(control)
             account = db.get(Account, job.platform)
             db.refresh(account)

@@ -162,7 +162,7 @@ def test_every_clip_uses_the_actual_drive_photo_and_cached_selection(
         endpoint, payload = payload_for(
             settings, job.brief | {"duration": 6}, job.platform, ["runway://" + selected[0]["checksum"]]
         )
-        assert endpoint == "image_to_video" and payload["promptImage"].startswith("runway://")
+        assert endpoint == "image_to_video" and payload["promptImage"][0]["uri"].startswith("runway://")
         assert len(observed) == index + 1
         assert len(observed[-1]["prior_scene_references"]) == index
         job.brief = job.brief | {

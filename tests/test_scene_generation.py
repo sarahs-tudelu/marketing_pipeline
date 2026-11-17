@@ -72,6 +72,29 @@ class Provider:
         return self.still if endpoint == "text_to_image" else seed_media(duration=6)[1]
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_saved_job_models_survive_environment_changes(db, settings, video_job, legacy):
+    if legacy:
+        video_job.brief = {
+            k: v for k, v in video_job.brief.items()
+            if k not in {"runway_image_model", "runway_video_model"}
+        }
+        db.commit()
+    provider = Provider(db, video_job, settings)
+    process_jobs(db, settings, provider)
+    expected_image = "gen4_image" if legacy else "nano_banana_2.1"
+    expected_video = "gen4.5" if legacy else "veo3.1"
+    assert provider.submitted[0][1]["model"] == expected_image
+    # Change configuration while the paid scene is running, then recover its original task.
+    settings.runway_image_model, settings.runway_video_model = "gen4_image", "gen4.5"
+    process_jobs(db, settings, provider)
+    scene = db.get(Asset, refs.current_plan(video_job)["scene_reference"]["asset_id"])
+    assert scene.generator == "runway/" + expected_image
+    assert video_job.task_history[0]["model"] == expected_image
+    process_jobs(db, settings, provider)
+    assert provider.submitted[1][1]["model"] == expected_video
+
+
 def test_missing_bundled_catalog_can_resume_without_duplicate_submission(
     db, settings, video_job, tmp_path, monkeypatch
 ):
@@ -110,7 +133,7 @@ def test_prompt_led_scene_is_saved_checked_then_animated(db, settings, video_job
     assert scene_id != photo.id
     assert not video_job.source_asset_ids  # still is not a completed clip
     assert provider.submitted[0][0] == "text_to_image"
-    assert provider.submitted[0][1]["ratio"] == "720:1280"
+    assert provider.submitted[0][1]["ratio"] == "768:1376"
     assert "white" in provider.submitted[0][1]["promptText"]
     assert provider.submitted[0][1]["referenceImages"][0]["uri"] == "runway://" + photo.id
     with TestClient(create_app(settings)) as client:
@@ -125,7 +148,8 @@ def test_prompt_led_scene_is_saved_checked_then_animated(db, settings, video_job
     process_jobs(db, settings, provider)
     assert refs.current_plan(video_job)["scene_check"]["passed"]
     assert provider.submitted[1][0] == "image_to_video"
-    assert provider.submitted[1][1]["promptImage"] == "runway://" + scene_id
+    assert provider.submitted[1][1]["promptImage"] == [
+        {"uri": "runway://" + scene_id, "position": p} for p in ("first", "last")]
     process_jobs(db, settings, provider)
     assert video_job.state == "rendering", video_job.error
     clip = db.get(Asset, video_job.source_asset_ids[0])
@@ -377,7 +401,7 @@ def test_scene_download_failure_resumes_saved_task_without_new_generation(
 def test_runway_internal_scene_failure_needs_explicit_new_task(db, settings, video_job, monkeypatch):
     provider = Provider(db, video_job, settings)
     process_jobs(db, settings, provider)
-    first_seed = provider.submitted[0][1]["seed"]
+    assert "seed" not in provider.submitted[0][1]  # Nano Banana does not accept a seed.
     monkeypatch.setattr(provider, "task", lambda _: {"status": "FAILED", "failureCode": "INTERNAL.BAD_OUTPUT.CODE01"})
     process_jobs(db, settings, provider)
     assert video_job.state == "failed" and video_job.task_id == "task-1"
@@ -387,7 +411,7 @@ def test_runway_internal_scene_failure_needs_explicit_new_task(db, settings, vid
     retry_step(db, video_job, retry_option(video_job)["prompt"])
     process_jobs(db, settings, provider)
     assert video_job.task_id == "task-2" and len(provider.submitted) == 2
-    assert provider.submitted[1][1]["seed"] != first_seed
+    assert "seed" not in provider.submitted[1][1]
     assert video_job.brief["failed_tasks"][-1]["task_id"] == "task-1"
 
 

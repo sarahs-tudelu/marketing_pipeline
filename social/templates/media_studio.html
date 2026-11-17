@@ -41,7 +41,7 @@
       <label>Finished video duration (seconds)<input type="number" name="duration" min="5" max="90" value="{{ asset_form.get('duration', '5') }}"></label>
       <label>Recurring interval (hours)<input type="number" name="interval_hours" min="24" max="720" value="{{ asset_form.get('interval_hours', '24') }}"></label>
     </div>
-    <p class="muted">5 to 90 seconds, including the 3-second logo ending. Generated clips are at most 10 seconds; edit segments are at most 30 seconds. Each clip uses a separate Runway task and incurs its own generation cost.</p>
+    <p class="muted">5 to 90 seconds, including the 3-second logo ending. Generated clips are at most {{ 8 if settings.runway_video_model == 'veo3.1' else 10 }} seconds; edit segments are at most 30 seconds. Each clip uses a separate Runway task and incurs its own generation cost.</p>
     {% with values=asset_form, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
     <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
     <p class="muted">Create now runs media, captions, checks and scheduling even when routine automation is off. Next automatic post waits for Automatic posts to be on. Global and platform pauses still apply. Recurring campaigns are saved paused and wait for live, connected accounts.</p>

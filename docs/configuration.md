@@ -69,8 +69,8 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `VIDEO_PROVIDER` | `"runway"` | Runway is the default video provider. http retains the legacy neutral gateway contract. |
 | `RUNWAY_API_KEY` | `(unset secret)` | Runway media generation; paste a Runway API key here (or a gsm:// reference). |
 | `RUNWAY_API_VERSION` | `"2024-11-06"` | Official Runway API version and supported model identifiers. |
-| `RUNWAY_IMAGE_MODEL` | `"gen4_image"` | Related configuration in the group above. |
-| `RUNWAY_VIDEO_MODEL` | `"gen4.5"` | Related configuration in the group above. |
+| `RUNWAY_IMAGE_MODEL` | `"nano_banana_2.1"` | Related configuration in the group above. |
+| `RUNWAY_VIDEO_MODEL` | `"veo3.1"` | Related configuration in the group above. |
 | `RUNWAY_EDIT_MODEL` | `"aleph2"` | Related configuration in the group above. |
 | `RUNWAY_AUDIO_MODEL` | `"seed_audio"` | Related configuration in the group above. |
 | `RUNWAY_MUSIC_MODEL` | `"eleven_music_v2_5"` | Full-length instrumental soundtracks for videos (Runway text_to_music, billed per requested second). |

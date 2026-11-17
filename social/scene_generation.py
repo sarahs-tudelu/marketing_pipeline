@@ -163,7 +163,7 @@ def generation_inputs(db, settings, job, product_references):
         validate_scene(db, settings, style)
     scene = plan.get("scene_reference")
     if not scene:
-        # Gen-4 Image supports the same portrait/landscape ratios as the video step.
+        # payload_for selects the image model's supported resolution in the video's orientation.
         return (
             brief | {"operation": "image", "generation_prompt": plan["scene_prompt"], "video_scene": True},
             # The style scene goes to Runway untagged: lighting and color only, never product content.

@@ -15,6 +15,21 @@ from .storage import storage
 BASE = "https://api.dev.runwayml.com/v1"
 
 
+def video_clip_limit(model="veo3.1"):
+    return 8 if model.startswith("veo") else 10
+
+
+def job_settings(settings, brief):
+    """Keep paid tasks, recovery and replacement clips on the job's original models.
+
+    Jobs saved before model selection was persisted used Gen-4 Image and Gen-4.5.
+    """
+    return settings.model_copy(update={
+        "runway_image_model": brief.get("runway_image_model", "gen4_image"),
+        "runway_video_model": brief.get("runway_video_model", "gen4.5"),
+    })
+
+
 class Runway:
     def __init__(self, settings, client=None):
         self.s = settings
@@ -154,6 +169,14 @@ def payload_for(settings, brief, platform, references, *, audio=False, style=Non
         )
         if brief.get("video_scene"):
             result["ratio"] = "720:1280" if p.video_height > p.video_width else "1280:720"
+        if settings.runway_image_model == "nano_banana_2.1":
+            result.pop("seed")
+            result["thinkingLevel"] = "high"
+            result["ratio"] = (
+                ("768:1376" if p.video_height > p.video_width else "1376:768")
+                if brief.get("video_scene")
+                else ("928:1152" if p.image_height > p.image_width else "1024:1024")
+            )
         if references or style:
             result["referenceImages"] = [{"uri": uri, "tag": f"ref{i}"} for i, uri in enumerate(references)]
             result["referenceImages"] += [{"uri": style}] if style else []
@@ -172,9 +195,19 @@ def payload_for(settings, brief, platform, references, *, audio=False, style=Non
         outputFormat="mp4",
         ratio="720:1280" if p.video_height > p.video_width else "1280:720",
     )
-    if not 2 <= result["duration"] <= 10:
-        raise ValueError("Runway Gen-4.5 calls must be 2-10 seconds; use the saved multi-clip plan")
+    maximum = video_clip_limit(settings.runway_video_model)
+    if not 2 <= result["duration"] <= maximum:
+        raise ValueError(f"Runway {settings.runway_video_model} clips must be 2-{maximum} seconds; "
+                         "use the saved multi-clip plan")
+    if settings.runway_video_model.startswith("veo"):
+        # Keep the planned edit length; assembly trims the extra generated seconds.
+        result["duration"] = next(d for d in (4, 6, 8) if d >= brief["duration"])
+        result.pop("outputFormat")
+        result["audio"] = False  # The pipeline composes the full-length soundtrack separately.
     if references:
-        result["promptImage"] = references[0]
+        result["promptImage"] = (
+            [{"uri": references[0], "position": position} for position in ("first", "last")]
+            if settings.runway_video_model.startswith("veo") else references[0]
+        )
         return "image_to_video", result
     return "text_to_video", result

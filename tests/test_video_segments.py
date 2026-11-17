@@ -100,17 +100,17 @@ def test_full_pipeline_joins_saved_clips_and_soundtrack_once(db, settings, monke
     monkeypatch.setattr('social.seed.seed_media', lambda duration=4: (b'', clip(duration, 0)))
     job = queue_jobs(db, settings, brief(db, settings, audio_prompt='Ambient music'))[0]
     db.commit()
-    for _ in range(12):
+    for _ in range(14):
         process_jobs(db, settings)
     assert job.state == 'complete', job.error
-    assert len(job.source_asset_ids) == 10
-    assert len(job.brief['video_segments']) == 9
+    assert len(job.source_asset_ids) == 12
+    assert len(job.brief['video_segments']) == 11
     assert all(s.get('prompt') and s.get('output_asset_id') for s in job.brief['video_segments'])
-    assert len(set(s['prompt'] for s in job.brief['video_segments'])) == 9
+    assert len(set(s['prompt'] for s in job.brief['video_segments'])) == 11
     result = db.get(Asset, job.output_asset_id)
     assert result.media['duration'] == 90
     assert result.media['audio_codecs'] == ['aac']
-    assert result.tags['generated_audio'] and len(result.tags['video_sequence']) == 9
+    assert result.tags['generated_audio'] and len(result.tags['video_sequence']) == 11
     assert len(db.scalars(select(Post)).all()) == 1
     for segment in result.tags['video_sequence']:
         source = db.get(Asset, segment['output_asset_id'])

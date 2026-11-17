@@ -76,8 +76,8 @@ class Settings(BaseSettings):
     video_provider: Literal["runway", "disabled", "http"] = "runway"
     runway_api_key: SecretStr = SecretStr("")
     runway_api_version: str = "2024-11-06"
-    runway_image_model: Literal["gen4_image"] = "gen4_image"
-    runway_video_model: Literal["gen4.5"] = "gen4.5"
+    runway_image_model: Literal["nano_banana_2.1", "gen4_image"] = "nano_banana_2.1"
+    runway_video_model: Literal["veo3.1", "gen4.5"] = "veo3.1"
     runway_edit_model: Literal["aleph2"] = "aleph2"
     runway_audio_model: Literal["seed_audio"] = "seed_audio"
     runway_music_model: Literal["eleven_music_v2_5"] = "eleven_music_v2_5"

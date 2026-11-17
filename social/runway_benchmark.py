@@ -81,14 +81,17 @@ def adapted_payload(endpoint, payload, variant):
     elif endpoint in {"image_to_video", "text_to_video"}:
         p["model"] = variant.video
         if variant.video.startswith("veo"):
-            if endpoint != "image_to_video" or not isinstance(p.get("promptImage"), str):
+            frame = p.get("promptImage")
+            if isinstance(frame, list):
+                frame = next((f["uri"] for f in frame if f["position"] == "first"), None)
+            if endpoint != "image_to_video" or not isinstance(frame, str):
                 raise ValueError("Veo benchmark requires a reviewed first frame")
             if p.get("duration") not in (4, 6, 8):
                 raise ValueError("Veo benchmark requires exactly 4, 6 or 8 seconds per clip")
             p.pop("outputFormat", None)
             p["audio"] = False
             if variant.last_frame:
-                p["promptImage"] = [{"uri": p["promptImage"], "position": pos} for pos in ("first", "last")]
+                p["promptImage"] = [{"uri": frame, "position": pos} for pos in ("first", "last")]
     return p
 
 
@@ -431,7 +434,8 @@ def setup_branch(settings, manifest, directory, variant):
             from .idea_plan import END_CARD_SECONDS
             segment["duration"] = manifest["brief"]["duration"] - END_CARD_SECONDS
             brief["duration"] = manifest["brief"]["duration"]
-    brief.update(failed_tasks=[], generation_prompt=plan["prompt"], active_generation="scene")
+    brief.update(failed_tasks=[], generation_prompt=plan["prompt"], active_generation="scene",
+                 runway_image_model=variant.image, runway_video_model=variant.video)
     brief.pop("scene_retry", None)
     job.brief = brief
     job.state, job.stage, job.task_id, job.error = "queued", "visual", "", ""
