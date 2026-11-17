@@ -20,6 +20,7 @@ from social.seed import seed_media
 from social.storage import storage
 
 REAL_REVIEW = scenes.review_scene
+REAL_SELECTOR = refs.select_reference
 
 
 @pytest.fixture
@@ -116,6 +117,9 @@ def test_prompt_led_scene_is_saved_checked_then_animated(db, settings, video_job
         assert "Preparing the scene from your prompt" in page.text
         progress = client.get("/api/media-jobs").json()[0]
         assert progress["generation_phase"] == "scene" and progress["completed_clips"] == 0
+        assert progress["saved_scenes"] == 1 and progress["retry_count"] == 0
+        assert "View latest generated scene" in page.text
+        assert f'/admin/assets/{scene_id}/edit' in page.text
     process_jobs(db, settings, provider)
     assert refs.current_plan(video_job)["scene_check"]["passed"]
     assert provider.submitted[1][0] == "image_to_video"
@@ -128,9 +132,16 @@ def test_prompt_led_scene_is_saved_checked_then_animated(db, settings, video_job
     assert storage(settings).read(db.get(Asset, scene_id).storage_key) == provider.still
 
 
+@pytest.mark.parametrize("segmented", [False, True])
 def test_rejected_scene_requires_correction_and_carries_feedback_into_new_scene(
-    db, settings, video_job, monkeypatch
+    db, settings, video_job, monkeypatch, segmented
 ):
+    if segmented:
+        video_job.brief = video_job.brief | {"video_segments": [{
+            "index": 0, "start": 0, "duration": 6, "seed": 123,
+            "system": "Pergolas", "prompt": "A white pergola in a courtyard.",
+        }]}
+        db.commit()
     reviewed, planned = [], []
     reason = "A roof member floats above the frame."
 
@@ -188,12 +199,86 @@ def test_rejected_scene_requires_correction_and_carries_feedback_into_new_scene(
     assert planned[0]["scene_retry"]["review"]["reasons"] == [reason]
     assert planned[0]["scene_retry"]["prompt_edited"] is True
     assert planned[1]["scene_retry"]["review"]["reasons"] == [reason]
+    assert planned[1]["scene_retry"]["operator_prompt"] == "White pergola in a courtyard, all roof members connected."
     assert "All roof members physically connected" in provider.submitted[1][1]["promptText"]
     assert all(r.id != saved for r in provider.uploaded)  # Rejected image isn't a product/style reference.
     for _ in range(2):
         process_jobs(db, settings, provider)
     assert len(reviewed) == 2
     assert provider.submitted[-1][0] == "image_to_video"
+    assert len(planned) == 2  # Checking/animating the replacement must not discard it and replan.
+    with TestClient(create_app(settings)) as client:
+        page = client.get("/admin/media-queue")
+        progress = client.get("/api/media-jobs").json()[0]
+        assert progress["saved_scenes"] == 2 and progress["retry_count"] == 2
+        assert 'data-job-scenes="2"' in page.text and 'data-job-retries="2"' in page.text
+        assert "View saved scene 1" in page.text and "View saved scene 2" in page.text
+
+
+def test_correction_planner_sees_rejected_pixels_but_runway_only_gets_product_reference(
+    db, settings, video_job, photo, monkeypatch
+):
+    from fastapi.testclient import TestClient
+
+    from social.app import create_app
+
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(
+        passed=False, reasons=["The frame has a floating roof member."]))
+    provider = Provider(db, video_job, settings)
+    for _ in range(3):
+        process_jobs(db, settings, provider)
+    rejected = refs.current_plan(video_job)["scene_reference"]
+    previous = refs.current_plan(video_job)["scene_prompt"]
+    monkeypatch.setattr(refs, "select_reference", REAL_SELECTOR)
+    seen = []
+
+    def response(self, endpoint, payload):
+        seen.append(payload)
+        assert refs.current_plan(video_job) is None  # retry removes the rejected plan.
+        selected = choice(refs.asset_record(photo)).model_copy(update={
+            "scene_requirements": ["White aluminum frame with fixed roof members connected at both ends"],
+        })
+        return {"status": "completed", "output": [{"type": "message", "content": [
+            {"type": "output_text", "text": selected.model_dump_json()}]}]}
+
+    monkeypatch.setattr(OpenAI, "call", response)
+    with TestClient(create_app(settings)) as client:
+        token = client.get("/api/session").json()["csrf"]
+        result = client.post(f"/forms/media-jobs/{video_job.id}/resubmit", data={"csrf": token, "prompt": previous})
+        assert result.status_code == 200
+    db.refresh(video_job)
+    process_jobs(db, settings, provider)
+    assert video_job.state == "running", video_job.error
+    content = seen[0]["input"][0]["content"]
+    context = json.loads(content[0]["text"].split("Context: ")[1])
+    assert context["scene_retry"]["prompt_edited"] is False
+    assert context["scene_retry"]["scene"]["asset_id"] == rejected["asset_id"]
+    assert len([p for p in content if p["type"] == "input_image"]) == 2
+    assert any(p.get("text", "").startswith("REJECTED OUTPUT:") for p in content)
+    assert all(r.id != rejected["asset_id"] for r in provider.uploaded)
+    assert len(provider.submitted) == 2
+
+
+def test_provider_failure_during_correction_keeps_visual_feedback(db, settings, video_job, monkeypatch):
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(
+        passed=False, reasons=["The roof is floating."]))
+    provider = Provider(db, video_job, settings)
+    for _ in range(3):
+        process_jobs(db, settings, provider)
+    scene = refs.current_plan(video_job)["scene_reference"]
+    monkeypatch.setattr(refs, "select_reference", lambda s, r, c: choice(r[0]).model_copy(update={
+        "scene_requirements": ["White aluminum pergola with every roof member connected"],
+    }))
+    retry_step(db, video_job, "Keep the white finish and connect the roof members.")
+    process_jobs(db, settings, provider)
+    assert video_job.state == "running", video_job.error
+    monkeypatch.setattr(provider, "task", lambda _: {"status": "FAILED", "failureCode": "INTERNAL.BAD_OUTPUT.CODE01"})
+    process_jobs(db, settings, provider)
+    assert video_job.state == "failed"
+    retry_step(db, video_job, retry_option(video_job)["prompt"])
+    retry = video_job.brief["scene_retry"]
+    assert retry["scene"] == scene and retry["review"]["reasons"] == ["The roof is floating."]
+    assert retry["operator_prompt"] == "Keep the white finish and connect the roof members."
 
 
 def test_later_scene_uses_shared_style_without_reusing_its_background(

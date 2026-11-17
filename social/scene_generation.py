@@ -216,6 +216,7 @@ def save_scene(db, settings, job, data):
             "task_id": job.task_id,
             "model": settings.runway_image_model,
             "output_asset_id": asset.id,
+            "saved_at": now().isoformat(),
             "prompt": plan["scene_prompt"],
             **({"segment_index": segment["index"]} if segment else {}),
         },

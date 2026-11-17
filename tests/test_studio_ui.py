@@ -367,6 +367,41 @@ def test_media_queue_page_updates_in_place(db, settings):
         asyncio.run(exercise(client))
 
 
+def test_media_queue_refreshes_a_new_scene_with_identical_failure(db, settings, assets):
+    from test_runway_media import brief_for
+
+    from social.media_studio import queue_jobs
+
+    playwright = pytest.importorskip("playwright.async_api")
+    job = queue_jobs(db, settings, brief_for(db, settings))[0]
+    job.state, job.error = "failed", "Scene needs changes before animation: Wrong finish."
+    job.brief = job.brief | {"active_generation": "scene"}
+    job.task_history = [{"stage": "scene", "task_id": "first-task", "output_asset_id": assets[0].id}]
+    db.commit()
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=os.environ["BROWSER_BINARY"], headless=True)
+            page = await browser.new_page()
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+            await page.goto("http://studio.test/admin/media-queue")
+            await playwright.expect(page.locator("#media-queue")).to_contain_text("Saved scene images: 1")
+            job.task_history = [*job.task_history, {
+                "stage": "scene", "task_id": "new-task", "output_asset_id": assets[0].id,
+            }]
+            job.brief = job.brief | {"failed_tasks": [{"stage": "scene", "error": job.error}]}
+            db.commit()  # Same state, error, clip count and phase as the first attempt.
+            await playwright.expect(page.locator("#media-queue")).to_contain_text("Saved scene images: 2", timeout=8000)
+            await page.get_by_text("Scene generation history", exact=True).click()
+            await playwright.expect(page.get_by_role("link", name="View saved scene 2")).to_be_visible()
+            await page.set_viewport_size({"width": 390, "height": 844})
+            assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
 def test_long_video_progress_refreshes_between_clips(db, settings, assets, house_logo):
     from test_runway_media import brief_for
 

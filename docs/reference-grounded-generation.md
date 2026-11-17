@@ -28,14 +28,33 @@ restrictions on other supported canopy configurations.
 
 When a scene is rejected, **Generate corrected scene** carries its full review,
 previous intended changes and any edited prompt into the next planning attempt.
-The rejected image and plan remain in the audit history; the image is never used
-as product or style evidence. Each correction must be expressed in the new scene's
+The planner receives the rejected image's pixels, labeled for diagnosis only, alongside
+the original company candidates. The rejected image and plan remain in the audit history;
+the rejected image is never sent to Runway as a product or style reference. Each correction must be expressed in the new scene's
 requirements, and the replacement must pass review before animation. **Resume**
 cannot re-review an unchanged rejected scene until it happens to pass. A temporary
 review/download failure still resumes the saved work without buying another scene.
 Runway's terminal internal errors use **Generate the scene again** to submit a new
 task with a new seed. New generation requires the existing user action; there are
 no automatic paid retries, and other completed clips remain intact.
+
+Structured scene prompts describe only the selected configuration. A two-post canopy
+does not receive generic instructions about hanger rods; rod-supported scenes retain
+the owner's above-roof orientation cue. The complete product requirements and setting
+must fit the prompt limit or planning stops before a paid submission. Generic product
+boilerplate no longer crowds out the setting. Animation preserves the checked scene's
+geometry instead of listing alternative supports. Full Builder and owner rules still
+apply in planning and both scene and final visual review. This follows Runway's guidance
+to [describe positive visual outcomes](https://help.runwayml.com/hc/en-us/articles/35694045317139-Gen-4-Image-Prompting-Guide)
+and use [explicit image-reference roles](https://help.runwayml.com/hc/en-us/articles/40042718905875-Creating-with-Gen-4-Image-References).
+
+An unchanged retry uses the original idea and any previous explicit operator edit;
+the prior submitted prompt is diagnostic history. A failed provider task does not erase
+the last visual diagnosis. The queue shows saved scene attempts, task IDs, links and
+newly recorded save times. It refreshes on retry/task/output changes even when a new
+image fails with identical error text. The exact scene prompt and review time are visible
+under the product reference. Generation remains probabilistic; these changes do not
+guarantee that a new image will pass review.
 
 Offline fixtures make no reference-selection or generation calls. Existing real-media uploads retain their own-media workflow. Existing video edits retain their source video and Builder constraints. Already-running tasks keep their recorded inputs; completed clips are not automatically regenerated or republished. A replacement affects the requested clip, so other flagged clips still need correction.
 

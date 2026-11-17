@@ -71,7 +71,7 @@ def choice(record, prompt="The existing fixed pergola remains stationary; a slow
     )
 
 
-def test_scene_product_requirements_survive_long_creative_prompt():
+def test_scene_keeps_exact_post_configuration_and_complete_setting():
     guidance = VisualGuidance.model_validate(refs.reference_config("visual-guidance.builder.yaml"))
     profile = profile_for(guidance, "canopies")
     requirements = [
@@ -81,18 +81,32 @@ def test_scene_product_requirements_survive_long_creative_prompt():
         "Smooth underside lit only by the continuous Crown LED line",
         "Plain unmarked fascia and clear entrance glazing",
     ]
-    prompt = refs.compose_scene_prompt("A peaceful plaza at dusk. " * 150 + "\U0001f305" * 40,
-                                      requirements, profile, has_style=True)
+    setting = "A peaceful plaza at blue hour with clear entrance glazing and visitors arriving."
+    prompt = refs.compose_scene_prompt(setting, requirements, profile, has_style=True)
     assert all(item in prompt for item in requirements)
     assert "@ref0" in prompt and "@ref1" in prompt
-    assert prompt.endswith(HANGER_ROD_CUE)
+    assert setting in prompt
+    assert "rods" not in prompt and profile.prompt_cue not in prompt
     assert len(prompt.encode("utf-16-le")) <= 2000
+    motion = refs.compose_motion_prompt("A slow forward camera push.", requirements, profile)
+    assert "rods" not in motion and "supports" in motion and "unchanged" in motion
+
+
+def test_rod_scene_keeps_owner_orientation_in_still_and_motion():
+    guidance = VisualGuidance.model_validate(refs.reference_config("visual-guidance.builder.yaml"))
+    profile = profile_for(guidance, "canopies")
+    requirements = ["Single aluminum canopy supported by hanger rods"]
+    assert refs.compose_scene_prompt("An entrance at dusk.", requirements, profile).endswith(HANGER_ROD_CUE)
+    assert refs.compose_motion_prompt("Slow camera push.", requirements, profile).endswith(HANGER_ROD_CUE)
 
 
 def test_overlong_product_requirements_stop_instead_of_silently_disappearing():
     guidance = VisualGuidance.model_validate(refs.reference_config("visual-guidance.builder.yaml"))
     with pytest.raises(ValueError, match="requirements exceed"):
         refs.compose_scene_prompt("An entrance", ["Required detail " * 100], profile_for(guidance, "canopies"))
+    with pytest.raises(ValueError, match="no new scene task"):
+        refs.compose_scene_prompt("A plaza. " * 150 + "\U0001f305" * 40,
+                                  ["One canopy roof"], profile_for(guidance, "canopies"))
 
 
 def test_image_generation_keeps_the_image_request_with_required_product_details(

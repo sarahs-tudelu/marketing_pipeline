@@ -150,7 +150,14 @@ def enforce_job_prompt(db, job):
     system = (segment or {}).get("system") or (segment or {}).get("shot", {}).get("system")
     system = system or job.brief.get("depicted_system") or job.brief["product"]
     profile = profile_for(guidance, system)
-    if segment and segment.get("prompt"):
+    target = segment or job.brief
+    plan = target.get("reference_plan", {})
+    planned_prompt = target.get("prompt") if segment else job.brief["generation_prompt"]
+    if plan and plan.get("prompt") == planned_prompt:
+        # Reference planning has already composed and saved the exact selected configuration.
+        # Re-appending generic options here changes the cache key and discards a paid scene.
+        pass
+    elif segment and segment.get("prompt"):
         segments = [
             s | {"prompt": constrain_prompt(s["prompt"], profile, system)} if s["index"] == segment["index"] else s
             for s in job.brief["video_segments"]

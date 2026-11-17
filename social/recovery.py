@@ -293,12 +293,19 @@ def retry_step(db, job, prompt):
                 "previous_prompt": plan.get("scene_prompt", ""),
                 "creative_changes": plan.get("creative_changes", ""),
                 "scene_requirements": plan.get("scene_requirements", []),
-                "review": plan.get("scene_check", {}),
-                "scene": plan.get("scene_reference"),
             })
+            if plan.get("scene_check", {}).get("passed") is False:
+                retry.update(review=plan["scene_check"], scene=plan.get("scene_reference"))
+        # A provider failure before a replacement exists must not erase the last visual
+        # diagnosis or an operator's earlier edit on the next unchanged retry.
+        if retry.get("prompt_edited") and not retry.get("operator_prompt"):
+            retry["operator_prompt"] = retry.get("requested_prompt", "")
+        edited = text != " ".join(step["prompt"].split())
+        if edited:
+            retry["operator_prompt"] = text
         retry.update({
             "requested_prompt": text,
-            "prompt_edited": text != " ".join(step["prompt"].split()),
+            "prompt_edited": edited,
         })
         failed["stage"] = "scene"
         if step["index"] is not None:

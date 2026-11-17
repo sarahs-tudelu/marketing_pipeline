@@ -524,6 +524,8 @@ def create_app(settings=None):
                 "stage": j.stage,
                 "generation_phase": j.brief.get("active_generation", ""),
                 "task_id": j.task_id,
+                "retry_count": len(j.brief.get("failed_tasks", [])),
+                "saved_scenes": sum(h.get("stage") == "scene" for h in j.task_history),
                 "error": j.error,
                 "asset_id": j.output_asset_id,
                 "post_id": j.post_id,

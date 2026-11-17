@@ -82,9 +82,10 @@ as an approved cantilever.
 This is a current owner correction, separate from the immutable Builder source
 snapshot and caption facts. The planner, prompt writer and visual reviewer
 receive its source and version even when a job uses older facts without Builder
-guidance. Each relevant image, video or video-edit clip retains a positive
-above-roof support cue within Runway's prompt limit, including manually edited
-and retried prompts immediately before submission. Job records preserve the
+guidance. Structured reference-based scenes describe only their selected supports;
+scenes with rods retain the positive above-roof cue without adding rods to post-only
+designs. Legacy prompts and video edits retain the general conditional cue. Manually
+edited and retried prompts receive the same planning and review rules. Job records preserve the
 applied correction. Corrections override conflicting references and earlier
 generated media; they do not authorize additional caption claims.
 
