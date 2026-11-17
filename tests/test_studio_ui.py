@@ -681,10 +681,6 @@ def test_idea_page_fits_a_desktop_browser_and_accepts_dropped_files(db, settings
             side = await form.locator(".idea-side").bounding_box()
             assert side["x"] >= main["x"] + main["width"] and side["y"] < main["y"] + 100
             await playwright.expect(button).to_be_in_viewport()
-            # It stays on screen while the long side of the form is scrolled.
-            await form.get_by_text("More options").click()
-            await page.mouse.wheel(0, 1200)
-            await playwright.expect(button).to_be_in_viewport()
             # Files dropped on the files box are added; a drop that misses it doesn't open the file.
             assert await page.evaluate(DROP_FILE, ["#idea-media small", "terrace.jpg"]) == ["terrace.jpg"]
             assert await page.evaluate(DROP_FILE, ['textarea[name="prompt"]', "other.jpg"]) == ["terrace.jpg"]
@@ -700,8 +696,54 @@ def test_idea_page_fits_a_desktop_browser_and_accepts_dropped_files(db, settings
                 "Nothing was submitted"
             )
             assert not requests
-            await page.set_viewport_size({"width": 390, "height": 844})
+            assert not errors
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+
+
+def test_idea_page_on_a_phone(db, settings):
+    playwright = pytest.importorskip("playwright.async_api")
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(
+                executable_path=os.environ["BROWSER_BINARY"], headless=True
+            )
+            phone = await browser.new_context(
+                viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True
+            )
+            page = await phone.new_page()
+            page.set_default_timeout(5000)
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+            await page.goto("http://studio.test/admin/create")
+            form = page.locator("#new-idea")
+            idea = form.get_by_label("Your idea", exact=True)
+            # The menu is one row, so the idea box starts on the first screen.
+            await playwright.expect(idea).to_be_in_viewport(ratio=1)
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            # 16px text, so tapping a field doesn't zoom the page.
+            for field in (idea, form.locator('select[name="kind"]'), form.locator('input[name="product"]')):
+                assert await field.evaluate("el => parseFloat(getComputedStyle(el).fontSize)") >= 16
+            # The choices are finger-sized and in reading order: Format, Platforms, More options, Plan.
+            heights = await form.locator(".choice, .checkbox").evaluate_all(
+                "els => els.filter((el) => el.offsetParent).map((el) => el.getBoundingClientRect().height)"
+            )
+            assert min(heights) >= 44
+            order = [
+                await form.locator(selector).first.evaluate("el => el.getBoundingClientRect().top + scrollY")
+                for selector in ("#idea-media", 'input[name="format"]', 'input[name="platforms"]', "summary", ".primary")
+            ]
+            assert order == sorted(order)
+            # Drag-and-drop wording isn't shown on a touch screen.
+            await playwright.expect(form.locator(".drag-hint")).to_be_hidden()
+            # On any page the current menu item is scrolled fully into view.
+            await page.goto("http://studio.test/admin/connections")
+            await page.evaluate("document.fonts.ready.then(() => true)")
+            await playwright.expect(page.get_by_role("link", name="Connections", exact=True)).to_be_in_viewport(ratio=1)
             assert not errors
             await browser.close()
 

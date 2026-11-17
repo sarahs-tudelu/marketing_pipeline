@@ -159,6 +159,18 @@
     }
   });
 
+  // On phones the menu and the idea steps are rows that scroll sideways; show the current one,
+  // again once the brand font has loaded and widened the items.
+  const showCurrent = () => [[document.querySelector("nav"), 'a[aria-current="page"]'], [document.querySelector(".steps"), "li.current"]]
+    .forEach(([row, current]) => {
+      const item = row?.querySelector(current);
+      if (!item || row.scrollWidth <= row.clientWidth) return;
+      const offset = item.getBoundingClientRect().left - row.getBoundingClientRect().left;
+      row.scrollLeft += offset - (row.clientWidth - item.offsetWidth) / 2;
+    });
+  showCurrent();
+  document.fonts?.ready.then(showCurrent);
+
   // New post from an idea: files dropped anywhere on the files box are added to it, and a
   // drop that misses the box is ignored instead of the browser opening the file in this tab.
   const ideaMedia = document.getElementById("idea-media");

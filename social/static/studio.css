@@ -222,10 +222,27 @@ pre{overflow:auto;padding:16px;font-family:var(--mono);font-size:12.5px;white-sp
   .idea-side .checkbox{margin:6px 0;font-size:14px}
   .idea-side small{margin-top:8px}
   .idea-side>p{margin:0;font-size:13px}
+  .idea-side details{margin:0 0 12px;padding:10px 0;border-top:1px solid var(--divider)}
+  .idea-side details label{margin:12px 0}
+  .idea-side details fieldset{margin:18px 0 4px}
+  .idea-side .two{grid-template-columns:1fr;gap:0}
   .idea-side .actions{margin-top:12px}
   .idea-side .primary{width:100%}
 }
 @media(min-width:1240px) and (min-height:700px){.idea-side{position:sticky;top:20px}}
+/* Phones: no card around the form, so fields get the full width; no boxes inside boxes;
+   choices stacked full width with finger-sized rows; a full-width Plan this idea. */
+@media(max-width:650px){
+  .idea-page{padding:0;background:none;border:0;border-radius:0}
+  .idea-page h2{font-size:19px}
+  .idea-page fieldset{padding:12px 14px 14px;background:var(--card)}
+  .idea-page fieldset fieldset{margin:14px 0 8px;padding:0;border:0;background:none}
+  .idea-page .choice-row{flex-direction:column;align-items:stretch;gap:8px}
+  .idea-page .choice{min-height:46px}
+  .idea-page .checkbox{min-height:44px;margin:0;padding:8px 0}
+  .idea-page .actions .primary{width:100%;min-height:50px;font-size:15.5px}
+}
+@media(hover:none) and (pointer:coarse){.drag-hint{display:none}}
 
 /* Overview */
 .status-strip{display:grid;grid-template-columns:1fr 1fr auto;gap:18px;align-items:center}
@@ -278,11 +295,19 @@ body.standalone h1{margin-bottom:12px}
   .brand{display:flex;align-items:baseline;gap:10px;margin:0;padding:16px 16px 10px;border-bottom:0}
   .brand img{width:96px}
   .brand span{margin:0}
-  nav{display:flex;flex-wrap:wrap;gap:4px;padding:0 12px 12px}
-  nav a{padding:6px 10px;font-size:13px;border-radius:999px}
+  /* The menu is one row that scrolls sideways, so the page starts on the first screen. */
+  nav{display:flex;flex-wrap:nowrap;gap:4px;padding:0 12px 12px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  nav::-webkit-scrollbar{display:none}
+  nav a{flex:0 0 auto;padding:7px 12px;font-size:13.5px;white-space:nowrap;border-radius:999px}
   .nav-group,.aside-note{display:none}
   main{margin:0}
-  header{flex-direction:column;align-items:flex-start;gap:12px;margin-bottom:20px;padding:14px var(--gutter)}
+  header{flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:16px;padding:12px var(--gutter)}
+  header button{min-height:36px;padding:6px 14px;font-size:13px}
+  .banner{gap:2px 10px;margin-bottom:14px;padding:10px 14px;font-size:13.5px}
+  .steps{flex-wrap:nowrap;margin:0 calc(-1 * var(--gutter)) 4px;padding:0 var(--gutter);overflow-x:auto;scrollbar-width:none}
+  .steps::-webkit-scrollbar{display:none}
+  .steps li{flex:0 0 auto}
+  .two{row-gap:0}
   .two,.status-strip,.clip-list li{grid-template-columns:1fr}
   .metrics{grid-template-columns:1fr 1fr;gap:12px}
   .metrics>div{padding:16px}
@@ -291,4 +316,8 @@ body.standalone h1{margin-bottom:12px}
   table{display:block;overflow:auto}
   .clip-length{padding-bottom:0}
   .steps li{font-size:12.5px}
+}
+/* iPhones zoom the page into any field with text under 16px when it's tapped. */
+@media(max-width:650px),(hover:none) and (pointer:coarse){
+  input,select,textarea,textarea[name=document],textarea[name=tags]{font-size:16px}
 }

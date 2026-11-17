@@ -8,12 +8,21 @@
     <fieldset id="idea-media"><legend>Your photos, videos or audio (optional)</legend>
       {% if idea_uploads %}<div class="reference-list">{% for a in idea_uploads %}<label class="checkbox"><input type="checkbox" name="upload_ids" value="{{ a.id }}" checked>{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span> · saved in the asset library</label>{% endfor %}</div>{% endif %}
       <label>Add files<input type="file" name="files" multiple accept="image/*,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/flac"></label>
-      <small class="muted">Choose files or drag them onto this box. They're added to the asset library as real company media, with the usage rights and owner set in the options below (Public unless you change them). Up to {{ max_idea_uploads }} files of {{ (settings.max_upload_bytes / 1000000)|round|int }} MB each. To add AI-made media, upload it in the asset library with its model and prompt.</small>
+      <small class="muted"><span class="drag-hint">Choose files or drag them onto this box. </span>They're added to the asset library as real company media: Public, unless you change the usage rights or owner in the options. Up to {{ max_idea_uploads }} files of {{ (settings.max_upload_bytes / 1000000)|round|int }} MB each. To add AI-made media, upload it in the asset library with its model and prompt.</small>
       <fieldset class="choice-row"><legend>How to use them</legend>
         <label class="choice"><input type="radio" name="upload_use" value="as_is" {{ 'checked' if idea_form.get('upload_use', 'as_is') != 'reference' else '' }}>Post it as it is</label>
         <label class="choice"><input type="radio" name="upload_use" value="reference" {{ 'checked' if idea_form.get('upload_use') == 'reference' else '' }}>Use it as a starting point for new AI media</label>
       </fieldset>
       <small class="muted"><b>As it is:</b> one photo or video, plus an audio file for its sound if you like. It's resized for each platform and AI writes the caption; the Format choice doesn't apply. <b>Starting point:</b> Runway makes new media from it: an image to start a video, a video to edit, or audio to rework.</small>
+    </fieldset>
+    </div>
+    <div class="idea-side">
+    <fieldset class="choice-row"><legend>Format</legend>
+      {% for value, label in formats.items() %}<label class="choice"><input type="radio" name="format" value="{{ value }}" {{ 'checked' if idea_form.get('format', 'auto') == value or (value == 'auto' and idea_form.get('format') not in formats) else '' }}>{{ label }}{{ ' (recommended)' if value == 'auto' else '' }}</label>{% endfor %}
+    </fieldset>
+    <fieldset><legend>Platforms — each gets its own framing and caption</legend>
+      {% for c in connections if c.account.platform not in real_media_only %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ c.account.platform }}" {{ 'checked' if c.account.platform in idea_form.get('platforms', ['instagram']) else '' }}>{{ c.account.platform|platform }}<span class="tag">{{ 'Simulated' if c.dry else 'Live' }}</span></label>{% endfor %}
+      <small class="muted">Pinterest posts only real photos and videos from Google Drive, so it's in <a href="/admin/compose">Post from library media</a>.</small>
     </fieldset>
     {% set needs_options = not idea_form.get('rights', 'public') %}
     <details {{ 'open' if needs_options else '' }}><summary>More options</summary>
@@ -33,15 +42,6 @@
         </div>
       </fieldset>
     </details>
-    </div>
-    <div class="idea-side">
-    <fieldset class="choice-row"><legend>Format</legend>
-      {% for value, label in formats.items() %}<label class="choice"><input type="radio" name="format" value="{{ value }}" {{ 'checked' if idea_form.get('format', 'auto') == value or (value == 'auto' and idea_form.get('format') not in formats) else '' }}>{{ label }}{{ ' (recommended)' if value == 'auto' else '' }}</label>{% endfor %}
-    </fieldset>
-    <fieldset><legend>Platforms — each gets its own framing and caption</legend>
-      {% for c in connections if c.account.platform not in real_media_only %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ c.account.platform }}" {{ 'checked' if c.account.platform in idea_form.get('platforms', ['instagram']) else '' }}>{{ c.account.platform|platform }}<span class="tag">{{ 'Simulated' if c.dry else 'Live' }}</span></label>{% endfor %}
-      <small class="muted">Pinterest posts only real photos and videos from Google Drive, so it's in <a href="/admin/compose">Post from library media</a>.</small>
-    </fieldset>
     <p class="muted">{% if logos %}End cards use <b>{{ logos[0].original_name }}</b>.{% else %}No logo is in the library yet. To end videos with the Tudelu logo, <a href="/admin/upload">upload it</a> and tick <i>This is the Tudelu logo</i>.{% endif %}</p>
     <div class="actions"><button class="primary">Plan this idea</button></div>
     <div data-form-status></div>
