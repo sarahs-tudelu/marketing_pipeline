@@ -388,6 +388,8 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             execution_mode=settings.ai_mode,
             runway_image_model=settings.runway_image_model,
             runway_video_model=settings.runway_video_model,
+            runway_music_model=settings.runway_music_model,
+            runway_audio_model=settings.runway_audio_model,
         )
         if operation in {"video", "video_edit"}:
             if brief.duration > profile.max_duration:
@@ -622,6 +624,7 @@ def _save_output(db, settings, job, data):
             | {"system": (segment or {}).get("system") or brief.get("depicted_system", "")},
             "generated_audio": is_audio,
             "audio_prompt": brief["audio_prompt"],
+            **({"audio_fallback": brief["audio_fallback"]} if is_audio and brief.get("audio_fallback") else {}),
             **({"video_segment": {"index": segment["index"], "start": segment["start"],
                                    "duration": segment["duration"], "input_asset_id": segment.get("input_asset_id")}}
                if segment else {}),
@@ -788,6 +791,20 @@ def _finish(db, settings, job):
             if excess > 0:
                 clips[-1] = clips[-1][:2] + (max(MIN_CLIP_SECONDS, clips[-1][2] - excess),)
             sound_tags = {"video_sound": "music" if sound_asset else "own"}
+            if soundtrack is not None:
+                if hashlib.sha256(soundtrack).hexdigest() != sound_asset.checksum:
+                    raise ValueError("Soundtrack integrity failed before assembly")
+                if brief.get("audio_fallback"):
+                    # Seed Audio has no duration parameter. Keep its original bytes and fit only
+                    # the publishing copy, including the logo ending, before full-stream audio review.
+                    seconds = sum(c[2] for c in clips) + end_card["seconds"]
+                    soundtrack = fit_track(soundtrack, seconds)
+                    sound_tags.update(audio_fallback=brief["audio_fallback"], soundtrack_fit={
+                        "asset_id": sound_asset.id, "checksum": sound_asset.checksum,
+                        "generator": sound_asset.generator, "source_seconds": sound_asset.media["duration"],
+                        "seconds": seconds, "looped": sound_asset.media["duration"] < seconds,
+                        "crossfade_seconds": 2.0, "fade_out_seconds": 1.5,
+                    })
             if soundtrack is None and not any(has_sound(c[0]) for c in clips):
                 # Planned before every video had sound: Runway composes calm ambient music first,
                 # then the video is assembled with it.

@@ -939,7 +939,7 @@ def create_app(settings=None):
                     raise ValueError("Runway already reported this task as failed. Use Generate again instead.")
                 resume_job(job)
             elif action == "resubmit":
-                retry_step(db, job, form.get("prompt", ""))
+                retry_step(db, job, form.get("prompt", ""), audio_model=form.get("audio_model", ""))
             elif action == "reconcile" and job.state == "uncertain" and not job.task_id:
                 import re
 

@@ -161,15 +161,31 @@ with delays capped at 30 minutes; `0` disables automatic retries. This limit is
 separate from scene-quality corrections. The job retains completed video clips,
 their prompts and task history, and retries only audio. The queue shows the earliest
 retry time. The delay survives worker restarts and does not prevent other ready jobs
-from running. After the limit, the job stays failed for manual recovery.
+from running. After the limit, a video's generated music switches once to **Seed Audio
+through Runway**. If the provider specifically reports `Music generation timed out
+after 80s` (or another duration), the app shows that diagnosis even when the failure
+code says rate limited, and switches immediately instead of repeating the same model.
+Uploaded audio references and audio-only jobs keep their selected model.
 
-For an already-failed job from an older build, use **Generate the music again** once
-after updating web/worker. That explicit retry waits two minutes and starts a fresh
-bounded retry sequence. The music prompt can remain unchanged. No database migration
-is needed. No provider or model is substituted. Other terminal failure codes, HTTP
-errors and ambiguous submissions retain their existing recovery behavior. A new
+For an already-failed video music task from an older build with this rate-limit code,
+use **Try Seed Audio through Runway** after updating web/worker. The alternate request
+keeps the music direction and all saved clips; it uses the existing `RUNWAY_API_KEY`.
+**Generate the music again** still retries the current model after two minutes.
+`MEDIA_AUTO_RETRIES=0` also disables automatic model switching; manual recovery remains
+available. If Seed Audio fails, the job stops for manual recovery without another
+automatic retry cycle. The queue displays the selected alternate model, and the
+brief records the original failure, model switch and prompt. No database migration
+is needed. Other terminal failure codes, HTTP errors and ambiguous submissions
+retain their existing recovery behavior. A new
 generation can incur Runway charges; this delay does not guarantee capacity has
 recovered. Runway's [task-failure guidance](https://docs.dev.runwayml.com/errors/task-failures/)
 recommends delaying retries for temporary upstream failures.
+
+Seed Audio's [Runway request schema](https://docs.dev.runwayml.com/api/) supports music
+prompts but has no explicit duration parameter. The app preserves the returned audio
+as an original asset and fits the publishing soundtrack to the full video duration:
+short tracks loop with crossfades, long tracks are trimmed, and the ending fades out.
+The rendition records the source checksum and fitting details. Normal caption,
+disclosure, visual and full-stream audio checks still apply before publication.
 
 The authenticated, CSRF-protected API also exposes `POST /api/media-jobs` with a `CreativeBrief` JSON object and `GET /api/media-jobs` for status. Neither endpoint returns credentials or expiring signed output URLs.

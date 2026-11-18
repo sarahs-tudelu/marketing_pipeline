@@ -337,7 +337,8 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0):
     first = chosen[0][0]
     # The first run's retries and last step are its own history, not the replacement's.
     brief = {
-        k: v for k, v in deepcopy(job.brief).items() if k not in {"failed_tasks", "active_generation"}
+        k: v for k, v in deepcopy(job.brief).items()
+        if k not in {"failed_tasks", "active_generation", "runway_retry_at"}
     } | {
         "workflow": "immediate",
         "create_posts": True,
@@ -394,6 +395,7 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0):
 
         prompt = chosen[0][1]
         brief |= {"audio_prompt": prompt, "soundtrack_asset_id": ""}
+        brief.pop("audio_fallback", None)
         if not job.brief.get("audio_reference_ids"):
             brief["soundtrack_model"] = "music"
         style = next((k for k, (_, direction) in AMBIENT_STYLES.items() if direction == prompt), None)

@@ -247,15 +247,21 @@ def pending_step(job):
 
 
 def runway_failure(job, task):
-    """A Runway task failure in words. Only the failure code is kept, never Runway's free text."""
+    """Keep safe codes and a recognized timeout duration, never arbitrary provider free text."""
     step = pending_step(job)
     code = str(task.get("failureCode") or "")
     code = code if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", code) else ""
     upper = code.upper()
+    timeout = re.fullmatch(r"Music generation timed out after ([0-9]{1,5})s\.?", str(task.get("failure") or ""), re.I)
     if task.get("status") != "FAILED":
         why = "The task was cancelled in Runway. Generate it again below."
     elif "SAFETY" in upper or "MODERATION" in upper:
         why = "Runway's content moderation declined it. Change the prompt below, then generate it again."
+    elif upper == RATE_LIMIT_CODE and timeout and step and step["kind"] == "music":
+        why = (
+            f"Runway's music provider timed out after {int(timeout[1])} seconds. "
+            "The provider returned a rate-limit code, but reported a generation timeout. Saved clips are kept."
+        )
     elif upper == RATE_LIMIT_CODE:
         why = (
             "Runway's upstream provider is rate limiting requests. Wait before retrying this step; "
@@ -278,7 +284,9 @@ def retry_option(job):
     if not step or not step["prompt"] or (job.task_id and not task_failed(job)):
         return None
     if rate_limited_music(job):
-        step = step | {"rate_limited": True}
+        step = step | {"rate_limited": True, "music_timeout": music_timed_out(job)}
+    if alternate_music_available(job):
+        step = step | {"alternate_audio_model": "seed_audio"}
     return step
 
 
@@ -288,6 +296,20 @@ def rate_limited_music(job):
         task_failed(job) and step and step["kind"] == "music"
         and "The task was cancelled in Runway." not in job.error
         and re.search(r"Runway code: " + re.escape(RATE_LIMIT_CODE) + r"\.(?:\s|$)", job.error)
+    )
+
+
+def music_timed_out(job):
+    return bool(re.search(r"Runway's music provider timed out after [0-9]+ seconds\.", job.error or ""))
+
+
+def alternate_music_available(job):
+    """Only a definitive failed music task can switch models; uploaded audio retains its direction."""
+    return bool(
+        rate_limited_music(job) and job.stage == "audio"
+        and job.brief["operation"] in {"video", "video_edit"}
+        and job.brief.get("soundtrack_model") == "music"
+        and not job.brief.get("audio_reference_ids") and not job.brief.get("audio_fallback")
     )
 
 
@@ -311,10 +333,21 @@ def automatic_scene_retries(job, index):
 
 
 def auto_retry(db, settings, job):
-    """Bounded scene corrections and delayed music retries for a definitive upstream rate-limit failure."""
+    """Bounded scene corrections, delayed music retries, and one alternate Runway music attempt."""
     if job.state != "failed" or not settings.media_auto_retries:
         return False
+    if job.stage == "audio" and job.brief.get("audio_fallback"):
+        # Never cycle models or spend another retry budget when the alternate task fails.
+        if task_failed(job) and "Automatic music recovery stopped" not in job.error:
+            job.error += " Automatic music recovery stopped after the Seed Audio attempt. Saved clips are kept."
+            db.commit()
+        return False
     if rate_limited_music(job):
+        if alternate_music_available(job) and (
+            music_timed_out(job) or automatic_music_retries(job) >= settings.media_auto_retries
+        ):
+            retry_step(db, job, pending_step(job)["prompt"], automatic=True, audio_model="seed_audio")
+            return True
         if automatic_music_retries(job) >= settings.media_auto_retries:
             if "Automatic music retries exhausted" not in job.error:
                 job.error += " Automatic music retries exhausted. Wait for the provider to recover, then retry the music."
@@ -352,11 +385,13 @@ def auto_retry(db, settings, job):
     return True
 
 
-def retry_step(db, job, prompt, *, automatic=False):
+def retry_step(db, job, prompt, *, automatic=False, audio_model=""):
     """Submit the failed step again with a new seed, and the edited prompt when one is given."""
     step = retry_option(job)
     if not step:
         raise ValueError("This step can't be generated again from here. Refresh the page, or use Resume.")
+    if audio_model and (audio_model != "seed_audio" or not alternate_music_available(job)):
+        raise ValueError("An alternate audio model isn't available for this step. Refresh the page.")
     text = " ".join(str(prompt or "").split()) or step["prompt"]
     too_long = (
         len(text) > MUSIC_PROMPT_LIMIT
@@ -371,11 +406,21 @@ def retry_step(db, job, prompt, *, automatic=False):
     if automatic:
         failed["automatic"] = True
     if rate_limited_music(job):
-        delay = MUSIC_RETRY_BASE_SECONDS
-        if automatic:
-            delay = min(delay * 2 ** automatic_music_retries(job), 1800)
-        brief["runway_retry_at"] = (now() + timedelta(seconds=delay)).isoformat()
-        failed.update(failure_code=RATE_LIMIT_CODE, retry_delay_seconds=delay)
+        failed["failure_code"] = RATE_LIMIT_CODE
+        if not audio_model:
+            delay = MUSIC_RETRY_BASE_SECONDS
+            if automatic:
+                delay = min(delay * 2 ** automatic_music_retries(job), 1800)
+            brief["runway_retry_at"] = (now() + timedelta(seconds=delay)).isoformat()
+            failed["retry_delay_seconds"] = delay
+    if audio_model:
+        brief["audio_fallback"] = {
+            "from_model": brief.get("runway_music_model", "eleven_music_v2_5"),
+            "to_model": audio_model, "failed_task_id": job.task_id,
+            "reason": "generation_timeout" if music_timed_out(job) else "provider_rate_limit",
+            "original_prompt": step["prompt"], "automatic": automatic, "at": failed["at"],
+        }
+        brief["soundtrack_model"] = brief["runway_audio_model"] = audio_model
     if step["kind"] == "scene":
         from .reference_grounding import current_plan
 

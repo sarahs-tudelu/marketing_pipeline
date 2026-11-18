@@ -98,7 +98,8 @@ class Settings(BaseSettings):
     media_jobs_per_tick: int = Field(default=4, ge=1, le=20)
     # Automatic paid retries when generated media fails a quality review: corrected scenes per clip,
     # replacements in a row for a post held by the visual check, and delayed music rate-limit retries.
-    # Each has its own bounded count. 0 turns them off.
+    # Each has its own bounded count. Music can switch once to Seed Audio after timeouts/exhaustion.
+    # 0 turns off all automatic retries and model switching.
     media_auto_retries: int = Field(default=3, ge=0, le=10)
     video_provider_url: str = ""
     video_provider_key: SecretStr = SecretStr("")

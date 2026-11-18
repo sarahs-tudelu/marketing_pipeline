@@ -165,6 +165,9 @@ def test_failed_checks_are_listed_with_their_fix(db, settings, facts, logo):  # 
 def test_music_is_regenerated_alone(db, settings, facts, logo):  # noqa: F811
     with TestClient(create_app(settings)) as client:
         token, job, post = held_video(db, settings, client, facts, logo)
+        # A new replacement has its own recovery history, even if the old soundtrack used a fallback.
+        job.brief = job.brief | {"audio_fallback": {"to_model": "seed_audio"}, "runway_retry_at": "2099-01-01"}
+        db.commit()
         page = client.get(f"/posts/{post.id}").text
         assert "<b>Music</b> · 30 s" in page
         assert "Regenerate the music? This makes a new 30-second simulated music track." in page
@@ -181,6 +184,7 @@ def test_music_is_regenerated_alone(db, settings, facts, logo):  # noqa: F811
     old_music = next(i for i in job.source_asset_ids if db.get(Asset, i).media["mime"].startswith("audio/"))
     clips = [s["output_asset_id"] for s in job.brief["video_segments"]]
     assert redo.stage == "audio" and redo.brief["audio_prompt"] == "Bright acoustic guitar"
+    assert "audio_fallback" not in redo.brief and "runway_retry_at" not in redo.brief
     assert redo.source_asset_ids == clips and redo.brief["replaces"]["label"] == "the music"
     run(db, settings, redo)
     assert [h["stage"] for h in redo.task_history] == ["audio"]

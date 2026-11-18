@@ -78,7 +78,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `RUNWAY_MUSIC_MODEL` | `"eleven_music_v2_5"` | Full-length instrumental soundtracks for videos (Runway text_to_music, billed per requested second). |
 | `RUNWAY_TASK_TIMEOUT_SECONDS` | `3600` | Maximum saved-task wait and number of background jobs advanced per worker tick. |
 | `MEDIA_JOBS_PER_TICK` | `4` | Related configuration in the group above. |
-| `MEDIA_AUTO_RETRIES` | `3` | Automatic paid retries when generated media fails a quality review: corrected scenes per clip, and replacements in a row for a post the visual check holds. 0 turns them off. |
+| `MEDIA_AUTO_RETRIES` | `3` | Separate retry limits for corrected scenes, held-post media replacements and delayed music rate-limit failures. Video music switches once to Runway Seed Audio after a provider generation timeout or exhausted rate-limit retries. `0` disables automatic retries and model switching. See [recovery](runway.md#recovery). |
 | `VIDEO_PROVIDER_URL` | `(unset)` | Related configuration in the group above. |
 | `VIDEO_PROVIDER_KEY` | `(unset secret)` | Related configuration in the group above. |
 | `ANTHROPIC_API_KEY` | `(unset secret)` | Claude captions + independent fact/brand review. xhigh maps the requested extra effort. |

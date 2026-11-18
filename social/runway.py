@@ -36,6 +36,8 @@ def job_settings(settings, brief):
     return settings.model_copy(update={
         "runway_image_model": brief.get("runway_image_model", "gen4_image"),
         "runway_video_model": brief.get("runway_video_model", "gen4.5"),
+        "runway_music_model": brief.get("runway_music_model", settings.runway_music_model),
+        "runway_audio_model": brief.get("runway_audio_model", settings.runway_audio_model),
     })
 
 

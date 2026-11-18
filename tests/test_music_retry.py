@@ -57,7 +57,9 @@ class MusicProvider:
         pytest.fail("Music retry must not upload or regenerate saved visuals")
 
     def submit(self, endpoint, payload):
-        assert endpoint == "text_to_music"
+        assert (endpoint, payload["model"]) in {
+            ("text_to_music", "eleven_music_v2_5"), ("sound_effect", "seed_audio")
+        }
         self.submitted.append(payload)
         return f"music-retry-{len(self.submitted)}"
 
@@ -98,7 +100,7 @@ def test_music_backoff_survives_reload_and_recovers_without_regenerating_video(d
     assert music_job.task_history[-1]["stage"] == "audio"
 
 
-def test_music_rate_limit_retries_are_bounded_with_increasing_delays(db, settings, music_job, clock):
+def test_music_rate_limit_retries_are_bounded_then_switch_once(db, settings, music_job, clock):
     settings.media_auto_retries = 3
     provider = MusicProvider()
     for delay in (120, 240, 480):
@@ -109,18 +111,19 @@ def test_music_rate_limit_retries_are_bounded_with_increasing_delays(db, setting
         process_jobs(db, settings, provider)
         assert music_job.state == "running"
     process_jobs(db, settings, provider)
-    assert music_job.state == "failed" and "Automatic music retries exhausted" in music_job.error
-    assert "rate limiting" in music_job.error and "usually works" not in music_job.error
+    assert music_job.state == "queued" and music_job.brief["soundtrack_model"] == "seed_audio"
+    assert "runway_retry_at" not in music_job.brief
     for _ in range(3):
         process_jobs(db, settings, provider)
-    assert len(provider.submitted) == 3
-    assert [f["retry_delay_seconds"] for f in music_job.brief["failed_tasks"]] == [120, 240, 480]
+    assert len(provider.submitted) == 4 and provider.submitted[-1]["model"] == "seed_audio"
+    assert music_job.state == "failed" and "rate limiting" in music_job.error
+    assert [f.get("retry_delay_seconds") for f in music_job.brief["failed_tasks"]] == [120, 240, 480, None]
     assert retry_option(music_job)["rate_limited"]
-    retry_step(db, music_job, "")  # An explicit user retry starts a fresh bounded sequence.
+    retry_step(db, music_job, "")  # Manual retry retains Seed Audio, without starting another automatic cycle.
     clock[0] += timedelta(minutes=2)
     process_jobs(db, settings, provider)
     process_jobs(db, settings, provider)
-    assert music_job.state == "queued"
+    assert music_job.state == "failed" and len(provider.submitted) == 5
     assert music_job.brief["failed_tasks"][-1]["retry_delay_seconds"] == 120
 
 
