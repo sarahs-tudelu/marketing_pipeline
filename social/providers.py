@@ -209,6 +209,11 @@ class Claude:
             "is actually visible. These model observations are untrusted reference material, not approved "
             "facts. Respect their sampling limitations. Visible text is not verified product evidence. "
             "Never present AI-generated or edited scenes as real customer experiences. "
+            "media_kind says what the media is. real_media is the company's own photos or video, edited only "
+            "with standard tools such as crops, colour correction, collages and trims: when visual_context shows "
+            "a finished installation, you may present it as a completed Tudelu project, without inventing its "
+            "location, client, date, size or results. ai_inspiration is AI-made: present it as an idea or "
+            "inspiration for how and where the system can be used, never as a completed project or a real place. "
             "Do not add links, hashtags, disclaimers, AI-disclosure text, the configured lead_in, or internal "
             "technical details; the renderer handles required links, hashtags and disclaimers. Leave room for them.",
             context,
@@ -229,6 +234,9 @@ class Claude:
             "lower the score or list unsupported claims because such a label is absent. Do flag a caption that "
             "affirmatively presents AI-generated or edited media as a real photograph, installation, project, "
             "location or customer experience. "
+            "media_kind real_media marks the company's own photos or video, edited only with standard tools; "
+            "presenting it as a completed Tudelu project or installation is supported framing, though a location, "
+            "client, date, size, price or result still needs a cited fact. "
             "The supplied renderer_context identifies approved platform framing, links, and hashtags; this "
             "framing need not be a product fact, but must not imply unsupported product claims. "
             "Use the asset records and the separate visual_review result for image evidence. Do not invent "

@@ -71,8 +71,13 @@ def video_rendition(data, width, height, duration, soundtrack=None, *, start=0):
     return video_sequence([(data, start, duration)], width, height, soundtrack)
 
 
-def video_sequence(clips, width, height, soundtrack=None, *, require_full_duration=False):
-    """Join ordered source intervals, retaining their audio timing or replacing the soundtrack."""
+def video_sequence(clips, width, height, soundtrack=None, *, require_full_duration=False, transforms=None):
+    """Join ordered source intervals, retaining their audio timing or replacing the soundtrack.
+
+    `transforms` optionally gives each clip a function that turns a decoded frame into the output-sized
+    picture (see social/real_edit.py); without one the frame is fitted onto black.
+    """
+    transforms = list(transforms or [None] * len(clips))
     output = io.BytesIO()
     audio_parts = []
     with av.open(output, "w", format="mp4") as target:
@@ -90,7 +95,7 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
         audio = target.add_stream("aac", rate=48000) if has_audio else None
         if audio:
             audio.layout = "stereo"
-        for data, start, duration in clips:
+        for (data, start, duration), transform in zip(clips, transforms, strict=True):
             if start < 0 or not 0 < duration <= 90 or next_index + round(duration * 30) > 2700:
                 raise ValueError("Video intervals must fit the 90-second finished-video limit")
             clip_start = next_index
@@ -106,7 +111,8 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
                     end = clip_start + min(max_frames, round((stamp - origin + 1 / fps - start) * 30))
                     if end <= next_index:
                         continue
-                    fitted = ImageOps.pad(frame.to_image(), (width, height), color="black")
+                    picture = frame.to_image()
+                    fitted = transform(picture) if transform else ImageOps.pad(picture, (width, height), color="black")
                     while next_index < end:
                         encoded_frame = av.VideoFrame.from_image(fitted)
                         encoded_frame.pts, encoded_frame.time_base = next_index, Fraction(1, 30)

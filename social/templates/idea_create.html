@@ -36,7 +36,7 @@
       <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if idea_form.get('website', 'on') == 'on' else '' }}>Use website text for creative direction</label>
       <small>Your prompt controls the scenes, backgrounds and supported product finishes. Library, Google Drive and website images guide product construction using the Builder rules. Video clips share a visual direction; each uses a newly generated scene image before animation.</small>
       <fieldset><legend>Reference media (optional)</legend>
-        <p class="muted">Pick product photos to guide new scenes, or one uploaded video to edit. Videos are only used when the format is Edit an uploaded video.</p>
+        <p class="muted">Pick product photos to guide new scenes, or one uploaded video for Runway to re-render, which makes it AI media. Videos are only used when the format is Re-render an uploaded video with AI.</p>
         <div class="reference-list">
         {% for a in assets if not a.media.mime.startswith('audio/') and 'rendition' not in a.tags %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in idea_form.get('reference_ids', []) else '' }}>{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span>{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<p>{% if editor %}Add a file above to use it as a reference.{% else %}<a href="/admin/upload">Upload reference media</a>{% endif %}</p>{% endfor %}
         </div>

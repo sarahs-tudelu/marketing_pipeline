@@ -17,7 +17,9 @@ from .lifecycle import transition
 from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob, Post
 from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
+from .provenance import requires_ai_review
 from .provider_errors import ProviderError
+from .real_edit import real_choice
 from .recovery import runway_failure
 from .renditions import fitted_size, image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
@@ -52,12 +54,28 @@ CONCEPTS = (
     ("focus", "One defining feature of the system with generous negative space and a slow push-in."),
     ("inspiration", "An unexpected viewpoint of the installed system, refined textures, calm atmosphere."),
 )
+# AI campaign posts are inspiration: each suggests a different place the products are used, so a campaign
+# shows their range. The prompt writer fits a Tudelu system to it, or keeps the setting the idea names.
+USE_CASES = (
+    "a family home's backyard or patio",
+    "a restaurant or cafe's outdoor seating",
+    "a hotel, resort or poolside lounge",
+    "an office building's entrance or courtyard",
+    "a school, campus or hospital walkway",
+    "a shopping center or storefront",
+    "a rooftop terrace or apartment amenity deck",
+    "a drive-through lane, parking area or carport",
+    "an event venue, winery or garden terrace",
+    "an indoor space divided or opened up for different uses",
+)
 
 
 class CreativeBrief(BaseModel):
     campaign: str = Field(min_length=1, max_length=200)
     prompt: str = Field(min_length=1, max_length=1000)
-    operation: Literal["image", "video", "video_edit", "audio", "mixed"] = "image"
+    # real: the company's own photos and videos of completed projects, edited with standard tools only
+    # (social/real_edit.py). mixed (recurring only) alternates real projects with AI inspiration.
+    operation: Literal["image", "video", "video_edit", "audio", "real", "mixed"] = "image"
     platforms: list[str] = Field(min_length=1, max_length=5)
     facts_id: str
     product: str = Field(default="company", min_length=1, max_length=200)
@@ -124,11 +142,11 @@ class CreativeBrief(BaseModel):
             raise ValueError("Audio generation accepts at most three reference bites in total")
         if self.operation == "image" and "tiktok" in self.platforms and self.create_posts:
             raise ValueError("TikTok requires video; choose video or a mixed campaign")
-        if self.audio_reference_ids and not self.audio_prompt.strip() and self.operation != "audio":
+        if self.audio_reference_ids and not self.audio_prompt.strip() and self.operation not in {"audio", "real"}:
             raise ValueError("Describe how to use or edit the audio references")
         if self.operation == "image" and (self.audio_prompt or self.audio_reference_ids):
             raise ValueError("Soundtracks require a video operation")
-        if self.end_card_asset_id and self.operation not in {"video", "video_edit"}:
+        if self.end_card_asset_id and self.operation not in {"video", "video_edit", "real", "mixed"}:
             raise ValueError("A logo end card requires a video")
         if self.end_card_asset_id and self.duration < END_CARD_SECONDS + MIN_CLIP_SECONDS:
             raise ValueError(
@@ -246,6 +264,15 @@ def validate_sources(db, brief, *, live=False):
     visual = [a for a in sources if a.id in brief.reference_ids]
     if brief.as_uploaded:
         return _uploaded_sources(brief, visual, sources)
+    if brief.operation == "real":
+        if any(requires_ai_review(a) for a in sources):
+            raise ValueError(
+                "Real project posts show only real photos, videos and audio. Use AI-made media in an AI image "
+                "or video instead."
+            )
+        if any(a.media["mime"].startswith("audio/") for a in visual):
+            raise ValueError("Put audio in the soundtrack selection")
+        return sources
     expected = {"image": "image/", "video": "image/", "video_edit": "video/", "audio": "audio/"}
     if brief.operation in expected and any(
         not a.media["mime"].startswith(expected[brief.operation]) for a in visual
@@ -288,8 +315,6 @@ def ending_logo(db, brief, *, live=False):
 
 def _uploaded_sources(brief, visual, sources):
     """Checks for posting the admin's own media as it is."""
-    from .provenance import requires_ai_review
-
     if len(visual) != 1 or not visual[0].media["mime"].startswith(brief.operation + "/"):
         raise ValueError(f"Choose one {'photo' if brief.operation == 'image' else 'video'} to post as it is")
     if any(requires_ai_review(a) for a in sources):
@@ -310,7 +335,9 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
     sources = validate_sources(db, brief, live=live)
     if brief.as_uploaded:
         return _queue_uploaded(db, settings, brief, snapshot, live=live)
-    if settings.ai_mode == "live" and not settings.runway_api_key.get_secret_value():
+    # Real project edits never call Runway; every other format may.
+    generated = brief.operation != "real"
+    if generated and settings.ai_mode == "live" and not settings.runway_api_key.get_secret_value():
         raise ValueError("RUNWAY_API_KEY is missing. Fill in .env and restart web/worker.")
     if (
         brief.operation != "audio"
@@ -322,7 +349,9 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         raise ValueError("Media Studio videos require VIDEO_PROVIDER=runway")
     if not campaign and (brief.operation == "mixed" or brief.kind == "mixed"):
         raise ValueError("Mixed format/content is for recurring campaigns; select a specific one-off format")
-    snapshot = snapshot if snapshot is not None else (website_snapshot(settings) if brief.website else {})
+    snapshot = snapshot if snapshot is not None else (
+        website_snapshot(settings) if brief.website and generated else {}
+    )
     batch = f"{campaign.id}:{sequence}" if campaign else uid()
     # One ambient style per batch, so each platform's version of the post sounds the same.
     style = next_ambient_style(db)
@@ -335,19 +364,37 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             .order_by(MediaJob.created_at.desc())
             .limit(16)
         ).all()
-        used = [j.brief.get("concept") for j in recent[: len(CONCEPTS) - 1]]
+        # Real project posts have no creative direction, so only AI posts count towards the rotation.
+        used = [j.brief["concept"] for j in recent if j.brief.get("concept")][: len(CONCEPTS) - 1]
         concept, direction = next(
             (c for c in CONCEPTS if c[0] not in used), CONCEPTS[sequence % len(CONCEPTS)]
         )
         values = brief.model_dump()
         operation = brief.operation
+        repeat = sequence  # Earlier batches of this campaign with the same format, for reference rotation.
+        real = None
+        if operation in {"real", "mixed"}:
+            # A mixed campaign alternates real projects with AI inspiration, so each kind has its own turn.
+            turn = sequence // 2 if operation == "mixed" else sequence
+            real = real_choice(db, brief, sources, profile, platform, turn, live=live)
+            if operation == "real" and not real:
+                raise ValueError(
+                    f"{platform.title()}: no real photos or videos fit this post. Add photos or videos of "
+                    "completed projects to the asset library, or choose them in the brief."
+                )
         if operation == "mixed":
             options = ["image", "video"]
             if any(a.media["mime"].startswith("video/") for a in sources):
+                # A Runway re-render of an uploaded video is AI media too.
                 options.append("video_edit")
             if platform == "tiktok":
                 options = [v for v in options if v != "image"]
-            operation = options[sequence % len(options)]
+            if real and sequence % 2 == 0:
+                operation = "real"
+            else:
+                turn = sequence // 2 if real else sequence
+                operation = options[turn % len(options)]
+                repeat = turn // len(options)
         content_kind = brief.kind
         if content_kind == "mixed":
             history = db.scalars(
@@ -364,10 +411,15 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
                 if promotions + 1 <= math.ceil((len(recent_kinds) + 1) * profile.promotional_ratio)
                 else "non_promotional"
             )
+        if operation == "real":
+            values = _real_values(db, settings, brief, values, real, platform, profile, batch, style, live=live)
+            values["kind"] = content_kind
+            result.append(_add_job(db, brief, campaign, batch, platform, values))
+            continue
         mime = {"image": "image/", "video": "image/", "video_edit": "video/", "audio": "audio/"}[operation]
         refs = [a.id for a in sources if a.id in brief.reference_ids and a.media["mime"].startswith(mime)]
         if campaign and refs:
-            offset = sequence % len(refs)
+            offset = repeat % len(refs)
             refs = refs[offset:] + refs[:offset]
         refs = refs[: 3 if operation in {"image", "audio"} else 1]
         intent = (
@@ -375,12 +427,18 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             if content_kind == "promotional"
             else "Editorial design inspiration rather than a sales pitch."
         )
+        use_case = ""
+        if campaign:
+            shown = [j.brief["use_case"] for j in recent if j.brief.get("use_case")][: len(USE_CASES) - 1]
+            use_case = next((u for u in USE_CASES if u not in shown), USE_CASES[sequence % len(USE_CASES)])
         values.update(
             operation=operation,
             kind=content_kind,
             reference_ids=refs,
             concept=concept,
-            direction=f"{direction} {intent}",
+            use_case=use_case,
+            direction=f"{direction} {intent}"
+            + (f" Suggested use case, unless the campaign idea names a setting: {use_case}." if use_case else ""),
             # Visual prompts are written by the worker just before submission (social/prompting.py).
             generation_prompt=utf16_trim(brief.prompt) if operation == "audio" else "",
             website_snapshot=snapshot,
@@ -432,17 +490,61 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             )
         if operation == "image":
             values.update(audio_prompt="", audio_reference_ids=[], end_card_asset_id="")
-        job = MediaJob(
-            campaign_id=campaign.id if campaign else None,
-            batch_key=batch + ":" + platform,
-            platform=platform,
-            brief=values,
-            state="planned" if brief.workflow == "next" and not campaign else "queued",
-        )
-        db.add(job)
-        result.append(job)
+        result.append(_add_job(db, brief, campaign, batch, platform, values))
     db.flush()
     return result
+
+
+def _add_job(db, brief, campaign, batch, platform, values):
+    job = MediaJob(
+        campaign_id=campaign.id if campaign else None,
+        batch_key=batch + ":" + platform,
+        platform=platform,
+        brief=values,
+        state="planned" if brief.workflow == "next" and not campaign else "queued",
+    )
+    db.add(job)
+    return job
+
+
+def _real_values(db, settings, brief, values, real, platform, profile, batch, style, *, live=False):
+    """The job brief of a real project post: candidate media chosen now, the edit planned when it runs."""
+    real_format, media_ids, sound_ids = real
+    values = values | {
+        "operation": "real",
+        "real_format": real_format,
+        "reference_ids": media_ids,
+        "audio_reference_ids": sound_ids,
+        "audio_prompt": "",
+        "shots": [],
+        "concept": "",
+        "direction": "",
+        "use_case": "",
+        "generation_prompt": "",
+        "website_snapshot": {},
+        "seed": int(hashlib.sha256((batch + platform).encode()).hexdigest()[:8], 16),
+        "execution_mode": settings.ai_mode,
+        "end_card": None,
+        "end_card_asset_id": "",
+    }
+    if real_format == "video":
+        if brief.duration > profile.max_duration:
+            raise ValueError(f"{platform}: choose a duration of at most {profile.max_duration:g} seconds")
+        if brief.duration < END_CARD_SECONDS + MIN_CLIP_SECONDS:
+            raise ValueError(
+                f"Every video ends with the {END_CARD_SECONDS}-second Tudelu logo, so choose a length of at "
+                f"least {END_CARD_SECONDS + MIN_CLIP_SECONDS} seconds"
+            )
+        logo = ending_logo(db, brief, live=live)
+        tracks = music_tracks(db, live=live, public=brief.rights != "not_public")
+        values |= {
+            "end_card": {"asset_id": logo.id, "seconds": END_CARD_SECONDS},
+            "end_card_asset_id": logo.id,
+            # Library music for silent footage, the same for every platform of the batch.
+            "ambient_track_id": tracks[0].id if tracks else "",
+            "fallback_ambient_style": style,
+        }
+    return values
 
 
 def _queue_uploaded(db, settings, brief, snapshot, *, live=False):
@@ -752,6 +854,10 @@ def _finish(db, settings, job):
         result = first
     elif brief.get("as_uploaded"):
         result = _uploaded_copy(db, settings, job, first, originals)
+    elif brief["operation"] == "real":
+        from .real_edit import real_copy
+
+        result = real_copy(db, settings, job)
     else:
         profile = profiles(settings)[job.platform]
         data = storage(settings).read(first.storage_key)
@@ -1186,7 +1292,12 @@ def process_jobs(db, settings, provider=None):
                     context={"stored": True},
                 )
                 validate_sources(db, brief, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
-                if brief.as_uploaded:
+                if brief.as_uploaded or brief.operation == "real":
+                    if brief.operation == "real" and "real_edit" not in job.brief:
+                        from .real_edit import plan_edit
+
+                        # The media and edit values are saved before rendering; a resume reuses them.
+                        plan_edit(db, settings, job)
                     job.state = "rendering"
                     db.commit()
                     _finish(db, settings, job)

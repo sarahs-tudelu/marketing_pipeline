@@ -31,7 +31,7 @@ FORMATS = {
     "auto": "Let the idea decide",
     "image": "Image",
     "video": "Video",
-    "video_edit": "Edit an uploaded video",
+    "video_edit": "Re-render an uploaded video with AI",
 }
 STYLES = {
     "auto": "Let the idea decide",

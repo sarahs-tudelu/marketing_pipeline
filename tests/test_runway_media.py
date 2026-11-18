@@ -289,8 +289,10 @@ def test_campaign_rotates_concepts_media_and_promotional_mix(db, settings, asset
     for sequence in range(8):
         jobs += queue_jobs(db, settings, brief, campaign=campaign, sequence=sequence)
         db.commit()
-    assert len({j.brief["concept"] for j in jobs}) == 8
-    assert {j.brief["operation"] for j in jobs} == {"image", "video"}
+    # The pool's company photo makes every other batch a real project post, which has no creative concept.
+    ai = [j for j in jobs if j.brief["operation"] != "real"]
+    assert len(ai) == 4 and len({j.brief["concept"] for j in ai}) == 4
+    assert {j.brief["operation"] for j in jobs} == {"real", "image", "video"}
     assert {j.brief["kind"] for j in jobs} == {"promotional", "non_promotional"}
     assert len({j.brief["seed"] for j in jobs}) == 8
 

@@ -92,6 +92,8 @@ def generate(db, settings, post, providers=None, *, revision_request="", previou
         "brand_voice": facts.brand_voice,
         "disclaimers": facts.required_disclaimers,
         "ai_disclosure": post.ai_disclosure,
+        # Real company media shows completed projects; AI media is inspiration for how they can be used.
+        "media_kind": "ai_inspiration" if post.ai_disclosure else "real_media",
         "style_brief": {
             "variant": variant,
             "tone": [

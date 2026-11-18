@@ -328,6 +328,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         "platform": post.platform,
         "product": post.product,
         "content_kind": post.kind,
+        "media_kind": "ai_inspiration" if needed else "real_media",
         "execution_mode": "live" if live else "dry_run",
         "public_publication": live,
         "at": at.isoformat(),
