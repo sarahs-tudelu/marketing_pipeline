@@ -33,7 +33,7 @@ def editor_route(method, path):
 
 
 def editor_asset(asset, actor):
-    if not asset:
+    if not asset or getattr(asset, "removed_at", None) is not None:
         return False
     if asset.tags.get("uploaded_with_idea"):
         return asset.tags.get("submitted_by") == actor

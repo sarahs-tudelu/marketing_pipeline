@@ -86,6 +86,9 @@
     resubmit: ["Starting it again…", "Adding it back to the generation queue."],
     retry: ["Preparing retry…", "Reusing the saved caption and media, then queuing fresh checks for your review."],
     assets: ["Uploading media…", "Saving the original file and its details."],
+    "delete-files": ["Deleting files…", "Removing them from the asset library."],
+    "restore-files": ["Restoring files…", "Bringing them back into the asset library."],
+    "import-again": ["Queuing the import…", "The file is imported on the next Google Drive scan."],
     posts: ["Creating draft…", "Preparing your post."],
   };
 
@@ -268,6 +271,67 @@
     };
     setInterval(pollMedia, 3000);
   }
+
+  // Media pickers: search, filter and sort a list of library files inside a form. The controls have no
+  // name, so only the ticked files are submitted; files hidden by a filter stay ticked.
+  document.querySelectorAll("[data-picker]").forEach((picker) => {
+    const list = picker.querySelector("[data-picker-list]");
+    if (!list) return;
+    const items = [...list.children];
+    const field = (selector) => picker.querySelector(selector);
+    const rank = (item) => (item.dataset.rank === "" ? Infinity : Number(item.dataset.rank));
+    const newest = (a, b) => b.dataset.created.localeCompare(a.dataset.created);
+    const orders = {
+      match: (a, b) => rank(a) - rank(b) || newest(a, b),
+      newest,
+      oldest: (a, b) => a.dataset.created.localeCompare(b.dataset.created),
+      name: (a, b) => a.dataset.name.localeCompare(b.dataset.name),
+      longest: (a, b) => Number(b.dataset.seconds) - Number(a.dataset.seconds),
+    };
+    let order = "";
+    const update = () => {
+      const words = (field("[data-picker-search]")?.value || "").toLowerCase().split(/\s+/).filter(Boolean);
+      const filters = [...picker.querySelectorAll("[data-picker-filter]")].map((select) => [select.dataset.pickerFilter, select.value]);
+      const chosenOnly = field("[data-picker-chosen-only]")?.checked;
+      let shown = 0;
+      let ticked = 0;
+      items.forEach((item) => {
+        const box = item.querySelector('input[type="checkbox"]');
+        ticked += box.checked;
+        const fits = filters.every(([key, wanted]) => {
+          if (!wanted) return true;
+          if (key !== "product") return item.dataset[key] === wanted;
+          return wanted === "none" ? !item.dataset.products : item.dataset.products.split("|").includes(wanted);
+        });
+        item.hidden = !(fits && words.every((word) => item.dataset.text.includes(word)) && (!chosenOnly || box.checked));
+        shown += !item.hidden;
+      });
+      const wanted = field("[data-picker-sort]")?.value || "newest";
+      if (wanted !== order) {
+        order = wanted;
+        items.slice().sort(orders[wanted] || newest).forEach((item) => list.append(item));
+      }
+      const total = items.length;
+      field("[data-picker-count]").textContent = shown === total ? `${total} file${total === 1 ? "" : "s"}` : `Showing ${shown} of ${total} files`;
+      field("[data-picker-chosen]").textContent = ticked ? `${ticked} chosen` : "";
+      field("[data-picker-empty]").hidden = shown > 0;
+    };
+    field("[data-picker-filters]").hidden = false;
+    picker.addEventListener("input", update);
+    picker.addEventListener("change", update);
+    update();
+  });
+
+  // The asset library's filters apply as soon as a choice changes; the search box waits for Apply or Enter.
+  document.querySelectorAll("form[data-auto-submit]").forEach((form) => {
+    form.querySelectorAll("select").forEach((select) => select.addEventListener("change", () => form.requestSubmit()));
+  });
+  // A "tick all" box ticks every file on the page for the form it names.
+  document.querySelectorAll("[data-tick-all]").forEach((all) => {
+    all.addEventListener("change", () => {
+      document.querySelectorAll(`input[type="checkbox"][form="${all.dataset.tickAll}"]`).forEach((box) => { box.checked = all.checked; });
+    });
+  });
 
   // A link to a closed part opens it, so the jump lands on that part's prompt and button.
   function openPart(hash) {

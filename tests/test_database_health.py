@@ -26,8 +26,10 @@ def test_health_detects_unapplied_availability_migration_and_recovers(settings):
                     # Usage tables came later, with f9c2a1e7d340.
                     "missing_tables": ["availability_checks", "post_availability", "post_reposts",
                                        "provider_costs", "provider_syncs", "usage_records"],
-                    # Added after the availability tables, by ace71117c001 (prompt account).
-                    "missing_columns": {"posts": ["prompted_by", "prompted_by_label"]},
+                    # Added after the availability tables, by ace71117c001 (prompt account) and
+                    # b4e8d2f61a93 (deleted library files kept for posts).
+                    "missing_columns": {"assets": ["removed_at", "removed_by"],
+                                        "posts": ["prompted_by", "prompted_by_label"]},
                 }
                 with engine.connect() as connection:
                     assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "c6f3a7b95247"

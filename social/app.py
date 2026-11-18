@@ -67,6 +67,7 @@ from .rights import owner_value, usage_rights
 from .scheduler import schedule
 from .storage import ingest, load_assets, storage
 from .studio_pages import (
+    MAX_IDEA_PICKS,
     MAX_IDEA_UPLOADS,
     availability_by_post,
     page_context,
@@ -311,7 +312,12 @@ def create_app(settings=None):
             context.update(post_context(db, settings, post, editor=request.state.editor))
             if not request.state.editor:
                 context["post_busy"] = post_busy or post.status == "publishing" or post_processing(engine, post.id)
-        context.update(csrf=request.session["csrf"], static_version=static_version, error_message=error_message)
+        context.update(
+            csrf=request.session["csrf"],
+            static_version=static_version,
+            error_message=error_message,
+            notice=request.session.pop("notice", ""),  # Set by the action that redirected here.
+        )
         return templates.TemplateResponse(
             request=request,
             name="editor.html" if request.state.editor else "studio.html",
@@ -539,11 +545,14 @@ def create_app(settings=None):
         values["product"] = "" if values["product"].strip() == "company" else values["product"].strip()
         values["website"] = "on" if form.get("website") == "on" else ""
         values["platforms"] = form.getlist("platforms")
-        values["reference_ids"] = form.getlist("reference_ids")
+        # Files chosen from the asset library; they're used like files added with the idea.
+        values["reference_ids"] = list(dict.fromkeys(str(i) for i in form.getlist("reference_ids")))[:MAX_IDEA_PICKS]
         # Files added on the idea page, already saved in the asset library.
         values["upload_ids"] = list(dict.fromkeys(str(i) for i in form.getlist("upload_ids")))[:MAX_IDEA_UPLOADS]
         use = str(form.get("upload_use", ""))
-        values["upload_use"] = use if use in {"reference", "real"} else "as_is"
+        # Without a choice (older pages and API clients), library picks guide AI media as before.
+        default = "reference" if values["reference_ids"] and not values["upload_ids"] else "as_is"
+        values["upload_use"] = use if use in {"as_is", "reference", "real"} else default
         return values
 
     async def save_idea_uploads(db, form, values, actor):
@@ -579,10 +588,14 @@ def create_app(settings=None):
             values["upload_ids"].append(asset.id)
 
     def idea_uploads(db, values):
+        """The idea's media: files chosen from the library, then files added with the idea."""
+        picks = load_assets(db, values.get("reference_ids", []))
+        if any(a is None or a.removed_at is not None for a in picks):
+            raise ValueError("A file you chose was deleted from the asset library. Choose it again or pick another.")
         uploads = load_assets(db, values.get("upload_ids", []))
-        if any(a is None for a in uploads):
+        if any(a is None or a.removed_at is not None for a in uploads):
             raise ValueError("A file you added is no longer in the asset library. Add it again.")
-        return uploads
+        return picks + [a for a in uploads if a.id not in values.get("reference_ids", [])]
 
     def check_editor_inputs(request, db, form, values):
         if not request.state.editor:
@@ -682,12 +695,11 @@ def create_app(settings=None):
                 )
                 plan = uploaded_plan(idea, uploads, requested_style=values["kind"] or "auto", silent=silent)
                 return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
-            references = load_assets(db, values["reference_ids"])
-            if any(a is None for a in references):
-                raise ValueError("A selected reference is no longer in the asset library")
-            references += [a for a in uploads if a.id not in values["reference_ids"]]
+            references = uploads  # Chosen and added files guide the new AI media.
             snapshot = await run_in_threadpool(website_snapshot, settings) if values["website"] else {}
-            assets = db.scalars(select(Asset).order_by(Asset.created_at.desc())).all()
+            assets = db.scalars(
+                select(Asset).where(Asset.removed_at.is_(None)).order_by(Asset.created_at.desc())
+            ).all()
             plan = await run_in_threadpool(
                 plan_idea,
                 db,
@@ -772,7 +784,8 @@ def create_app(settings=None):
             # Blank picks the newest logo; with none in the library, queueing explains how to add it.
             logo_id = str(form.get("logo_id", "")) if video else ""
             if video and request.state.editor and not logo_id:
-                allowed_logos = logo_assets([a for a in db.scalars(select(Asset).order_by(Asset.created_at.desc()))
+                allowed_logos = logo_assets([a for a in db.scalars(select(Asset).where(Asset.removed_at.is_(None))
+                                                                   .order_by(Asset.created_at.desc()))
                                             if crm_access.editor_asset(a, request.state.actor)])
                 if not allowed_logos:
                     raise ValueError("Ask an admin to add a company logo before creating a video")
@@ -854,7 +867,7 @@ def create_app(settings=None):
                 kind=plan.kind,
                 rights=values["rights"],
                 owner=values["owner"],
-                reference_ids=values["reference_ids"] + [i for i in pictures if i not in values["reference_ids"]],
+                reference_ids=pictures,
                 audio_reference_ids=sounds if video else [],
                 audio_prompt=plan.soundtrack.strip() if video else "",
                 duration=plan.duration if video else 5,
@@ -1233,6 +1246,58 @@ def create_app(settings=None):
             if isinstance(file, UploadFile):
                 await file.close()
         return RedirectResponse("/admin/assets", status_code=303)
+
+    def library_url(form):
+        # Back to the library page with the same filters; only its own query keys are kept.
+        from urllib.parse import parse_qsl, urlencode
+
+        keys = {"type", "product", "source", "rights", "q", "sort", "page"}
+        query = urlencode([(k, v) for k, v in parse_qsl(str(form.get("back", ""))[:2000]) if k in keys])
+        return "/admin/assets" + ("?" + query if query else "") + "#library"
+
+    @app.post("/forms/assets/delete-files", dependencies=mutation)
+    async def delete_media(request: Request, db: DB):
+        from .library import delete_assets, outcome
+
+        form = await request.form()
+        try:
+            result = await run_in_threadpool(
+                delete_assets, db, settings, form.getlist("asset_ids"), request.state.actor
+            )
+        except ValueError as exc:
+            db.rollback()
+            return page(request, db, "assets", error_message=str(exc), status_code=400)
+        request.session["notice"] = outcome(result)
+        return RedirectResponse(library_url(form), status_code=303)
+
+    @app.post("/forms/assets/restore-files", dependencies=mutation)
+    async def restore_media(request: Request, db: DB):
+        from .library import restore_assets
+
+        form = await request.form()
+        restored = restore_assets(db, form.getlist("asset_ids"))
+        request.session["notice"] = (
+            f"Restored {restored} file{'' if restored == 1 else 's'} to the library." if restored
+            else "Nothing was restored: choose deleted files."
+        )
+        return RedirectResponse(library_url(form), status_code=303)
+
+    @app.post("/forms/google-drive/files/{file_id}/import-again", dependencies=mutation)
+    def import_drive_file_again(file_id: str, request: Request, db: DB):
+        from sqlalchemy.orm.exc import StaleDataError
+
+        from .drive_import import DriveError, import_again
+
+        try:
+            import_again(db, file_id)
+        except DriveError as exc:
+            db.rollback()
+            raise HTTPException(404, str(exc)) from None
+        except StaleDataError:
+            db.rollback()
+            raise HTTPException(409, "Import progress changed; retry this action") from None
+        request.session["notice"] = "The file will be imported on the next Google Drive scan, which starts shortly."
+        return RedirectResponse("/admin/assets#drive", status_code=303)
 
     def media_form_values(form):
         return {

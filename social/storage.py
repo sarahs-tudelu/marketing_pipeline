@@ -34,6 +34,7 @@ def load_assets(db, asset_ids: Sequence[str]) -> list[Asset | None]:
 class MediaStore(Protocol):
     def put(self, key: str, data: bytes, mime: str): ...
     def read(self, key: str) -> bytes: ...
+    def delete(self, key: str): ...
     def url(self, key: str) -> str: ...
 
 
@@ -57,6 +58,9 @@ class LocalStore:
 
     def read(self, key):
         return self.path(key).read_bytes()
+
+    def delete(self, key):
+        self.path(key).unlink(missing_ok=True)
 
     def url(self, key):
         return f"{self.base}/{quote(key)}"
@@ -110,6 +114,9 @@ class S3Store:
     def head(self, key):
         return self.client.head_object(Bucket=self.bucket, Key=key)
 
+    def delete(self, key):
+        self.client.delete_object(Bucket=self.bucket, Key=key)
+
     def open(self, key, byte_range=None):
         arguments = {"Bucket": self.bucket, "Key": key}
         if byte_range:
@@ -122,6 +129,10 @@ class S3Store:
 
 def storage(settings):
     return S3Store(settings) if settings.storage_backend == "s3" else LocalStore(settings)
+
+
+# M4V is Apple's name for an MP4 video.
+VIDEO_MIMES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
 
 
 def inspect_media(data, filename, settings):
@@ -182,8 +193,13 @@ def _inspect_media(data, filename, settings):
                 "sample_rate": rate,
                 "metadata_keys": sorted(container.metadata.keys()),
             }
-    if suffix not in {".mp4", ".mov", ".webm"}:
-        raise ValueError("Unsupported or invalid media")
+    if suffix in {".heic", ".heif"}:
+        raise ValueError("HEIC photos aren't supported. Export them as JPEG, then upload or import them again.")
+    if suffix not in VIDEO_MIMES:
+        raise ValueError(
+            "Unsupported or invalid media. Photos can be JPEG, PNG, WebP or GIF; videos MP4, MOV or WebM; audio "
+            "MP3, WAV, M4A, OGG or FLAC."
+        )
     with av.open(io.BytesIO(data)) as container:
         if not container.streams.video:
             raise ValueError("Expected a video stream")
@@ -194,9 +210,7 @@ def _inspect_media(data, filename, settings):
         if not frame_count or not container.duration:
             raise ValueError("Empty or invalid video stream")
         return {
-            "mime": {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}[
-                Path(filename).suffix.lower()
-            ],
+            "mime": VIDEO_MIMES[suffix],
             "width": codec.width,
             "height": codec.height,
             "bytes": len(data),

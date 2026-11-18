@@ -134,7 +134,10 @@ def test_an_installation_idea_becomes_a_real_post_from_library_footage(db, setti
         assert response.status_code == 200, response.text
         page = response.text
         assert "Adjust anything before editing" in page and "partition-wall-install.mp4" in page
-        assert "pergola-sunset.jpg" not in page and "Nothing is sent to Runway" in page
+        assert "Nothing is sent to Runway" in page and "Clips and photos, in viewing order" in page
+        # Files the search didn't match can still be added from the library list; AI media can't.
+        assert "Add media from the library" in page and "pergola-sunset.jpg" in page
+        assert "partition-wall-install-concept.jpg" not in page
         form = plan_form(page)
         assert form["operation"] == ["real"] and form["real_format"] == ["video"]
         assert form["real_media"] == [install.id, finished.id]
@@ -213,7 +216,7 @@ def test_files_added_with_an_idea_can_be_edited_into_a_real_post(db, settings, f
     assert response.status_code == 200, response.text
     form = plan_form(response.text)
     assert form["real_format"] == ["photo"] and len(form["real_media"]) == 1
-    assert "Other matches you can add" in response.text and "Added with your idea" in response.text
+    assert "Add media from the library" in response.text and "one.jpg" in response.text
 
 
 @pytest.mark.parametrize("seconds,count", [(4, 6), (40, 8), (120, 20)])

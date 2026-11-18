@@ -24,6 +24,7 @@ from .idea_plan import (
     shot_seconds,
     work_summary,
 )
+from .library import KINDS, ORIGINS, SORTS, clock, is_copy, library_page, pickable, picker, products
 from .models import (
     Account,
     Alert,
@@ -51,6 +52,8 @@ from .video_rules import music_tracks
 # One photo or video and a soundtrack to post as they are, or up to three images
 # and three audio references for new AI media.
 MAX_IDEA_UPLOADS = 6
+# Files chosen from the asset library for one idea; a real project post edits up to 12.
+MAX_IDEA_PICKS = 12
 
 
 def recent_posts(db, *, actor=None, needs_attention=False, limit=200):
@@ -160,7 +163,14 @@ def _idea_from_post(db, source_id, actor):
         raise HTTPException(404)
     source = source_job(db, post)
     brief = source.brief if source else {}
+    if brief.get("as_uploaded"):
+        use = "as_is"
+    elif brief.get("operation") == "real":
+        use = "real"
+    else:
+        use = "reference"  # The post's media guide new AI media, as they did for this post.
     return {
+        "upload_use": use,
         "prompt": brief.get("prompt", post.campaign),
         "platforms": [post.platform],
         "product": post.product,
@@ -171,17 +181,53 @@ def _idea_from_post(db, source_id, actor):
     }
 
 
-def _idea_context(db, settings, assets, form, plan):
+def _real_picker(db, form, plan, by_id, allowed):
+    """The plan page's library picker for a real project post: every file this post can use that the
+    plan doesn't, with the search's matches first."""
+    from .media_search import library_media
+
+    platforms = form.get("platforms", [])
+    media = library_media(
+        db,
+        product=form.get("product") or "company",
+        public=form.get("rights") != "not_public",
+        drive_only=bool(set(platforms) & REAL_MEDIA_ONLY),
+        allowed=allowed,
+    )
+    planned = {i.get("asset_id") for i in plan.real_edit.get("items", []) if isinstance(i, dict)}
+    matches = {
+        m["asset_id"]: (rank, m.get("why", ""))
+        for rank, m in enumerate(plan.real_matches)
+        if isinstance(m, dict) and m.get("asset_id") not in planned
+    }
+    # Files added with the idea are shown too, even when they aren't library matches.
+    extra = [by_id[i] for i in form.get("reference_ids", []) + form.get("upload_ids", []) if i in by_id]
+    seen, files = set(), []
+    for asset in media + extra:
+        if asset.id not in planned and asset.id not in seen and not asset.media["mime"].startswith("audio/"):
+            seen.add(asset.id)
+            files.append(asset)
+    return picker(files, matches=matches)
+
+
+def _idea_context(db, settings, assets, form, plan, allowed=None):
     upload_ids = form.get("upload_ids", [])
-    by_id = {asset.id: asset for asset in assets} if plan or upload_ids else {}
+    # On the plan page the idea's media are the files chosen from the library and the files added.
+    media_ids = list(dict.fromkeys(form.get("reference_ids", []) + upload_ids)) if plan is not None else upload_ids
+    by_id = {asset.id: asset for asset in assets} if plan is not None or upload_ids else {}
     context = {
         "formats": FORMATS,
         "styles": STYLES,
         "idea_form": form,
-        "idea_uploads": [by_id[key] for key in upload_ids if key in by_id],
+        "idea_uploads": [by_id[key] for key in media_ids if key in by_id],
         "max_idea_uploads": MAX_IDEA_UPLOADS,
+        "max_idea_picks": MAX_IDEA_PICKS,
         "logos": logo_assets(assets),
     }
+    if plan is None:
+        context["library_picker"] = picker([a for a in assets if pickable(a)])
+    elif plan.operation == "real":
+        context["real_picker"] = _real_picker(db, form, plan, by_id, allowed)
     if plan is not None:
         platforms, model = form.get("platforms", []), settings.runway_video_model
         context.update(
@@ -240,9 +286,21 @@ def page_context(
             )
         )
 
-    if view in {"assets", "compose", "media-studio", "create", "plan"}:
-        assets = db.scalars(select(Asset).order_by(Asset.created_at.desc()))
-        context["assets"] = [a for a in assets if not editor or crm_access.editor_asset(a, actor)]
+    allowed = (lambda a: crm_access.editor_asset(a, actor)) if editor else None
+    if view == "assets":
+        context["library"] = library_page(db, request.query_params, allowed=allowed)
+        context["assets"] = context["library"]["assets"]
+        context.update(
+            library_kinds=KINDS,
+            library_origins=ORIGINS,
+            library_sorts=SORTS,
+            library_products=products,
+            library_is_copy=is_copy,
+            library_clock=clock,
+        )
+    elif view in {"compose", "media-studio", "create", "plan"}:
+        assets = db.scalars(select(Asset).where(Asset.removed_at.is_(None)).order_by(Asset.created_at.desc()))
+        context["assets"] = [a for a in assets if allowed is None or allowed(a)]
     if view in {"facts", "compose", "media-studio", "create"}:
         facts = db.scalars(select(FactSheet).order_by(FactSheet.created_at.desc())).all()
         context["facts"] = facts
@@ -262,7 +320,7 @@ def page_context(
         form = idea_form or {}
         if view == "create" and not form and (source_id := request.query_params.get("from_post")):
             form = _idea_from_post(db, source_id, actor)
-        context.update(_idea_context(db, settings, context["assets"], form, plan))
+        context.update(_idea_context(db, settings, context["assets"], form, plan, allowed))
         if editor and view == "create":
             context["posts"] = recent_posts(db, actor=actor)
             context["my_jobs"] = db.scalars(
@@ -273,10 +331,13 @@ def page_context(
             ).all()
     elif view == "media-queue":
         context.update(media_jobs=recent_media_jobs(db), retry_option=retry_option, task_failed=task_failed)
+    elif view == "compose":
+        context["compose_picker"] = picker([a for a in context["assets"] if pickable(a)])
     elif view == "media-studio":
         context["media_campaigns"] = db.scalars(
             select(MediaCampaign).order_by(MediaCampaign.created_at.desc())
         ).all()
+        context["campaign_picker"] = picker([a for a in context["assets"] if pickable(a)])
     elif view == "assets":
         context.update(drive=drive_panel(db, settings), drive_form=drive_form)
     elif view == "upload":

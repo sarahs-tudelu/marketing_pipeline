@@ -1,5 +1,5 @@
 {% if drive %}
-<section>
+<section id="drive">
   <h2>Automatic Google Drive imports</h2>
   <p>New photos, videos and audio from your chosen folder are copied into this library automatically. Existing imports stay available if a file is removed from Drive.</p>
   {% if drive.email %}
@@ -12,8 +12,9 @@
   <p><strong>{{ 'Importing enabled' if source.enabled else 'Paused' }}</strong> &middot;
     <a href="https://drive.google.com/drive/folders/{{ source.folder_id }}" target="_blank" rel="noopener noreferrer">{{ source.folder_name or 'Open source folder' }}</a>
   </p>
-  <p>{{ drive.counts.get('imported', 0) }} files imported &middot; {{ drive.counts.get('error', 0) }} need attention.
-    {% if source.last_completed_at %}Last scan completed {{ source.last_completed_at }} UTC.{% else %}Waiting for the worker to complete the first scan.{% endif %}
+  {% set kinds = drive.kinds %}
+  <p>{{ drive.counts.get('imported', 0) }} file{{ '' if drive.counts.get('imported', 0) == 1 else 's' }} imported{% if kinds %} ({% for name, count in kinds.items() %}{{ count }} {{ name if count != 1 else {'photos': 'photo', 'videos': 'video', 'audio files': 'audio file'}[name] }}{{ ', ' if not loop.last else '' }}{% endfor %}){% endif %} &middot; {{ drive.counts.get('error', 0) }} couldn't be imported{% if drive.deleted %} &middot; {{ drive.deleted|length }} deleted from the library{% endif %}.
+    {% if drive.scanning %}Scanning now: {{ drive.scanning.files }} file{{ '' if drive.scanning.files == 1 else 's' }} left in the current folder and {{ drive.scanning.folders }} folder{{ '' if drive.scanning.folders == 1 else 's' }} to go.{% elif source.last_completed_at %}Last scan completed {{ source.last_completed_at }} UTC.{% else %}Waiting for the worker to complete the first scan.{% endif %}
   </p>
   {% if source.error %}<p class="error" role="alert">{{ source.error }}</p>{% endif %}
   <div class="actions">
@@ -51,6 +52,25 @@
       <small>Checks every {{ (drive.interval / 60)|round(1) }} minutes after each completed scan. The background worker must be running. Updated files or source details create a new asset version; existing posts keep their original assets.</small>
     </form>
   </details>
+  {% if drive.failed %}<details open><summary>Files that couldn't be imported ({{ drive.counts.get('error', 0) }})</summary>
+    <ul class="plan-notes">{% for reason, count in drive.reasons %}<li>{{ count }} file{{ '' if count == 1 else 's' }}: {{ reason }}</li>{% endfor %}</ul>
+    <p class="muted">Each is tried again on every scan, so fixing the file in Drive (or raising the import limit of {{ drive.limit_mb|round(1) }} MB) brings it in.</p>
+    <div class="table-scroll"><table><thead><tr><th>Drive file</th><th>Why</th></tr></thead><tbody>
+    {% for item in drive.failed %}<tr>
+      <td><a href="https://drive.google.com/file/d/{{ item.file_id }}/view" target="_blank" rel="noopener noreferrer">{{ item.name }}</a></td>
+      <td>{{ item.error }}<small>Last tried {{ item.checked_at }} UTC</small></td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  </details>{% endif %}
+  {% if drive.deleted %}<details><summary>Deleted from the library ({{ drive.deleted|length }})</summary>
+    <p class="muted">These Drive files were deleted from the asset library, so scans skip them. Import one again to bring it back.</p>
+    <div class="table-scroll"><table><thead><tr><th>Drive file</th><th></th></tr></thead><tbody>
+    {% for item in drive.deleted %}<tr>
+      <td><a href="https://drive.google.com/file/d/{{ item.file_id }}/view" target="_blank" rel="noopener noreferrer">{{ item.name }}</a></td>
+      <td><form method="post" action="/forms/google-drive/files/{{ item.file_id|urlencode }}/import-again"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Import again</button></form></td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  </details>{% endif %}
   {% if drive.recent %}<details><summary>Recent import activity</summary>
     <table><thead><tr><th>Drive file</th><th>Status</th><th>Details</th></tr></thead><tbody>
     {% for item in drive.recent %}<tr>

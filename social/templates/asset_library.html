@@ -1,12 +1,47 @@
 {% include "drive_import.html" %}
-<section>
-  <h2>Library</h2>
-  <table>
-    <thead><tr><th>Preview</th><th>File</th><th>Provenance</th><th>Format</th><th>Rights</th></tr></thead>
+{% set lib = library %}{% set f = lib.filters %}{% set deleted_view = f.source == 'deleted' %}
+{% set check = lib.check %}
+<section id="library">
+  <div class="section-head"><h2>{{ 'Deleted files' if deleted_view else 'Library' }}</h2><small>{% if lib.total %}{{ lib.first }}–{{ lib.first + lib.assets|length - 1 }} of {{ lib.total }} file{{ '' if lib.total == 1 else 's' }}{% else %}No files{% endif %}</small></div>
+  <details class="library-check" id="library-check">
+    <summary><span>What's in the library</span><small class="muted">{% for row in check.rows %}{{ row.total }} {{ {'photo': 'photo', 'video': 'video', 'audio': 'audio file'}[row.kind] }}{{ '' if row.total == 1 else 's' }}{{ ' · ' if not loop.last else '' }}{% endfor %}</small></summary>
+    <div class="table-scroll"><table class="library-counts">
+      <thead><tr><th scope="col">Type</th><th scope="col" class="num">Files</th><th scope="col" class="num">Google Drive</th><th scope="col" class="num">Uploaded</th><th scope="col" class="num">AI-made</th><th scope="col" class="num">Not public</th><th scope="col" class="num">Not described yet</th></tr></thead>
+      <tbody>{% for row in check.rows %}<tr>
+        <th scope="row"><a href="/admin/assets?type={{ row.kind }}#library">{{ row.label }}</a></th>
+        <td class="num">{{ row.total }}</td><td class="num">{{ row.origins.get('drive', 0) }}</td><td class="num">{{ row.origins.get('upload', 0) }}</td>
+        <td class="num">{{ row.origins.get('ai_generated', 0) + row.origins.get('ai_edited', 0) }}</td>
+        <td class="num">{% if row.not_public %}<a href="/admin/assets?type={{ row.kind }}&amp;rights=not_public#library">{{ row.not_public }}</a>{% else %}0{% endif %}</td>
+        <td class="num">{{ '–' if row.kind == 'audio' else row.undescribed }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="muted">Library files only: {{ check.copies }} cop{{ 'y' if check.copies == 1 else 'ies' }} the app made for posts {{ 'is' if check.copies == 1 else 'are' }} counted separately (Source: Everything shows them){% if check.deleted %}, and {{ check.deleted }} deleted file{{ '' if check.deleted == 1 else 's' }} {{ 'is' if check.deleted == 1 else 'are' }} kept for the posts that use {{ 'it' if check.deleted == 1 else 'them' }}{% endif %}. Real project posts that are Public leave out Not public files. Files not described yet are found by their names until the worker describes them, a few every few minutes. If Drive files are missing, the Google Drive section above lists each file that couldn't be imported and why.</p>
+  </details>
+  <form class="library-filters" method="get" action="/admin/assets" data-auto-submit role="search" aria-label="Filter the library">
+    <label class="library-search">Search<input type="search" name="q" value="{{ f.q }}" maxlength="200" placeholder="Name, product or what it shows"></label>
+    <label>Type<select name="type"><option value="">All types</option>{% for key, label in library_kinds.items() %}<option value="{{ key }}" {{ 'selected' if f.type == key else '' }}>{{ label }}</option>{% endfor %}
+      {% if lib.formats %}<optgroup label="File format">{% for key, label in lib.formats.items() %}<option value="{{ key }}" {{ 'selected' if f.type == key else '' }}>{{ label }} {{ {'image': 'photos', 'video': 'videos', 'audio': 'audio'}[key.split('/')[0]] }}</option>{% endfor %}</optgroup>{% endif %}</select></label>
+    <label>Product<select name="product"><option value="">All products</option>{% for name in lib.products %}<option value="{{ name }}" {{ 'selected' if f.product|lower == name|lower else '' }}>{{ name }}</option>{% endfor %}<option value="none" {{ 'selected' if f.product == 'none' else '' }}>No product tag</option></select></label>
+    <label>Source<select name="source"><option value="">Library files</option>{% for key, label in library_origins.items() %}<option value="{{ key }}" {{ 'selected' if f.source == key else '' }}>{{ label }}</option>{% endfor %}<option value="all" {{ 'selected' if f.source == 'all' else '' }}>Everything, with post copies</option><option value="deleted" {{ 'selected' if deleted_view else '' }}>Deleted, kept for posts ({{ check.deleted }})</option></select></label>
+    <label>Rights<select name="rights"><option value="">Any rights</option><option value="public" {{ 'selected' if f.rights == 'public' else '' }}>Public</option><option value="not_public" {{ 'selected' if f.rights == 'not_public' else '' }}>Not public</option></select></label>
+    <label>Sort<select name="sort">{% for key, label in library_sorts.items() %}<option value="{{ key }}" {{ 'selected' if f.sort == key else '' }}>{{ label }}</option>{% endfor %}</select></label>
+    <div class="actions"><button>Apply</button>{% if lib.filtered or f.sort != 'newest' %}<a class="button" href="/admin/assets#library">Clear filters</a>{% endif %}</div>
+  </form>
+  {% set bulk = 'bulk-restore' if deleted_view else 'bulk-delete' %}
+  {% if lib.assets %}
+  <form id="{{ bulk }}" class="bulk-actions" method="post" action="/forms/assets/{{ 'restore-files' if deleted_view else 'delete-files' }}"{% if not deleted_view %} data-confirm="Delete the ticked files from the asset library? Files nothing uses are deleted for good. Files that posts or media jobs use are kept for them, but leave the library and won't be used again. Recurring campaigns stop using them."{% endif %}>
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="back" value="{{ request.url.query }}">
+    <label class="checkbox"><input type="checkbox" data-tick-all="{{ bulk }}">Tick all on this page</label>
+    <button class="{{ '' if deleted_view else 'danger' }}">{{ 'Restore ticked files' if deleted_view else 'Delete ticked files' }}</button>
+  </form>
+  {% endif %}
+  <div class="table-scroll"><table class="library-table">
+    <thead><tr><th scope="col"><span class="visually-hidden">Choose</span></th><th scope="col">Preview</th><th scope="col">File</th><th scope="col">Provenance</th><th scope="col">Format</th><th scope="col">Rights</th></tr></thead>
     <tbody>
-    {% for a in assets %}
+    {% for a in lib.assets %}
       {% set asset_url = media_base_url ~ '/' ~ (a.storage_key|urlencode) %}
       <tr>
+        <td><input type="checkbox" name="asset_ids" value="{{ a.id }}" form="{{ bulk }}" aria-label="Choose {{ a.original_name }}"></td>
         <td>
           {% if a.media.mime.startswith('image/') %}
           <a href="{{ asset_url }}" target="_blank" rel="noopener noreferrer" aria-label="View {{ a.original_name }}">
@@ -18,7 +53,16 @@
           <audio src="{{ asset_url }}" controls preload="none" aria-label="Preview {{ a.original_name }}"></audio>
           {% endif %}
         </td>
-        <td>{{ a.original_name }}<small>{{ a.id }}</small><div class="actions"><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a><a class="button" href="/admin/assets/{{ a.id }}/edit">Edit details</a></div>
+        <td>{{ a.original_name }}<small>{{ a.id }}</small>
+          {% if a.removed_at %}<small>Deleted {{ a.removed_at.strftime('%Y-%m-%d %H:%M') }} UTC{{ ' by ' ~ a.removed_by if a.removed_by else '' }}; kept for the posts that use it.</small>{% endif %}
+          <div class="actions"><a class="button" href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">View asset</a>
+            {% if a.removed_at %}
+            <form method="post" action="/forms/assets/restore-files"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="asset_ids" value="{{ a.id }}"><input type="hidden" name="back" value="{{ request.url.query }}"><button>Restore</button></form>
+            {% else %}
+            <a class="button" href="/admin/assets/{{ a.id }}/edit">Edit details</a>
+            <form method="post" action="/forms/assets/delete-files" data-confirm="Delete {{ a.original_name }} from the asset library? If nothing uses it, it's deleted for good. If posts or media jobs use it, it's kept for them but leaves the library and won't be used again."><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="asset_ids" value="{{ a.id }}"><input type="hidden" name="back" value="{{ request.url.query }}"><button class="danger">Delete</button></form>
+            {% endif %}
+          </div>
           {% if a.media.get('visual_summary') %}{% set description = a.media.visual_summary %}
           <details><summary>Visual summary</summary><p>{{ description.summary }}</p>
             {% if description.visible_text %}<p>Visible text: {{ description.visible_text|join(' · ') }}</p>{% endif %}
@@ -37,13 +81,15 @@
             <small>{{ audio.model }} · {{ 'Simulated assessment' if audio.simulated else 'Machine listening; usage rights are checked separately' }}</small>
           </details>{% endif %}
         </td>
-        <td>{{ a.source }}<small>{{ a.generator or 'Company supplied' }}{{ ' · demo only' if a.demo_only else '' }}</small></td>
-        <td>{{ a.media.width }} × {{ a.media.height }}<small>{{ a.media.mime }} · {{ a.media.bytes }} bytes</small></td>
+        {% set product_names = library_products(a) %}
+        <td>{{ a.source }}<small>{{ a.generator or 'Company supplied' }}{{ ' · Google Drive' if a.tags.get('google_drive_file_id') else '' }}{{ ' · demo only' if a.demo_only else '' }}</small>{% if product_names %}<small>Product: {{ product_names|join(', ') }}</small>{% endif %}{% if library_is_copy(a) %}<small>Copy made for a post</small>{% endif %}<small>Added {{ a.created_at.strftime('%Y-%m-%d') if a.created_at else '' }}</small></td>
+        <td>{% if a.media.mime.startswith(('video/', 'audio/')) %}{{ library_clock(a.media.get('duration', 0)) }}{% else %}{{ a.media.width }} × {{ a.media.height }}{% endif %}<small>{{ a.media.mime }} · {{ (a.media.bytes / 1000000)|round(1) }} MB{% if a.media.mime.startswith('video/') %} · {{ a.media.width }} × {{ a.media.height }}{% endif %}</small></td>
         <td>{{ rights_label(a.rights) }}{% if a.owner %}<small>Owner: {{ a.owner }}</small>{% endif %}{% if a.rights_expire_at %}<small>Expires {{ a.rights_expire_at }} UTC</small>{% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="empty">Upload or generate media to see it here.</td></tr>
+      <tr><td colspan="6" class="empty">{% if lib.filtered %}No files match these filters. <a href="/admin/assets#library">Clear filters</a>{% elif deleted_view %}No deleted files are being kept.{% else %}Upload or generate media to see it here.{% endif %}</td></tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
+  {% if lib.pages > 1 %}<nav class="pager" aria-label="Library pages">{% if lib.previous %}<a class="button" href="{{ lib.previous }}">Previous</a>{% endif %}<span>Page {{ lib.page }} of {{ lib.pages }}</span>{% if lib.next %}<a class="button" href="{{ lib.next }}">Next</a>{% endif %}</nav>{% endif %}
 </section>

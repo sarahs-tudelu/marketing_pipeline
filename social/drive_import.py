@@ -31,6 +31,56 @@ class DriveError(ValueError):
     """Safe to display; never contains upstream response bodies or credentials."""
 
 
+# Audio and video are recognised by their file extension; Drive names don't always have one.
+EXTENSIONS = {
+    "video/mp4": ".mp4",
+    "video/x-m4v": ".m4v",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm",
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/vnd.wave": ".wav",
+    "audio/mp4": ".m4a",
+    "audio/x-m4a": ".m4a",
+    "audio/ogg": ".ogg",
+    "audio/flac": ".flac",
+    "audio/x-flac": ".flac",
+}
+GENERIC_FAILURE = "Could not import this file. Check its media format, source details and storage connection."
+
+
+def too_large(size, limit):
+    return (
+        f"It's {size / 1_000_000:,.1f} MB, over the import size limit of {limit / 1_000_000:,.1f} MB "
+        "(MAX_UPLOAD_BYTES). Put a smaller export in the folder, or ask the server admin to raise the limit."
+    )
+
+
+def import_name(file):
+    """The file's Drive name, with an extension from its type when audio or video has none."""
+    name = re.sub(r"[/\\]", "_", file["name"])
+    extension = EXTENSIONS.get(file.get("mimeType", ""))
+    if extension and Path(name).suffix.lower() not in set(EXTENSIONS.values()):
+        name += extension
+    return name
+
+
+def import_error(exc):
+    """What went wrong with one file, safe to show: never provider bodies, paths or credentials."""
+    from botocore.exceptions import BotoCoreError, ClientError
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from .upload_errors import describe_upload_error
+
+    if isinstance(exc, ValueError):
+        return str(exc)[:500]  # The media checks' own explanations.
+    if isinstance(exc, (ClientError, BotoCoreError, OSError, SQLAlchemyError)):
+        return describe_upload_error(exc)[1]
+    return GENERIC_FAILURE
+
+
 class ImportMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     source: Literal["company", "ai_generated", "ai_edited"]
@@ -169,15 +219,17 @@ class DriveClient:
         if file.get("capabilities", {}).get("canDownload") is False:
             raise DriveError("Downloading this file is disabled in Google Drive")
         size = int(file.get("size", 0))
-        if not 0 < size <= limit:
-            raise DriveError("File is empty or exceeds the import size limit")
+        if size <= 0:
+            raise DriveError("The file is empty in Google Drive")
+        if size > limit:
+            raise DriveError(too_large(size, limit))
         with self.request(
             file["id"], params={"alt": "media", "supportsAllDrives": "true"}, stream=True
         ) as response:
             data = bytearray()
             for chunk in response.iter_content(chunk_size=65536):
                 if len(data) + len(chunk) > limit:
-                    raise DriveError("File exceeds the import size limit")
+                    raise DriveError(too_large(max(size, len(data) + len(chunk)), limit))
                 data.extend(chunk)
         if len(data) != size or (
             file.get("md5Checksum")
@@ -241,16 +293,56 @@ def save_source(db, form):
 def panel(db, settings):
     source = db.get(DriveSource, 1)
     counts = dict(db.execute(select(DriveImport.status, func.count()).group_by(DriveImport.status)).all())
+    kinds = {}
+    for (media,) in db.execute(
+        select(Asset.media).join(DriveImport, DriveImport.asset_id == Asset.id).where(DriveImport.status == "imported")
+    ):
+        kind = {"image": "photos", "video": "videos", "audio": "audio files"}.get(media.get("mime", "").split("/")[0])
+        if kind:
+            kinds[kind] = kinds.get(kind, 0) + 1
+    reasons = db.execute(
+        select(DriveImport.error, func.count())
+        .where(DriveImport.status == "error")
+        .group_by(DriveImport.error)
+        .order_by(func.count().desc())
+    ).all()
+    state = (source.scan_state if source else None) or {}
     return {
         "source": source,
         "email": identity(settings),
         "counts": counts,
+        "kinds": kinds,
+        "reasons": reasons,
+        "failed": db.scalars(
+            select(DriveImport).where(DriveImport.status == "error").order_by(DriveImport.checked_at.desc()).limit(200)
+        ).all(),
+        "deleted": db.scalars(
+            select(DriveImport).where(DriveImport.status == "deleted").order_by(DriveImport.checked_at.desc()).limit(200)
+        ).all(),
+        # A scan in progress: files left in the current folder listing, and folders still to list.
+        "scanning": {"files": len(state.get("pending", [])), "folders": len(state.get("folders", []))} if state else None,
         "recent": db.scalars(select(DriveImport).order_by(DriveImport.checked_at.desc()).limit(20)).all(),
         "interval": settings.google_drive_poll_seconds,
+        "limit_mb": settings.max_upload_bytes / 1_000_000,
     }
 
 
+def import_again(db, file_id):
+    """Import a deleted or failed Drive file on the next scan, which starts now."""
+    record = db.get(DriveImport, file_id)
+    source = db.get(DriveSource, 1)
+    if record is None or source is None or record.status not in {"deleted", "error"}:
+        raise DriveError("That Drive file isn't waiting to be imported again")
+    record.status, record.fingerprint = "error", ""
+    record.error, record.retry_at = "Waiting for the next scan", None
+    source.next_poll_at = now()
+    db.commit()
+
+
 def import_file(db, settings, source, client, file, parent, drive_id):
+    record = db.get(DriveImport, file["id"])
+    if record and record.status == "deleted":
+        return  # Deleted from the library; the Drive panel's Import again brings it back.
     values = dict(source.defaults)
     if values.get("source") == "manifest":
         values.pop("source")
@@ -274,7 +366,6 @@ def import_file(db, settings, source, client, file, parent, drive_id):
             sort_keys=True,
         ).encode()
     ).hexdigest()
-    record = db.get(DriveImport, file["id"])
     if record and record.fingerprint == fingerprint:
         if record.status == "imported" or (record.retry_at and record.retry_at > now()):
             return
@@ -291,10 +382,12 @@ def import_file(db, settings, source, client, file, parent, drive_id):
         and previous.checksum == checksum
         and all(getattr(previous, name) == value for name, value in arguments.items())
     )
-    name = re.sub(r"[/\\]", "_", file["name"])
+    name = import_name(file)
     if len(name) > 255:
         raise DriveError("Rename this file to 255 characters or fewer before importing")
     asset = previous if same else ingest(db, settings, data, name, **arguments)
+    if same and previous.removed_at is not None:
+        previous.removed_at, previous.removed_by = None, ""  # Imported again after it was deleted.
     if record is None:
         record = DriveImport(file_id=file["id"])
         db.add(record)
@@ -360,12 +453,7 @@ def poll(db, settings, client_factory=DriveClient):
                         raise
                     except Exception as exc:
                         event("drive_file_failed", error_type=type(exc).__name__)
-                        failed_file(
-                            db,
-                            source,
-                            file,
-                            "Could not import this file. Check its media format, source details and storage connection.",
-                        )
+                        failed_file(db, source, file, import_error(exc))
                 state["pending"].pop(0)
                 source.scan_state = deepcopy(state)
                 db.commit()

@@ -1,0 +1,37 @@
+{# A collapsible list of asset library files to tick, with search, filters and sorting (studio.js).
+   Expects p (library.picker), picker_name, picker_checked, picker_title and picker_id; optional
+   picker_intro, picker_open and picker_empty (shown when there are no files). The filter controls have no name, so only the ticked files are sent. #}
+{% set checked_ids = picker_checked or [] %}
+{% set ticked = p.entries|selectattr('asset.id', 'in', checked_ids)|list %}
+<details class="media-picker" id="{{ picker_id }}" data-picker {{ 'open' if picker_open or ticked else '' }}>
+  <summary><span>{{ picker_title }}</span><span class="tag" data-picker-chosen>{{ (ticked|length ~ ' chosen') if ticked else '' }}</span><small class="muted">{{ p.entries|length }} file{{ '' if p.entries|length == 1 else 's' }}</small></summary>
+  {% if picker_intro %}<p class="muted">{{ picker_intro }}</p>{% endif %}
+  {% if p.entries %}
+  <div class="picker-filters" data-picker-filters hidden>
+    <label class="picker-search">Search<input type="search" data-picker-search placeholder="Name, product or what it shows" aria-describedby="{{ picker_id }}-count"></label>
+    {% if p.kinds|length > 1 %}<label>Type<select data-picker-filter="kind"><option value="">All types</option>{% for key, label in p.kinds.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>{% endif %}
+    {% if p.products %}<label>Product<select data-picker-filter="product"><option value="">All products</option>{% for name in p.products %}<option value="{{ name|lower }}">{{ name }}</option>{% endfor %}<option value="none">No product tag</option></select></label>{% endif %}
+    {% if p.origins|length > 1 %}<label>Source<select data-picker-filter="origin"><option value="">All sources</option>{% for key, label in p.origins.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>{% endif %}
+    <label>Sort<select data-picker-sort>{% for key, label in p.sorts.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>
+    <label class="checkbox picker-only"><input type="checkbox" data-picker-chosen-only>Chosen only</label>
+  </div>
+  <p class="muted picker-count" id="{{ picker_id }}-count" data-picker-count aria-live="polite">{{ p.entries|length }} file{{ '' if p.entries|length == 1 else 's' }}</p>
+  <ul class="picker-list" data-picker-list>
+    {% for e in p.entries %}{% set a = e.asset %}
+    <li data-kind="{{ e.kind }}" data-origin="{{ e.origin }}" data-products="{{ e.products|map('lower')|join('|') }}" data-created="{{ e.created }}" data-name="{{ a.original_name|lower }}" data-seconds="{{ e.seconds }}" data-rank="{{ e.match[0] if e.match else '' }}" data-text="{{ e.text }}">
+      <label class="picker-item">
+        <input type="checkbox" name="{{ picker_name }}" value="{{ a.id }}" {{ 'checked' if a.id in checked_ids else '' }}>
+        {% if not editor %}{% if e.kind == 'photo' %}<img class="picker-thumb" src="{{ media_base_url }}/{{ a.storage_key|urlencode }}" alt="" loading="lazy" width="48" height="48">{% else %}<span class="picker-thumb" aria-hidden="true">{{ '▶' if e.kind == 'video' else '♪' }}</span>{% endif %}{% endif %}
+        <span class="picker-text"><span class="picker-name">{{ a.original_name }}</span>
+          <small>{{ e.label }} · {{ {'drive': 'Google Drive', 'upload': 'Uploaded', 'ai_generated': 'AI-generated', 'ai_edited': 'AI-edited', 'copy': 'Post copy'}[e.origin] }}{% if e.products %} · {{ e.products|join(', ') }}{% endif %}{% if a.rights == 'not_public' %} · Not public{% endif %}{{ ' · demo only' if a.demo_only else '' }}{% if a.created_at %} · added {{ a.created_at.day }} {{ a.created_at.strftime('%b %Y') }}{% endif %}</small>
+          {% if e.match %}<small class="picker-match">Search match{{ ': ' ~ e.match[1] if e.match[1] else '' }}</small>{% endif %}
+        </span>
+      </label>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="muted" data-picker-empty hidden>No files match. Clear the search or change a filter.</p>
+  {% else %}
+  <p class="muted">{% if picker_empty %}{{ picker_empty }}{% else %}There are no files to choose yet.{% if not editor %} <a href="/admin/upload">Add media</a> or import it from Google Drive in the asset library.{% endif %}{% endif %}</p>
+  {% endif %}
+</details>

@@ -67,7 +67,9 @@ def default_logo(db, *, live=False):
     """The logo every video ends on: the newest asset tagged as the Tudelu logo, if any."""
     from .idea_plan import logo_assets
 
-    found = logo_assets(db.scalars(select(Asset).order_by(Asset.created_at.desc())).all(), live=live)
+    found = logo_assets(
+        db.scalars(select(Asset).where(Asset.removed_at.is_(None)).order_by(Asset.created_at.desc())).all(), live=live
+    )
     return found[0] if found else None
 
 
@@ -139,7 +141,9 @@ def music_tracks(db, *, live=False, public=True):
         a
         for a in db.scalars(
             select(Asset)
-            .where(Asset.source == "company", Asset.tags[MUSIC_TAG].as_boolean().is_(True))
+            .where(
+                Asset.source == "company", Asset.tags[MUSIC_TAG].as_boolean().is_(True), Asset.removed_at.is_(None)
+            )
             .order_by(Asset.created_at)
         ).all()
         if a.media.get("mime", "").startswith("audio/")

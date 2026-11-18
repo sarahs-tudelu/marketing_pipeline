@@ -55,18 +55,18 @@
       <label>Length (seconds, videos)<input type="number" name="duration" min="5" max="90" value="{{ plan.duration }}"></label>
       <label>Content style<select name="plan_kind"><option value="promotional" {{ 'selected' if plan.kind == 'promotional' else '' }}>Promotional</option><option value="non_promotional" {{ 'selected' if plan.kind == 'non_promotional' else '' }}>Editorial / non-promotional</option></select></label>
     </div>
-    <fieldset><legend>{{ 'Clips, in viewing order' if plan.real_format == 'video' else 'Photos' }}</legend>
+    {% set kinds = namespace(videos=0, photos=0) %}{% for item in planned %}{% set a = plan_assets.get(item.asset_id) %}{% if a %}{% if a.media.mime.startswith('video/') %}{% set kinds.videos = kinds.videos + 1 %}{% else %}{% set kinds.photos = kinds.photos + 1 %}{% endif %}{% endif %}{% endfor %}
+    {% set video_plan = plan.real_format == 'video' %}
+    <fieldset><legend>{% if not video_plan %}Photos{% elif kinds.videos and kinds.photos %}Clips and photos, in viewing order{% elif kinds.videos %}Clips, in viewing order{% else %}Photos shown as stills, in viewing order{% endif %}</legend>
       <ol class="plan-notes real-media">
       {% for item in planned %}{% set a = plan_assets.get(item.asset_id) %}{% if a %}
         <li><label class="checkbox"><input type="checkbox" name="real_media" value="{{ a.id }}" checked>{{ a.original_name }}{% if plan.real_format == 'video' %}<span class="tag">{{ '%.1f–%.1f s'|format(item.start, item.end) if a.media.mime.startswith('video/') else 'photo · %.1f s'|format(item.end - item.start) }}</span>{% endif %}{% if item.get('note') %} · {{ item.note }}{% endif %}</label></li>
       {% endif %}{% endfor %}
       </ol>
     </fieldset>
-    {% set others = plan.real_matches|rejectattr('asset_id', 'in', chosen_ids)|list %}
-    {% if others %}<fieldset><legend>Other matches you can add</legend>
-      {% for m in others %}{% set a = plan_assets.get(m.asset_id) %}{% if a %}<label class="checkbox"><input type="checkbox" name="real_media" value="{{ a.id }}">{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span>{% if m.get('why') %} · {{ m.why }}{% endif %}</label>{% endif %}{% endfor %}
-    </fieldset>{% endif %}
-    <p class="muted">The editor chose these and planned their crops, colour{{ ' and trims' if plan.real_format == 'video' else '' }}. Untick a file to leave it out, or tick another match to add it; the edit is then planned again when the job runs. Changing the format or length does the same.</p>
+    {% if video_plan and not kinds.videos %}<p class="banner" role="status">{% if real_picker.kinds.get('video') %}This video has no footage yet, so its photos are shown as stills. To use footage, tick videos under <b>Add media from the library</b> below.{% else %}This video has no footage: the library has no videos this post can use. The photos are shown as stills; upload videos, or switch Format to Photo or collage.{% endif %}</p>{% endif %}
+    {% with p=real_picker, picker_name='real_media', picker_checked=[], picker_id='real-library', picker_title='Add media from the library', picker_open=video_plan and not kinds.videos and real_picker.kinds.get('video'), picker_intro="Every photo and video this post can use, with the search's matches first. Tick files to add them; up to 12 in all.", picker_empty="No other photos or videos in the library can be used for this post. Public posts leave out Not public files, and Pinterest uses only Google Drive imports." %}{% include "media_picker.html" %}{% endwith %}
+    <p class="muted">The editor chose these and planned their crops, colour{{ ' and trims' if video_plan else '' }}. Untick a file to leave it out, or tick files in the library list to add them; the edit is then planned again when the job runs. Changing the format or length does the same.</p>
     {% if plan.real_format == 'video' %}
       {% if plan.real_sounds %}<p>Sound: {% for s in plan.real_sounds %}{% set a = plan_assets.get(s) %}{{ a.original_name if a else 'your audio' }}{{ ', ' if not loop.last else '' }}{% endfor %}, placed where it fits over the clips' own sound.</p>
       {% else %}<p>Sound: the clips' own sound. Silent footage gets {{ music_tracks[0].original_name ~ ' from your asset library' if music_tracks else 'ambient music made by the app' }}, never AI.</p>{% endif %}

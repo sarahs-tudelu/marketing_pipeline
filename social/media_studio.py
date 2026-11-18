@@ -246,6 +246,8 @@ def validate_sources(db, brief, *, live=False):
     sources = []
     for asset_id in dict.fromkeys(brief.reference_ids + brief.audio_reference_ids):
         asset = db.get(Asset, asset_id)
+        if asset is not None and asset.removed_at is not None:
+            raise ValueError(f"{asset.original_name} was deleted from the asset library. Choose other media.")
         if (
             not asset
             or not asset.rights.strip()

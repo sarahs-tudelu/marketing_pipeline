@@ -217,7 +217,7 @@ def gather_sources(db, settings, job):
         a
         for a in db.scalars(
             select(Asset)
-            .where(Asset.source == "company", Asset.rights == "public")
+            .where(Asset.source == "company", Asset.rights == "public", Asset.removed_at.is_(None))
             .order_by(Asset.created_at.desc())
             .limit(60)
         ).all()
@@ -245,7 +245,11 @@ def gather_sources(db, settings, job):
         a
         for a in db.scalars(
             select(Asset)
-            .where(Asset.source.in_(["ai_generated", "ai_edited"]), Asset.generator.like(prefix + "%"))
+            .where(
+                Asset.source.in_(["ai_generated", "ai_edited"]),
+                Asset.generator.like(prefix + "%"),
+                Asset.removed_at.is_(None),
+            )
             .order_by(Asset.created_at.desc())
             .limit(60)
         ).all()

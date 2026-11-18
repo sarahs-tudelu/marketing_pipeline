@@ -35,6 +35,9 @@ class Asset(Base):
     media: Mapped[dict] = mapped_column(JSON)
     demo_only: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # Deleted from the library but kept for the posts and media jobs that use it (social/library.py).
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    removed_by: Mapped[str] = mapped_column(String(200), default="", server_default="")
 
 
 class AssetEdit(Base):

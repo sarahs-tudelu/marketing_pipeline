@@ -219,10 +219,13 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False, driv
     media = [a for a in sources if a.id in brief.reference_ids and fits(a, real_asset)]
     picked = bool(media)
     if not media:
+        # Every original: platform copies of posts are company files too, and would crowd them out of a limit.
         media = [
             a
             for a in db.scalars(
-                select(Asset).where(Asset.source == "company").order_by(Asset.created_at.desc()).limit(400)
+                select(Asset)
+                .where(Asset.source == "company", Asset.removed_at.is_(None))
+                .order_by(Asset.created_at.desc())
             ).all()
             if fits(a, real_asset) and _product_rank(a, brief.product) is not None
         ]
@@ -264,7 +267,7 @@ def plan_real_idea(
     ValueError saying what is missing.
     """
     from .config import REAL_MEDIA_ONLY, profiles
-    from .media_search import search
+    from .media_search import search, video_gaps
 
     signals = signals or {}
     public = rights != "not_public"
@@ -289,10 +292,17 @@ def plan_real_idea(
                 "Pinterest, or plan the idea without them to search your Drive imports."
             )
         pictures = [a for a in pictures if drive(a)]
+    if requested in {"photo", "video"}:
+        want = requested
+    elif signals.get("video") or _SEQUENCE.search(idea):
+        want = "video"
+    else:
+        want = "photo" if signals.get("image") else "any"
+    library = {"product": product, "public": public, "drive_only": drive_only, "allowed": allowed}
     if pictures:
         found = [(a, "Added with your idea") for a in pictures]
     else:
-        found, problem = search(db, settings, idea, product=product, public=public, drive_only=drive_only, allowed=allowed)
+        found, problem = search(db, settings, idea, want=want, **library)
         if not found:
             raise ValueError(
                 f"No real photos or videos in the library show this idea. {problem} Upload some (new files are "
@@ -305,18 +315,13 @@ def plan_real_idea(
     videos = [a for a, _ in found if a.media["mime"].startswith("video/")]
     photos = [a for a, _ in found if a.media["mime"].startswith("image/")]
     photo_ok = bool(photos) and all(profiles(settings)[p].image_formats for p in platforms)
-    if requested in {"photo", "video"}:
-        chosen = requested
-    elif signals.get("video") or _SEQUENCE.search(idea):
-        chosen = "video"
-    elif signals.get("image"):
-        chosen = "photo"
-    else:
-        chosen = "video" if videos else "photo"
+    chosen = want if want != "any" else "video" if videos else "photo"
     if chosen == "photo" and not photo_ok:
         chosen = "video"
         notes.append("A platform you chose takes only video, so the photos become a video.")
     video = chosen == "video"
+    if video and not videos:
+        notes.append(_no_footage(db, pictures, library, video_gaps))
     if video:
         candidates = videos[:VIDEO_CANDIDATES] + photos[: (VIDEO_CANDIDATES if videos else PHOTO_CANDIDATES)]
         longest = min(profiles(settings)[p].max_duration for p in platforms)
@@ -347,6 +352,27 @@ def plan_real_idea(
         "notes": notes,
         "planner": planner,
     }
+
+
+def _no_footage(db, pictures, library, video_gaps):
+    """Why a video plan shows only photos, and what would add footage."""
+    if pictures:
+        return (
+            "You added only photos, so the video shows them as stills with a slow push-in. Add videos, or "
+            "choose more under Add media from the library."
+        )
+    usable, reasons = video_gaps(db, **library)
+    if usable == 1:
+        why = "The one video this post can use doesn't match the idea"
+    elif usable:
+        why = f"None of the {usable} videos this post can use match the idea"
+    else:
+        why = "The asset library has no videos this post can use"
+    detail = f" ({'; '.join(reasons)})" if reasons else ""
+    return (
+        f"{why}{detail}, so the video shows the matching photos as stills with a slow push-in. To use footage, "
+        "tick videos under Add media from the library, or upload them."
+    )
 
 
 def plan_edit(db, settings, job):

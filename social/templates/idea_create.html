@@ -9,12 +9,13 @@
       {% if idea_uploads %}<div class="reference-list">{% for a in idea_uploads %}<label class="checkbox"><input type="checkbox" name="upload_ids" value="{{ a.id }}" checked>{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span> · saved in the asset library</label>{% endfor %}</div>{% endif %}
       <label>Add files<input type="file" name="files" multiple accept="image/*,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/wav,audio/mp4,audio/ogg,audio/flac"></label>
       <small class="muted"><span class="drag-hint">Choose files or drag them onto this box. </span>They're added to the asset library as real company media: Public, unless you change the usage rights or owner in the options. Up to {{ max_idea_uploads }} files of {{ (settings.max_upload_bytes / 1000000)|round|int }} MB each. To add AI-made media, upload it in the asset library with its model and prompt.</small>
+      {% with p=library_picker, picker_name='reference_ids', picker_checked=idea_form.get('reference_ids', []), picker_id='idea-library', picker_title='Or choose from the asset library', picker_intro='Up to ' ~ max_idea_picks ~ ' files, used the way you choose below, like files you add. For a real project post you can also leave this empty: the library is searched for media that fits your idea.' %}{% include "media_picker.html" %}{% endwith %}
       <fieldset class="choice-row"><legend>How to use them</legend>
-        <label class="choice"><input type="radio" name="upload_use" value="as_is" {{ 'checked' if idea_form.get('upload_use', 'as_is') != 'reference' else '' }}>Post it as it is</label>
+        <label class="choice"><input type="radio" name="upload_use" value="as_is" {{ 'checked' if idea_form.get('upload_use', 'as_is') not in ('reference', 'real') else '' }}>Post it as it is</label>
         <label class="choice"><input type="radio" name="upload_use" value="real" {{ 'checked' if idea_form.get('upload_use') == 'real' else '' }}>Edit them into a real project post</label>
         <label class="choice"><input type="radio" name="upload_use" value="reference" {{ 'checked' if idea_form.get('upload_use') == 'reference' else '' }}>Use it as a starting point for new AI media</label>
       </fieldset>
-      <small class="muted"><b>As it is:</b> one photo or video, plus an audio file for its sound if you like. It's resized for each platform and AI writes the caption; the Format choice doesn't apply. <b>Real project:</b> several photos and videos edited with standard tools only (crops, colour, a collage, or trimmed clips joined in order with your audio), with no AI label. <b>Starting point:</b> Runway makes new media from it: an image to start a video, a video to edit, or audio to rework.</small>
+      <small class="muted">These apply to the files you add and the files you choose. <b>As it is:</b> one photo or video, plus an audio file for its sound if you like. It's resized for each platform and AI writes the caption; the Format choice doesn't apply. <b>Real project:</b> several photos and videos edited with standard tools only (crops, colour, a collage, or trimmed clips joined in order with your audio), with no AI label. <b>Starting point:</b> Runway makes new media from it: an image to start a video, a video to edit, or audio to rework.</small>
     </fieldset>
     </div>
     <div class="idea-side">
@@ -34,13 +35,7 @@
       <label>Approved facts<select name="facts_id" required>{% for f in facts %}<option value="{{ f.id }}" {{ 'selected' if idea_form.get('facts_id', default_facts_id) == f.id else '' }}>{{ f.version }}{{ ' · demo only' if f.document.demo_only else '' }}</option>{% endfor %}</select></label>
       {% with values=idea_form if idea_form else {'rights': 'public'}, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
       <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if idea_form.get('website', 'on') == 'on' else '' }}>Use website text for creative direction</label>
-      <small>Your prompt controls the scenes, backgrounds and supported product finishes. Library, Google Drive and website images guide product construction using the Builder rules. Video clips share a visual direction; each uses a newly generated scene image before animation.</small>
-      <fieldset><legend>Reference media (optional)</legend>
-        <p class="muted">Pick product photos to guide new scenes, or one uploaded video for Runway to re-render, which makes it AI media. Videos are only used when the format is Re-render an uploaded video with AI.</p>
-        <div class="reference-list">
-        {% for a in assets if not a.media.mime.startswith('audio/') and 'rendition' not in a.tags %}<label class="checkbox"><input type="checkbox" name="reference_ids" value="{{ a.id }}" {{ 'checked' if a.id in idea_form.get('reference_ids', []) else '' }}>{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span>{{ ' · demo only' if a.demo_only else '' }}</label>{% else %}<p>{% if editor %}Add a file above to use it as a reference.{% else %}<a href="/admin/upload">Upload reference media</a>{% endif %}</p>{% endfor %}
-        </div>
-      </fieldset>
+      <small>Your prompt controls the scenes, backgrounds and supported product finishes. Library, Google Drive and website images guide product construction using the Builder rules. Video clips share a visual direction; each uses a newly generated scene image before animation. To guide new scenes with product photos, choose them from the asset library above and pick <i>Use it as a starting point for new AI media</i>.</small>
     </details>
     <p class="muted">{% if logos %}End cards use <b>{{ logos[0].original_name }}</b>.{% else %}No logo is in the library yet. To end videos with the Tudelu logo, {% if editor %}ask an admin to upload it{% else %}<a href="/admin/upload">upload it</a>{% endif %} and tick <i>This is the Tudelu logo</i>.{% endif %}</p>
     <div class="actions"><button class="primary">Plan this idea</button></div>

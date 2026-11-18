@@ -255,7 +255,9 @@ def candidates(db, settings, job, profile):
     aliases = [normalize(n) for n in [profile.product_id, profile.name, *profile.aliases]]
     assets = [
         a
-        for a in db.scalars(select(Asset).where(Asset.rights == "public").order_by(Asset.created_at.desc()))
+        for a in db.scalars(
+            select(Asset).where(Asset.rights == "public", Asset.removed_at.is_(None)).order_by(Asset.created_at.desc())
+        )
         if usable(a) and (a.id in selected or not requires_ai_review(a))
     ]
 

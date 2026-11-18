@@ -1,6 +1,7 @@
 """Pinterest: real Google Drive photos and videos only, AI captions, official API v5."""
 
 import io
+import re
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -142,7 +143,7 @@ def test_library_post_resizes_a_large_drive_photo(db, settings, assets):
         page = client.get("/admin/compose").text
         assert (
             '<option value="pinterest" >Pinterest</option>' in page
-            and "terrace.jpg · company · Google Drive" in page
+            and re.search(r"terrace\.jpg</span>\s*<small>Photo · JPEG · 2400 × 1800 · Google Drive", page)
         )
         refused = client.post(
             "/forms/posts",

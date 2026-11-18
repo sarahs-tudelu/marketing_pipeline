@@ -740,7 +740,7 @@ def test_idea_page_on_a_phone(db, settings):
             assert min(heights) >= 44
             order = [
                 await form.locator(selector).first.evaluate("el => el.getBoundingClientRect().top + scrollY")
-                for selector in ("#idea-media", 'input[name="format"]', 'input[name="platforms"]', "summary", ".primary")
+                for selector in ("#idea-media", 'input[name="format"]', 'input[name="platforms"]', ".idea-side summary", ".primary")
             ]
             assert order == sorted(order)
             # Drag-and-drop wording isn't shown on a touch screen.
