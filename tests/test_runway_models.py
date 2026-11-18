@@ -3,7 +3,7 @@ from test_runway_media import brief_for
 
 from social.idea_plan import IdeaPlan, clip_seconds_preview, work_summary
 from social.media_studio import queue_jobs
-from social.runway import job_settings, payload_for
+from social.runway import VEO_NEGATIVE_PROMPT, job_settings, payload_for
 
 
 @pytest.mark.parametrize("platform,scene,ratio", [
@@ -30,8 +30,9 @@ def test_veo_covers_the_planned_length_without_mutating_it(settings, seconds, ge
     _, payload = payload_for(settings, brief, "linkedin", ["runway://scene"])
     assert payload == {
         "model": "veo3.1", "promptText": "Still canopy.", "seed": 10, "duration": generated,
-        "ratio": "1280:720", "audio": False,
-        "promptImage": [{"uri": "runway://scene", "position": p} for p in ("first", "last")],
+        "ratio": "1280:720", "audio": False, "negativePrompt": VEO_NEGATIVE_PROMPT,
+        # The scene is the first frame only: as the last frame too, Veo returned to it and the clip froze.
+        "promptImage": [{"uri": "runway://scene", "position": "first"}],
     }
     assert brief["duration"] == seconds
 
@@ -58,6 +59,8 @@ def test_pre_switch_jobs_keep_legacy_contracts(settings):
     brief = {"operation": "video", "generation_prompt": "Still canopy.", "seed": 10, "duration": 10}
     _, payload = payload_for(saved, brief, "linkedin", ["runway://scene"])
     assert payload["model"] == "gen4.5" and payload["duration"] == 10
+    # Gen-4.5 takes one image and has no negativePrompt field.
+    assert payload["promptImage"] == "runway://scene" and "negativePrompt" not in payload
     assert payload["promptImage"] == "runway://scene" and payload["outputFormat"] == "mp4"
     _, image = payload_for(saved, brief | {"operation": "image", "video_scene": True}, "linkedin", [])
     assert image["model"] == "gen4_image" and image["seed"] == 10 and image["ratio"] == "1280:720"

@@ -34,7 +34,12 @@ from .product_rules import (
     profile_for,
 )
 from .provider_errors import ProviderError
-from .rendering_guidelines import DEFAULT_VISUAL_DIRECTION, STRUCTURE_SELECTION
+from .rendering_guidelines import (
+    DEFAULT_VISUAL_DIRECTION,
+    DOORWAY_GUIDANCE,
+    MOTION_GUIDANCE,
+    STRUCTURE_SELECTION,
+)
 from .rendering_guidelines import policy as rendering_policy
 
 # promptText limit for gen4_image, gen4.5 and aleph2, in UTF-16 code units (Runway OpenAPI).
@@ -86,9 +91,8 @@ WRITER_INSTRUCTIONS = (
     "Runway models do not support negative prompts: describe only what should appear, using positive "
     "wording such as 'plain unmarked surfaces' or 'an empty terrace', never 'no text' or 'without people'. "
     "Write one coherent scene in plain descriptive sentences: subject, setting, composition, lighting, mood. "
-    "For video, describe one continuous shot with one slow, specific camera movement (push-in, lateral truck, "
-    "pedestal or locked-off). The structure stays completely still unless its product rules allow operation, "
-    "such as a MUTE partition retracting; never orbit it or reveal parts the opening frame doesn't show. "
+    "For video, describe one continuous shot. " + MOTION_GUIDANCE + " " + DOORWAY_GUIDANCE + " Never orbit "
+    "the structure or reveal parts the opening frame doesn't show. "
     "For generated video, describe the complete requested scene, appearance and motion. The app will first "
     "create a new scene image using the supplied photos as product references, then animate that new image. "
     "For video_edit, describe the change to apply to the supplied video while preserving the system's geometry. "
@@ -101,7 +105,8 @@ WRITER_INSTRUCTIONS = (
     '"shots":[{"system":"...","prompt":"..."}] with exactly one entry per storyboard clip, in order. Each '
     "clip prompt describes one continuous shot of its own setting and one Tudelu system (the clip's named "
     "system in its configuration when given, otherwise one you choose; give clips different systems when the idea asks for several "
-    "products), with a specific camera move for its seconds. Keep one consistent cinematic look across clips "
+    "products), with what happens in it and a specific camera move for its seconds. Keep one consistent "
+    "cinematic look across clips "
     "(compatible light, exposure, color grade, lens and camera pacing). Return visual_direction: a concise "
     "shared art direction for the whole film, at most 350 characters, grounded in the admin idea. Allow a "
     "deliberate mix of locations, architecture and supported colors/material finishes; preserve the same "

@@ -14,6 +14,15 @@ from .storage import storage
 
 BASE = "https://api.dev.runwayml.com/v1"
 
+# Veo 3.1 takes a separate negativePrompt (max 1,000 characters); Gen-4.5 has none. These are the motion
+# failures seen in Veo clips, plus the text and logos the app never wants in a scene.
+VEO_NEGATIVE_PROMPT = (
+    "frozen or static picture, still photograph, slideshow, people frozen in place, people or objects passing "
+    "through closed doors, glass, walls or furniture, a door that stays shut while someone walks through it, "
+    "structure bending, warping or melting, posts or beams appearing, disappearing or changing shape, text, "
+    "logos, watermarks"
+)
+
 
 def video_clip_limit(model="veo3.1"):
     return 8 if model.startswith("veo") else 10
@@ -204,9 +213,12 @@ def payload_for(settings, brief, platform, references, *, audio=False, style=Non
         result["duration"] = next(d for d in (4, 6, 8) if d >= brief["duration"])
         result.pop("outputFormat")
         result["audio"] = False  # The pipeline composes the full-length soundtrack separately.
+        result["negativePrompt"] = VEO_NEGATIVE_PROMPT
     if references:
+        # The scene is the first frame only. Sent as the last frame too, it made Veo return to the opening
+        # picture, so clips came back frozen and people walked through doors that had to end up shut.
         result["promptImage"] = (
-            [{"uri": references[0], "position": position} for position in ("first", "last")]
+            [{"uri": references[0], "position": "first"}]
             if settings.runway_video_model.startswith("veo") else references[0]
         )
         return "image_to_video", result

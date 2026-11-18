@@ -32,6 +32,7 @@ from social.product_rules import (
 )
 from social.prompting import PROMPT_LIMIT, gather_sources, write_prompt
 from social.providers import Claude, OpenAI, Providers, VisionReview, vision_context
+from social.rendering_guidelines import DOORWAY_GUIDANCE, MOTION_GUIDANCE
 from social.security import digest
 from social.video_segments import segment_brief
 
@@ -144,6 +145,9 @@ def test_writer_receives_rules_and_persists_exact_source_provenance(db, settings
     # The Builder rules are read as Tudelu's offerings, customized the way a product brief is.
     assert SCOPE_REASONING in instructions and WEATHER_GUIDANCE in instructions
     assert "Return problem only for a hard limit" in instructions
+    # Video prompts say what happens in the clip and send people only through real openings.
+    assert MOTION_GUIDANCE in instructions and DOORWAY_GUIDANCE in instructions
+    assert "completely still" not in instructions and "locked-off" not in instructions
     assert context["rules"]["visual_guidance"] == sheet.document["visual_guidance"]
     assert context["rules"]["product_constraints"] == current_constraints()
     assert result["generation_prompt"].endswith(

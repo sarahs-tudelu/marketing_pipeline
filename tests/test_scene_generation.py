@@ -149,8 +149,7 @@ def test_prompt_led_scene_is_saved_checked_then_animated(db, settings, video_job
     process_jobs(db, settings, provider)
     assert refs.current_plan(video_job)["scene_check"]["passed"]
     assert provider.submitted[1][0] == "image_to_video"
-    assert provider.submitted[1][1]["promptImage"] == [
-        {"uri": "runway://" + scene_id, "position": p} for p in ("first", "last")]
+    assert provider.submitted[1][1]["promptImage"] == [{"uri": "runway://" + scene_id, "position": "first"}]
     process_jobs(db, settings, provider)
     assert video_job.state == "rendering", video_job.error
     clip = db.get(Asset, video_job.source_asset_ids[0])

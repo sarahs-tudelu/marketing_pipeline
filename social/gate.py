@@ -14,6 +14,7 @@ from .facts import Facts, active, caption_fact_ids, composed, content_digest, pa
 from .image_provenance import verify_asset_metadata
 from .lifecycle import PostConflict, lock_post, transition
 from .models import Asset, CheckResult, FactSheet, Post
+from .motion import middle_second, still_clips, still_reason
 from .product_rules import PRODUCT_CONSTRAINTS_VERSION, current_constraints
 from .provenance import asset_source_error, asset_type, real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
@@ -377,6 +378,8 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     def vision_review():
         if not needed:
             return True, {"reason": "Company media; AI vision check not required"}
+        # Measured from the pixels, not judged from the sampled frames the visual check sees.
+        frozen = still_clips(db, settings, assets)
         result = providers.vision(assets, context)
         approved = {text for f in selected for text in [f.text, *f.variants]}
         product_reviewed = not result.product_mismatches and (
@@ -397,7 +400,13 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
                 details["reasons"].append("Visual review did not confirm the selected Builder product rules.")
             if result.product_constraints_version != PRODUCT_CONSTRAINTS_VERSION:
                 details["reasons"].append("Visual review did not confirm the current owner product corrections.")
-        return result.passed and product_reviewed and not (
+        if frozen:
+            # The middle second of each frozen clip marks it for automatic replacement (clip_replace.flagged).
+            details["still_clips"] = frozen
+            # First, so the post page's short list of reasons always shows it.
+            details["reasons"] = [*map(still_reason, frozen), *details["reasons"]]
+            details["problem_seconds"] = sorted({*details["problem_seconds"], *map(middle_second, frozen)})
+        return not frozen and result.passed and product_reviewed and not (
             result.garbled_text or result.misused_logos or result.unexpected_people
             or result.request_conflict.strip()
         ) and all(c in approved for c in result.visible_claims), details

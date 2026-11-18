@@ -8,13 +8,14 @@ from .prompting import utf16_trim
 from .renditions import video_rendition
 from .storage import ingest, storage
 
-# One slow move per clip while the structure stays still. Pull-back reveals and orbits are left out:
-# they make the model invent parts of the structure the first frame doesn't show.
+# One slow move per clip while the structure stays rigid. Pull-back reveals and orbits are left out:
+# they make the model invent parts of the structure the first frame doesn't show. No direction holds the
+# camera still: with nothing else asked to move, that comes back as a frozen picture.
 SHOT_DIRECTIONS = (
     "Establish the whole system in its setting; the camera slowly pushes in.",
     "Move closer to the same system's materials and joints with a slow push-in.",
     "Show a complementary side angle with a gentle lateral camera move.",
-    "Frame the same system's repeating lines and existing light patterns; the camera holds steady.",
+    "Follow the same system's repeating lines and existing light patterns with a slow lateral camera move.",
     "Return to a medium view that connects the details to the setting, with a gentle lateral move.",
     "Explore a different close-up of the existing finish and supports with a slow push-in.",
     "Use a low viewpoint with a restrained upward camera tilt.",

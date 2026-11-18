@@ -70,7 +70,7 @@ def test_official_runway_payloads(settings, operation, refs, endpoint, model):
     if endpoint == "text_to_video":
         assert "promptImage" not in payload and payload["ratio"] == "720:1280"
     if endpoint == "image_to_video":
-        assert payload["promptImage"] == [{"uri": refs[0], "position": p} for p in ("first", "last")]
+        assert payload["promptImage"] == [{"uri": refs[0], "position": "first"}]
     if operation == "video":
         assert payload["duration"] == 6 and payload["audio"] is False
         assert "outputFormat" not in payload

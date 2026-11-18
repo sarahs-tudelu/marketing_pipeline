@@ -209,8 +209,7 @@ def test_held_scene_clip_is_corrected_through_its_scene(db, settings, held, phot
     ]
     assert clip_step == "image_to_video"
     assert clip_payload["promptImage"] == [
-        {"uri": "runway://" + new_plan["scene_reference"]["asset_id"], "position": p}
-        for p in ("first", "last")]
+        {"uri": "runway://" + new_plan["scene_reference"]["asset_id"], "position": "first"}]
     assert new_plan["scene_reference"]["asset_id"] != plan["scene_reference"]["asset_id"]
     # The clip is animated with a newly planned camera prompt, not the scene description.
     assert redo.brief["video_segments"][1]["prompt"] == new_plan["prompt"] == clip_payload["promptText"]

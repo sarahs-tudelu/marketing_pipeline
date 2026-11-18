@@ -366,9 +366,8 @@ def test_new_scene_is_generated_for_every_planned_clip(db, settings, assets, hou
     for _ in range(8):
         process_jobs(db, settings, FakeRunway())
     assert [e for e, _ in submitted] == ["text_to_image", "image_to_video"] * 2, job.error
-    assert all(payload["promptImage"] == [
-        {"uri": "runway://start", "position": p} for p in ("first", "last")
-    ] for e, payload in submitted if e == "image_to_video")
+    assert all(payload["promptImage"] == [{"uri": "runway://start", "position": "first"}]
+               for e, payload in submitted if e == "image_to_video")
     assert len(submitted[2][1]["referenceImages"]) == 2  # product geometry + first scene's style
     assert clip and re.fullmatch(r"task-\d", job.task_history[-1]["task_id"])
 

@@ -16,6 +16,7 @@ from social.media_studio import _save_output, process_jobs
 from social.models import Asset
 from social.product_rules import HANGER_ROD_CUE, VisualGuidance, profile_for
 from social.providers import OpenAI
+from social.rendering_guidelines import DOORWAY_GUIDANCE, MOTION_GUIDANCE
 from social.runway import payload_for
 from social.storage import ingest, storage
 
@@ -92,8 +93,10 @@ def test_scene_keeps_exact_post_configuration_and_complete_setting():
     styled = refs.compose_scene_prompt("A plaza at dusk. Match @ref1 lighting.", requirements, profile)
     assert "@ref1" not in styled and "Match the style image lighting." in styled
     motion = refs.compose_motion_prompt("The camera slowly pushes in.", requirements, profile)
-    assert "rods" not in motion and "supports" in motion and "unchanged" in motion
-    assert "completely still" in motion and motion.startswith("The camera slowly pushes in.")
+    assert "rods" not in motion and "supports" in motion and "keep their shape and position" in motion
+    assert motion.startswith("The camera slowly pushes in.")
+    # Only the structure is held rigid: a whole scene told to stay "completely still" came back frozen.
+    assert "completely still" not in motion and "the rest of the scene moves naturally" in motion
 
 
 def test_rod_scene_keeps_owner_orientation_in_still_and_motion():
@@ -277,6 +280,9 @@ def test_selector_receives_pixels_and_builder_rules(db, settings, reference_job,
     assert any(p["type"] == "input_image" and p["image_url"].startswith("data:image/") for p in content)
     assert "fixed" in content[0]["text"] and "higher wall anchors" in content[0]["text"]
     assert "not proof of an installed project" in content[0]["text"]
+    # The animation prompt describes the action, with doors opened before anyone walks through them.
+    assert MOTION_GUIDANCE in content[0]["text"] and DOORWAY_GUIDANCE in content[0]["text"]
+    assert "describing only the subsequent camera motion" not in content[0]["text"]
 
 
 def test_worker_sends_reference_and_records_ancestry(db, settings, reference_job, photo, monkeypatch):

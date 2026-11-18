@@ -1,6 +1,6 @@
 """Owner-requested reference workflow; product dimensions still come from the Builder."""
 
-VERSION = "tudelu-reference-rendering-2026-11-17-v4"
+VERSION = "tudelu-reference-rendering-2026-11-18-v5"
 
 DEFAULT_VISUAL_DIRECTION = (
     "Photorealistic architectural film, natural soft light, balanced exposure, restrained contrast and "
@@ -10,7 +10,7 @@ DEFAULT_VISUAL_DIRECTION = (
 
 # Prompt guidance is separate from the persisted rendering-policy digest: changing the writer
 # must not invalidate a paid scene or an in-flight task that uses an older saved plan.
-SELECTION_VERSION = "product-brief-scope-2026-11-17-v2"
+SELECTION_VERSION = "action-and-doorways-2026-11-18-v3"
 STRUCTURE_SELECTION = (
     "Use the matching reference as the starting point for construction details the approved shot leaves "
     "open, and adapt it where the shot's configuration or the situation reasonably calls for a supported "
@@ -21,6 +21,23 @@ STRUCTURE_SELECTION = (
     "single roof plane may contain multiple louver bays and a connected intermediate beam; that is not a "
     "stacked roof. Seat louver ends in the perimeter or intermediate supporting frame. Keep ordinary "
     "perspective overlap distinct from physical interpenetration or disconnected members."
+)
+
+# What happens in a clip. Shared by the prompt writer, the scene planner and the visual check. A prompt
+# that only moved the camera over a "completely still" scene came back from Veo as a frozen picture.
+MOTION_GUIDANCE = (
+    "A clip shows something happening, not a still photo with a moving camera. Describe what moves, in order: "
+    "what each person in the scene does, as one or two simple continuous actions that fit the clip's seconds "
+    "(such as walking in, sitting down, pouring a drink or talking), natural movement in the setting such as "
+    "leaves, water, steam, rain or flickering light, and one slow camera move: a push-in, a lateral truck or "
+    "a pedestal. Hold the camera still only when people or the setting carry the movement. The Tudelu "
+    "structure itself stays rigid; only a MUTE partition may move, and only as its rules allow."
+)
+DOORWAY_GUIDANCE = (
+    "People pass only through real openings. When someone goes through a door, gate or glass wall, either the "
+    "scene starts with it already open wide enough to walk through, or the clip shows them open it by hand, "
+    "or automatic doors slide apart, before they step through. Nobody passes through a closed door, glass, a "
+    "wall, a railing or furniture."
 )
 
 
@@ -56,11 +73,13 @@ RULES = [
     "and most supports in frame. People, furniture and plants may overlap parts of it. Avoid cropping a "
     "structure partway along a post or roof edge, mirror-like reflections of it, and rows of identical structures receding into the distance. "
     "Surrounding signs, awnings and walls are plain and unmarked.",
-    "Animate each clip with one slow, steady camera move while the structure stays completely still, written as "
-    "'The camera [move] as the structure stays completely still': a slow push-in, a gentle lateral truck, a slow "
-    "pedestal or a locked-off shot. Avoid orbits and arcs around the structure, pull-back or crane reveals of "
-    "parts the scene image doesn't show, fast moves and zooms through the structure; they make the model "
-    "invent geometry.",
+    "Animate each clip with what happens in it: the people's actions and the setting's natural movement, with "
+    "one slow, steady camera move (a push-in, a gentle lateral truck or a slow pedestal), while the structure "
+    "stays rigid. Hold the camera still only when people or the setting carry the movement. Avoid orbits and "
+    "arcs around the structure, pull-back or crane reveals of parts the scene image doesn't show, fast moves "
+    "and zooms through the structure; they make the model invent geometry.",
+    "People move like people and pass only through real openings: a door, gate or glass wall is open, or is "
+    "opened by hand or slides open automatically, before anyone steps through it.",
     "For rod-hung canopies show the continuous rods above the roof, connecting the outer fascia to higher wall "
     "anchors. Choose framing that makes that connection visible. Do not crop the critical connection or orbit "
     "behind a structure whose unseen geometry would have to be invented.",

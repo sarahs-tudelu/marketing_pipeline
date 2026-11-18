@@ -28,7 +28,7 @@ Before starting updated services, run `tudelu init` (or `alembic upgrade head`) 
 |---|---|---|
 | Image / scene still | `text_to_image` / `nano_banana_2.1` | Prompt, tagged product references and optional untagged style reference; high thinking, no seed |
 | Video | `text_to_video` / `veo3.1` | Prompt; 4-, 6- or 8-second generation, native audio off |
-| Image animation | `image_to_video` / `veo3.1` | Reviewed scene as first and last frame; 4-, 6- or 8-second generation, native audio off |
+| Image animation | `image_to_video` / `veo3.1` | Reviewed scene as the first frame only, plus a fixed negative prompt; 4-, 6- or 8-second generation, native audio off |
 | Video edit | `video_to_video` / `aleph2` | Prompt and one uploaded video; edits up to 90 seconds, split into inputs of at most 30 seconds |
 | Audio / audio reworking | `sound_effect` / `seed_audio` | Prompt and up to three uploaded audio references |
 
@@ -47,7 +47,7 @@ When the worker starts a visual job, `social/prompting.py` gathers four sources 
 3. **Uploaded media:** up to 8 company uploads marked Public (matching the product tag first), plus any selected references, described by their observed visual summaries. Uploads without a summary are summarized once with `OPENAI_VISION_MODEL` (at most 6 per prompt) and the summary is kept.
 4. **Previous generations:** summaries of the 6 latest Runway originals with their post status. These keep the look consistent and the compositions varied. They never establish what Tudelu sells, and held or deleted ones are never copied.
 
-The writer must name the Tudelu system it depicts. Before anything is sent to Runway, the app checks that the name appears on tudelu.com, in the facts or in uploaded/selected media. A prompt that cannot be grounded fails the job with the reason. Resume it to try again, or edit the idea. The prompt is written in positive language because Runway models do not support negative prompts. It is trimmed to Runway's 1,000-character limit and saved with its sources before the paid request. Resuming never rewrites a prompt that was already submitted. Ideas that were queued before this change get a newly written prompt when they start. Expand **Prompt sent to Runway** on a queue card to see the prompt, the depicted system and its sources. Fixture mode uses a deterministic offline prompt.
+The writer must name the Tudelu system it depicts. Before anything is sent to Runway, the app checks that the name appears on tudelu.com, in the facts or in uploaded/selected media. A prompt that cannot be grounded fails the job with the reason. Resume it to try again, or edit the idea. The prompt is written in positive language, because Runway's image models and Gen-4.5 have no negative prompt. Veo 3.1 clips also send one fixed `negativePrompt`: frozen pictures, people passing through closed doors, glass or walls, warping or changing structure, text and logos. The prompt is trimmed to Runway's 1,000-character limit and saved with its sources before the paid request. Resuming never rewrites a prompt that was already submitted. Ideas that were queued before this change get a newly written prompt when they start. Expand **Prompt sent to Runway** on a queue card to see the prompt, the depicted system and its sources. Fixture mode uses a deterministic offline prompt.
 
 For generated images and videos, the [reference workflow](reference-grounded-generation.md) follows this creative writing step: actual company product images ground construction, while the prompt controls new locations, architecture and supported colors, finishes and configurations. Video clips first receive newly composed scene images, checked before animation. A saved visual direction and a reviewed scene used only as a style reference coordinate lighting, palette, lens character, framing and camera pacing across the film.
 
@@ -64,6 +64,16 @@ Each clip's prompt, seed, source interval, Runway task and result asset are save
 Assembly joins clips in order into one H.264 video at the destination dimensions, with continuous timestamps and original clip audio (silence where a clip has no track). An optional generated soundtrack replaces the combined audio. Short or missing generated clips hold the job instead of stretching footage to fill the requested duration. The maximum is also enforced before generation and at publication; configured lower platform limits remain effective. Existing campaigns keep their saved duration until a new brief is saved.
 
 The Veo per-task bounds were checked on November 17, 2026 against the [Runway API specification](https://docs.dev.runwayml.com/openapi.json). Legacy generation and edit bounds were checked on November 12, 2026 against [Runway Gen-4.5](https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5) and [Aleph 2 video editing](https://dev.runwayml.com/learn/edit-and-finish-video-api). Platform references are in [platform verification](platform-verification.md).
+
+## Movement in video clips
+
+A clip is meant to show something happening. The animation prompt for each clip describes what the people in the scene do, in order, the setting's natural movement (leaves, water, rain, light) and one slow camera move, while the Tudelu structure stays rigid. A camera held still is used only when people or the setting carry the movement. People pass only through real openings: the scene image starts with a door, gate or glass wall already open, or the prompt has someone open it by hand (or automatic doors slide apart) before they step through.
+
+Veo receives the reviewed scene as its first frame only. Until November 18, 2026 it was also sent as the last frame, which made Veo return to the opening picture: clips came back frozen, sometimes with a person or two moving near the edges, and people walked through doors that had to end up closed. All six Veo clips in the November 17 benchmark were frozen this way; the Gen-4.5 clips, which received only a first frame, moved.
+
+The post check also measures, from the pixels, whether each generated clip moves. A clip in which less than 3% of the middle of the picture ever visibly changes, and whose middle changes by under 4 of 255 levels on average, is frozen; the logo ending isn't measured. A frozen clip fails the visual check with "Clip N (seconds A–B) is frozen", and the automatic replacement makes that clip again, with the finding passed to the planner. The visual check itself also looks for people passing through closed doors, glass or walls, and people frozen mid-step. Uploaded footage, video edits and offline placeholders aren't measured. Rechecking a post made before this change measures its clips too.
+
+Jobs whose scene was already saved before this change keep their saved camera prompt, but are animated from the first frame only.
 
 ## Audio review
 

@@ -33,6 +33,8 @@ from .prompting import PROMPT_LIMIT, utf16_trim
 from .provenance import requires_ai_review
 from .rendering_guidelines import (
     DEFAULT_VISUAL_DIRECTION,
+    DOORWAY_GUIDANCE,
+    MOTION_GUIDANCE,
     SELECTION_VERSION,
     STRUCTURE_SELECTION,
     VERSION,
@@ -95,10 +97,11 @@ def compose_scene_prompt(prompt, requirements, profile):
 def compose_motion_prompt(prompt, requirements, profile):
     if not requirements:
         return constrain_prompt(prompt, profile, profile.product_id)
-    # Runway: image-to-video prompts describe motion; a still subject is stated as completely motionless.
+    # Runway: image-to-video prompts describe motion. Only the product is held rigid; a cue that called the
+    # whole scene "completely still" came back from Veo as a frozen picture.
     cue = (
-        "The structure stays completely still: its roof, supports and joints are rigid and unchanged. "
-        "One continuous, steady shot."
+        "Only the Tudelu structure stays rigid: its roof, supports and joints keep their shape and position "
+        "throughout, while the rest of the scene moves naturally. One continuous shot."
     )
     if re.search(r"\brods?\b", " ".join(requirements), re.I):
         cue += " " + HANGER_ROD_CUE
@@ -303,11 +306,19 @@ def select_reference(settings, records, context):
                 "Compose that still so nothing structural has to be invented "
                 "later: the whole structure (or a deliberate close detail) at eye level or slightly above, usually a "
                 "three-quarter view, with the roof edge and most supports in frame and uncropped (requested people "
-                "and furniture may overlap parts of it), and plain unmarked signs and walls around it. Return prompt describing only the subsequent camera "
-                "motion, in the form 'The camera [one slow move] as the structure stays completely still': a slow "
-                "push-in, gentle lateral truck, slow pedestal or locked-off shot. Never an orbit, arc, pull-back or "
+                "and furniture may overlap parts of it), and plain unmarked signs and walls around it. Compose it as "
+                "the first moment of the clip's action: people where their action starts, caught mid-movement "
+                "rather than posing, and any door, gate or glass wall they will pass through already open. "
+                + DOORWAY_GUIDANCE + " For video, return prompt describing what happens after that first frame, "
+                "which the video model receives as an image: " + MOTION_GUIDANCE + " Refer to each person in "
+                "the scene by position, such as 'the woman on the left', and say where their action ends; when "
+                "someone opens a door, describe it step by step: the hand on the handle, the door swinging or "
+                "sliding open, then the step through. Keep the action simple enough to finish within the clip. "
+                "Never an orbit, arc, pull-back or "
                 "crane reveal, fast move or zoom through the structure, because those make the video model invent "
-                "geometry; only a MUTE partition may move, and only as its rules allow. For image generation prompt "
+                "geometry. When video_check says a clip was frozen or that someone passed through a closed door "
+                "or glass, the earlier prompt gave the video model too little to do or an impossible path: write "
+                "concrete action and a real opening this time. For image generation prompt "
                 "describes the complete new image using @ref0. Respect visual_direction in both prompts. When "
                 "style_reference is present, the app sends it to Runway untagged so Runway takes only its lighting, "
                 "exposure, color treatment and lens character; never mention @ref1, and its product and setting "

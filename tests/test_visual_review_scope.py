@@ -88,6 +88,7 @@ def test_actual_vision_request_cannot_apply_visible_text_rule_to_external_e08_ca
         assert "Never evaluate caption" in prompt
         assert "only literal readable on-image wording" in prompt
         assert "Missing guidance alone is not a rejection" in prompt
+        assert "has passed through it" in prompt and "a structure that stays rigid is expected" in prompt
         assert data["facts"]["facts"][0]["text"] == FACT
         assert len(payload["input"][0]["content"]) == 2
         return response(
