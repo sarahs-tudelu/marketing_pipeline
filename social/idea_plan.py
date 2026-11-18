@@ -32,6 +32,7 @@ FORMATS = {
     "image": "Image",
     "video": "Video",
     "video_edit": "Re-render an uploaded video with AI",
+    "real": "Real project (your own media)",
 }
 STYLES = {
     "auto": "Let the idea decide",
@@ -57,6 +58,15 @@ _EDIT = re.compile(r"\b(edit|re-?edit|recut|re-?cut|trim|restyle|rework|transfor
 _ALL_PRODUCTS = re.compile(
     r"\b(all|every|each|whole|full|entire)\b[\w\s]{0,30}?\b(products?|systems?|offerings?|range|line-?up|"
     r"solutions?|catalog(?:ue)?)\b|\bline-?up\b",
+    re.I,
+)
+# Ideas about the company's own work: these use real media from the library, not AI.
+_REAL = re.compile(
+    r"\b(our|own|real|actual|completed|finished|recent|past|existing|uploaded)\s+(?:\w+\s+){0,2}?"
+    r"(projects?|installs?|installations?|footage|photos?|pictures?|videos?|clips?|work|jobs?|builds?)\b"
+    r"|\binstall(?:ation|ing)?\s+(?:process|day|footage|steps?)\b|\bprocess of install\w*"
+    r"|\b(behind the scenes|on[- ]site|job ?site|site visit|case stud(?:y|ies)|before and after|"
+    r"progress (?:photos?|shots?|videos?))\b",
     re.I,
 )
 _EDITORIAL = re.compile(
@@ -101,7 +111,7 @@ class Shot(BaseModel):
 
 class IdeaPlan(BaseModel):
     title: str = Field(default="", max_length=200)
-    operation: Literal["image", "video", "video_edit"] = "image"
+    operation: Literal["image", "video", "video_edit", "real"] = "image"
     duration: int = Field(default=10, ge=3, le=90)
     kind: Literal["promotional", "non_promotional"] = "promotional"
     shots: list[Shot] = Field(default_factory=list, max_length=30)
@@ -117,6 +127,11 @@ class IdeaPlan(BaseModel):
     # Your own video: the app's ambient music replaces its sound. silent_video: it has no sound.
     ambient_music: bool = False
     silent_video: bool = False
+    # Real project posts: photo or video, the edit the vision model planned, and what the search found.
+    real_format: Literal["", "photo", "video"] = ""
+    real_edit: dict = Field(default_factory=dict)
+    real_matches: list[dict] = Field(default_factory=list, max_length=40)
+    real_sounds: list[str] = Field(default_factory=list, max_length=3)
 
     @field_validator("title", mode="before")
     @classmethod
@@ -246,6 +261,7 @@ def read_signals(idea, catalog=()):
         "end_card": bool(_LOGO.search(text)),
         "all_products": bool(_ALL_PRODUCTS.search(text)),
         "editorial": bool(_EDITORIAL.search(text)),
+        "real": bool(_REAL.search(text)),
         "settings": list(dict.fromkeys(settings))[:MAX_CLIPS],
         "systems": list(dict.fromkeys(systems))[:MAX_CLIPS],
     }
@@ -599,6 +615,17 @@ def _platform_names(platforms):
 def plan_summary(plan, platforms, video_model="veo3.1"):
     """One plain sentence describing what will be made."""
     where = _platform_names(platforms)
+    if plan.operation == "real":
+        count = len(plan.real_edit.get("items", []))
+        if plan.real_format == "photo":
+            return f"One of your photos, edited, for {where}." if count == 1 else (
+                f"A collage of {count} of your photos, for {where}."
+            )
+        sound = "your audio" if plan.real_sounds else "its own sound (or ambient music from your library)"
+        return (
+            f"A {plan.duration}-second video of your own media: {count} clip{'s' if count != 1 else ''}, a "
+            f"{END_CARD_SECONDS}-second logo end card and {sound}, for {where}."
+        )
     if plan.as_uploaded:
         if plan.operation == "image":
             return f"Your photo, posted as it is, for {where}."
@@ -626,6 +653,16 @@ def plan_summary(plan, platforms, video_model="veo3.1"):
 
 def work_summary(plan, platforms, video_model="veo3.1"):
     """What Runway is asked to generate, so cost is visible before anything starts."""
+    if plan.operation == "real":
+        tools = "crops, straightening, colour and a collage" if plan.real_format == "photo" else (
+            "crops, colour, trims and joins" + (", with your audio placed as recorded" if plan.real_sounds else "")
+        )
+        return (
+            f"Nothing is sent to Runway and nothing is AI-generated, so the post has no AI label. The app edits "
+            f"your media with standard tools ({tools}); a vision model chose the media and the edit settings. "
+            "If you change the media, the format or the length, the edit is planned again when the job runs. "
+            "AI writes the caption, and the usual checks run."
+        )
     if plan.as_uploaded:
         ending = (
             " The video ends with a cut to the Tudelu logo, and any ambient music comes from your asset library, "

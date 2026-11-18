@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import math
+import re
 import wave
 from fractions import Fraction
 from typing import Literal
@@ -36,7 +37,8 @@ from .video_rules import MUSIC_TAG, NO_LOGO, SILENCE_RMS, default_logo, seed_for
 VERSION = "real-edit-2026-11-18-v1"
 PHOTO_CANDIDATES = 8  # Photos the editor chooses from for a photo post.
 VIDEO_CANDIDATES = 4  # Videos (and as many photos) it chooses from for a video.
-FRAMES_PER_VIDEO = 6
+FRAMES_PER_VIDEO = 6  # At least; longer videos get a frame about every 5 seconds, up to MAX_FRAMES.
+MAX_FRAMES = 20
 MAX_ITEMS = 8
 MIN_SECONDS = 1.5  # The shortest clip.
 MAX_STILL_SECONDS = 6  # The longest a photo stays on screen in a video.
@@ -78,6 +80,7 @@ class EditItem(BaseModel):
     saturation: float = 1.0
     warmth: float = 0.0
     framing: Literal["fill", "fit"] = "fill"
+    note: str = ""  # What the item shows, for the plan page.
 
     @model_validator(mode="after")
     def bounded(self):
@@ -85,6 +88,7 @@ class EditItem(BaseModel):
             setattr(self, name, min(high, max(low, float(getattr(self, name)))))
         self.quarter_turns %= 4
         self.start, self.end = max(0.0, self.start), max(0.0, self.end)
+        self.note = " ".join(self.note.split())[:200]
         return self
 
 
@@ -136,6 +140,7 @@ PLANNER_INSTRUCTIONS = (
     "duration. Line speech up with the clips it talks about; prefer whole bites unless the transcript shows a "
     "later part fits better. keep_clip_sound keeps the clips' own sound, lowered under a bite; set it false "
     "when that sound is wind, handling noise or unrelated talk. "
+    "note is a few words on what each item shows, such as 'crew lifting the first panel into the track'. "
     "story is one sentence describing the post. problem is empty, or explains why none of the candidates "
     "can show a completed project (then items is empty). Return only JSON matching the schema."
 )
@@ -196,12 +201,13 @@ def recent_uses(db):
     return uses
 
 
-def real_choice(db, brief, sources, profile, platform, turn, *, live=False, drive_only=False):
+def real_choice(db, brief, sources, profile, platform, turn, *, live=False, drive_only=False, keep_order=False):
     """The real-project post for a platform: (format, media IDs, audio IDs), or None when nothing fits.
 
     The real photos and videos picked for the brief are used; with none picked, the library's. Media not
     shown recently comes first. Formats alternate between video and photo by turn; TikTok gets video.
-    `drive_only` (Pinterest) keeps only media imported from Google Drive, audio included.
+    `drive_only` (Pinterest) keeps only media imported from Google Drive, audio included. `keep_order` keeps
+    the brief's order of the media it picked; a brief's `real_format` is used when the platform allows it.
     """
     public = brief.rights != "not_public"
 
@@ -211,6 +217,7 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False, driv
         )
 
     media = [a for a in sources if a.id in brief.reference_ids and fits(a, real_asset)]
+    picked = bool(media)
     if not media:
         media = [
             a
@@ -220,14 +227,15 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False, driv
             if fits(a, real_asset) and _product_rank(a, brief.product) is not None
         ]
     uses = recent_uses(db)
-    media.sort(key=lambda a: (_product_rank(a, brief.product) or 0, a.id in uses, -uses.get(a.id, 0)))
+    if not (picked and keep_order):
+        media.sort(key=lambda a: (_product_rank(a, brief.product) or 0, a.id in uses, -uses.get(a.id, 0)))
     photos = [a for a in media if a.media["mime"].startswith("image/")]
     videos = [a for a in media if a.media["mime"].startswith("video/")]
     photo_posts = bool(photos and profile.image_formats)
     formats = (["video"] if videos or (photos and not photo_posts) else []) + (["photo"] if photo_posts else [])
     if not formats:
         return None
-    chosen = formats[turn % len(formats)]
+    chosen = brief.real_format if brief.real_format in formats else formats[turn % len(formats)]
     if chosen == "photo":
         ids = [a.id for a in photos[:PHOTO_CANDIDATES]]
     else:
@@ -237,6 +245,108 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False, driv
     if chosen == "video":
         sounds = [a.id for a in sources if a.id in brief.audio_reference_ids and fits(a, real_sound)]
     return chosen, ids, sounds[:3]
+
+
+# Ideas about a process (an installation, a build, a walk-through) are shown as video.
+_SEQUENCE = re.compile(
+    r"\b(process|steps?|install\w*|progress|timeline|time-?lapse|walk-?through|tour|before and after|how)\b", re.I
+)
+DEFAULT_SECONDS = 20
+
+
+def plan_real_idea(
+    db, settings, *, idea, title, uploads, platforms, product, kind, rights, requested="", signals=None, allowed=None
+):
+    """The real project plan for an idea: which company photos and videos to use, and the edit.
+
+    The photos and videos added with the idea are the media; without any, the library is searched for what
+    the idea describes. Returns the format, length, edit, matches and notes for the plan page, or raises
+    ValueError saying what is missing.
+    """
+    from .config import REAL_MEDIA_ONLY, profiles
+    from .media_search import search
+
+    signals = signals or {}
+    public = rights != "not_public"
+    drive_only = bool(set(platforms) & REAL_MEDIA_ONLY)
+    notes = []
+    if any(requires_ai_review(a) for a in uploads):
+        raise ValueError(
+            "A real project post uses only real photos, videos and audio. Upload AI-made media in the asset "
+            "library and use an AI format for it."
+        )
+
+    def drive(asset):
+        return not drive_only or bool((asset.tags or {}).get("google_drive_file_id"))
+
+    pictures = [a for a in uploads if not a.media["mime"].startswith("audio/") and real_asset(a, public=public)]
+    sounds = [a for a in uploads if real_sound(a, public=public) and drive(a)]
+    if drive_only:
+        notes.append("Pinterest is selected, so only media imported from Google Drive is used.")
+        if pictures and not any(drive(a) for a in pictures):
+            raise ValueError(
+                "Pinterest only posts media imported from Google Drive, and the files you added weren't. Untick "
+                "Pinterest, or plan the idea without them to search your Drive imports."
+            )
+        pictures = [a for a in pictures if drive(a)]
+    if pictures:
+        found = [(a, "Added with your idea") for a in pictures]
+    else:
+        found, problem = search(db, settings, idea, product=product, public=public, drive_only=drive_only, allowed=allowed)
+        if not found:
+            raise ValueError(
+                f"No real photos or videos in the library show this idea. {problem} Upload some (new files are "
+                "searched automatically), or choose Image or Video to make AI inspiration instead."
+            )
+        notes.append(
+            f"Found {len(found)} matching file{'s' if len(found) != 1 else ''} in the library; the best are "
+            "below, and you can add or remove any."
+        )
+    videos = [a for a, _ in found if a.media["mime"].startswith("video/")]
+    photos = [a for a, _ in found if a.media["mime"].startswith("image/")]
+    photo_ok = bool(photos) and all(profiles(settings)[p].image_formats for p in platforms)
+    if requested in {"photo", "video"}:
+        chosen = requested
+    elif signals.get("video") or _SEQUENCE.search(idea):
+        chosen = "video"
+    elif signals.get("image"):
+        chosen = "photo"
+    else:
+        chosen = "video" if videos else "photo"
+    if chosen == "photo" and not photo_ok:
+        chosen = "video"
+        notes.append("A platform you chose takes only video, so the photos become a video.")
+    video = chosen == "video"
+    if video:
+        candidates = videos[:VIDEO_CANDIDATES] + photos[: (VIDEO_CANDIDATES if videos else PHOTO_CANDIDATES)]
+        longest = min(profiles(settings)[p].max_duration for p in platforms)
+        duration = int(max(END_CARD_SECONDS + 2, min(signals.get("seconds") or DEFAULT_SECONDS, longest)))
+    else:
+        candidates, duration = photos[:PHOTO_CANDIDATES], 5
+    footage = duration - END_CARD_SECONDS if video else 0
+    profile = profiles(settings)[platforms[0]]
+    size = (profile.video_width, profile.video_height) if video else (profile.image_width, profile.image_height)
+    if settings.ai_mode == "live":
+        request = {"prompt": idea, "campaign": title, "product": product, "kind": kind, "platform": platforms[0]}
+        plan = ask_planner(db, settings, request, candidates, sounds if video else [], video, footage, size)
+        planner = settings.openai_vision_model
+    else:
+        plan, planner = fixture_plan(candidates, sounds if video else [], video, footage), "fixture/" + VERSION
+    plan = fit_plan(plan, candidates, sounds if video else [], video, footage, portrait=size[1] > size[0])
+    if video:
+        used = sum(i.end - i.start for i in plan.items)
+        if used < footage - 1:
+            duration = max(END_CARD_SECONDS + 2, math.ceil(used) + END_CARD_SECONDS)
+            notes.append(f"The matching footage fills {math.ceil(used)} seconds, so the video is {duration} seconds long.")
+    return {
+        "real_format": chosen,
+        "duration": duration,
+        "edit": plan.model_dump() | {"planner": planner, "version": VERSION},
+        "matches": [{"asset_id": a.id, "why": why} for a, why in found],
+        "sounds": [a.id for a in sounds] if video else [],
+        "notes": notes,
+        "planner": planner,
+    }
 
 
 def plan_edit(db, settings, job):
@@ -252,10 +362,17 @@ def plan_edit(db, settings, job):
         raise ValueError("Media chosen for this real project post is missing from the asset library")
     footage = brief["duration"] - END_CARD_SECONDS if video else 0
     size = (profile.video_width, profile.video_height) if video else (profile.image_width, profile.image_height)
-    if brief["execution_mode"] == "fixture":
+    prepared = brief.get("prepared_edit") or {}
+    if prepared:
+        # Planned on the idea's plan page and kept by the admin; checked against the media again below.
+        plan = RealEditPlan.model_validate({k: v for k, v in prepared.items() if k in RealEditPlan.model_fields})
+        planner = prepared.get("planner", "")
+    elif brief["execution_mode"] == "fixture":
         plan, planner = fixture_plan(assets, sounds, video, footage), "fixture/" + VERSION
     else:
-        plan, planner = ask_planner(db, settings, job, assets, sounds, video, footage, size), settings.openai_vision_model
+        request = {k: brief[k] for k in ("prompt", "campaign", "product", "kind")} | {"platform": job.platform}
+        plan = ask_planner(db, settings, request, assets, sounds, video, footage, size)
+        planner = settings.openai_vision_model
     plan = fit_plan(plan, assets, sounds, video, footage, portrait=size[1] > size[0])
     job.brief = job.brief | {
         "real_edit": plan.model_dump() | {"planner": planner, "version": VERSION, "planned_at": now().isoformat()}
@@ -360,11 +477,11 @@ def _strict(schema):
     return schema
 
 
-def ask_planner(db, settings, job, assets, sounds, video, footage, size):
+def ask_planner(db, settings, request, assets, sounds, video, footage, size):
+    """The vision model's edit. `request` has the idea (prompt), campaign, product, kind and platform."""
     from .audio_review import observe_audio
     from .providers import OpenAI, Providers, parse_json
 
-    brief = job.brief
     bites = []
     for sound in sounds:
         # Machine listening, cached on the file and reused by the post's audio review.
@@ -381,13 +498,13 @@ def ask_planner(db, settings, job, assets, sounds, video, footage, size):
     uses = recent_uses(db)
     context = {
         "post": "video" if video else "photo",
-        "platform": job.platform,
+        "platform": request["platform"],
         "output_size": list(size),
         "footage_seconds": footage if video else None,
-        "admin_idea": brief["prompt"],
-        "campaign": brief["campaign"],
-        "product": brief["product"],
-        "content_kind": brief["kind"],
+        "admin_idea": request["prompt"],
+        "campaign": request["campaign"],
+        "product": request["product"],
+        "content_kind": request["kind"],
         "recently_shown": [a.id for a in assets if a.id in uses],
         "audio_bites": bites,
     }
@@ -439,9 +556,11 @@ def ask_planner(db, settings, job, assets, sounds, video, footage, size):
     return RealEditPlan.model_validate(parse_json(answer))
 
 
-def sample_times(duration, count=FRAMES_PER_VIDEO):
+def sample_times(duration):
+    """When to sample a video for the editor: at least 6 frames, about one every 5 seconds, at most 20."""
     if duration <= 0:
         return [0.0]
+    count = min(MAX_FRAMES, max(FRAMES_PER_VIDEO, math.ceil(duration / 5)))
     return [round(duration * (index + 0.5) / count, 2) for index in range(count)]
 
 

@@ -32,9 +32,11 @@ from .idea_plan import (
     STYLES,
     IdeaPlan,
     Shot,
+    default_title,
     logo_assets,
     plan_idea,
     plan_summary,
+    read_signals,
     shot_seconds,
     uploaded_plan,
     work_summary,
@@ -69,6 +71,7 @@ from .pipeline import bootstrap, delete_draft, draft, generate, rewrite_caption
 from .provenance import real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
+from .real_edit import plan_real_idea
 from .recovery import held_reason, retry_option, retry_step, task_failed
 from .retries import block_reason as retry_block_reason
 from .retries import original_post, retry_post
@@ -421,6 +424,7 @@ def create_app(settings=None):
                 "idea_uploads": [a for i in idea_form.get("upload_ids", []) if (a := db.get(Asset, i))],
                 "max_idea_uploads": MAX_IDEA_UPLOADS,
                 "plan": plan,
+                "plan_assets": {a.id: a for a in assets} if view == "plan" else {},
                 "plan_summary": plan_summary(plan, idea_form.get("platforms", []), settings.runway_video_model) if plan else "",
                 "work_summary": work_summary(plan, idea_form.get("platforms", []), settings.runway_video_model) if plan else "",
                 "clip_seconds": shot_seconds(plan, settings.runway_video_model) if plan else [],
@@ -680,7 +684,8 @@ def create_app(settings=None):
         values["reference_ids"] = form.getlist("reference_ids")
         # Files added on the idea page, already saved in the asset library.
         values["upload_ids"] = list(dict.fromkeys(str(i) for i in form.getlist("upload_ids")))[:MAX_IDEA_UPLOADS]
-        values["upload_use"] = "reference" if form.get("upload_use") == "reference" else "as_is"
+        use = str(form.get("upload_use", ""))
+        values["upload_use"] = use if use in {"reference", "real"} else "as_is"
         return values
 
     async def save_idea_uploads(db, form, values, actor):
@@ -756,11 +761,6 @@ def create_app(settings=None):
                 raise ValueError("Keep the idea under 1,000 characters")
             if not values["platforms"] or set(values["platforms"]) - set(PLATFORMS):
                 raise ValueError("Choose at least one platform")
-            if set(values["platforms"]) & REAL_MEDIA_ONLY:
-                raise ValueError(
-                    "Pinterest only posts real photos and videos from Google Drive. Create Pinterest posts "
-                    "from Post from library media."
-                )
             usage_rights(values["rights"])
             owner_value(values["owner"])
             values["facts_id"] = values["facts_id"] or (
@@ -770,6 +770,53 @@ def create_app(settings=None):
                 raise ValueError("Save an approved facts version first")
             await save_idea_uploads(db, form, values, request.state.actor)
             uploads = idea_uploads(db, values)
+            signals = read_signals(idea)
+            # A real project post edits the company's own media: the files added with the idea, or the
+            # library's matches for an idea about real work, such as an installation process.
+            real = (
+                values["format"] == "real"
+                or (uploads and values["upload_use"] == "real")
+                or (values["format"] in {"", "auto"} and signals["real"] and not uploads)
+            )
+            if set(values["platforms"]) & REAL_MEDIA_ONLY and not real:
+                raise ValueError(
+                    "Pinterest only posts real photos and videos from Google Drive. Choose Real project, or "
+                    "create Pinterest posts from Post from library media."
+                )
+            if real:
+                actor = request.state.actor
+                kind = values["kind"] if values["kind"] in {"promotional", "non_promotional"} else (
+                    "non_promotional" if signals["editorial"] else "promotional"
+                )
+                found = await run_in_threadpool(
+                    plan_real_idea,
+                    db,
+                    settings,
+                    idea=idea,
+                    title=default_title(idea),
+                    uploads=uploads,
+                    platforms=values["platforms"],
+                    product=values["product"] or "company",
+                    kind=kind,
+                    rights=values["rights"],
+                    requested="",
+                    signals=signals,
+                    allowed=(lambda a: crm_access.editor_asset(a, actor)) if request.state.editor else None,
+                )
+                plan = IdeaPlan(
+                    title=default_title(idea),
+                    operation="real",
+                    real_format=found["real_format"],
+                    duration=found["duration"],
+                    kind=kind,
+                    end_card=found["real_format"] == "video",
+                    notes=found["notes"],
+                    planner=found["planner"],
+                    real_edit=found["edit"],
+                    real_matches=found["matches"],
+                    real_sounds=found["sounds"],
+                )
+                return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
             if uploads and values["upload_use"] == "as_is":
                 videos = [a for a in uploads if a.media["mime"].startswith("video/")]
                 silent = len(videos) == 1 and not await run_in_threadpool(
@@ -818,18 +865,33 @@ def create_app(settings=None):
         except ValueError:
             duration = 10
         silent = form.get("silent_video") == "on"
+        real_format = str(form.get("real_format", ""))
+        real_format = real_format if operation == "real" and real_format in {"photo", "video"} else ""
+
+        def saved(name, default):
+            # The plan page carries the planned edit and the search's matches back unchanged.
+            try:
+                value = json.loads(str(form.get(name) or "null"))
+            except ValueError:
+                return default
+            return value if isinstance(value, type(default)) else default
+
         return IdeaPlan(
+            real_format=real_format,
+            real_edit=saved("real_plan", {}) if real_format else {},
+            real_matches=[m for m in saved("real_matches", []) if isinstance(m, dict)][:40] if real_format else [],
+            real_sounds=[str(s) for s in form.getlist("real_sounds")][:3] if real_format else [],
             as_uploaded=form.get("as_uploaded") == "on",
             ambient_music=silent or form.get("sound") == "ambient",
             silent_video=silent,
             title=str(form.get("campaign", "")),
-            operation=operation if operation in {"image", "video", "video_edit"} else "image",
+            operation=operation if operation in {"image", "video", "video_edit"} or real_format else "image",
             duration=max(3, min(90, duration)),
             kind="non_promotional" if form.get("plan_kind") == "non_promotional" else "promotional",
             shots=shots[:MAX_CLIPS],
             soundtrack=str(form.get("soundtrack", ""))[:1800],
             # Every video ends with a cut to the logo.
-            end_card=operation in {"video", "video_edit"},
+            end_card=operation in {"video", "video_edit"} or real_format == "video",
             available_systems=[str(s) for s in form.getlist("available_systems")][:40],
             notes=[str(n) for n in form.getlist("notes")][:8],
             conflicts=[str(c) for c in form.getlist("conflicts")][:6],
@@ -848,7 +910,7 @@ def create_app(settings=None):
             plan = plan_from_form(form)
             if mode not in {"once", "next"}:
                 raise ValueError("Choose Create now or Use for next automatic post")
-            video = plan.operation != "image"
+            video = plan.operation in {"video", "video_edit"} or plan.real_format == "video"
             # Blank picks the newest logo; with none in the library, queueing explains how to add it.
             logo_id = str(form.get("logo_id", "")) if video else ""
             if video and request.state.editor and not logo_id:
@@ -860,6 +922,46 @@ def create_app(settings=None):
             uploads = idea_uploads(db, values)
             sounds = [a.id for a in uploads if a.media["mime"].startswith("audio/")]
             pictures = [a.id for a in uploads if a.id not in sounds]
+            if plan.operation == "real":
+                chosen = list(dict.fromkeys(str(i) for i in form.getlist("real_media")))[:12]
+                if not chosen:
+                    raise ValueError("Tick at least one photo or video to use")
+                for asset_id in chosen:
+                    asset = db.get(Asset, asset_id)
+                    if asset is None:
+                        raise ValueError("A chosen file is no longer in the asset library. Plan the idea again.")
+                    if request.state.editor and not crm_access.editor_asset(asset, request.state.actor):
+                        raise HTTPException(404, "Media not found")
+                planned = plan.real_edit
+                # The plan page's edit is used only for the media, format and length it was planned for.
+                unchanged = bool(planned) and (
+                    {i.get("asset_id") for i in planned.get("items", []) if isinstance(i, dict)} == set(chosen)
+                    and str(form.get("planned_format", "")) == plan.real_format
+                    and str(form.get("planned_duration", "")) == str(plan.duration)
+                )
+                brief = CreativeBrief(
+                    campaign=plan.title,
+                    prompt=values["prompt"],
+                    operation="real",
+                    platforms=values["platforms"],
+                    facts_id=values["facts_id"],
+                    product=values["product"] or "company",
+                    kind=plan.kind,
+                    rights=values["rights"],
+                    owner=values["owner"],
+                    reference_ids=chosen,
+                    audio_reference_ids=[s for s in plan.real_sounds if s in sounds] if video else [],
+                    duration=plan.duration if video else 5,
+                    website=False,
+                    create_posts=True,
+                    workflow={"once": "immediate", "next": "next"}[mode],
+                    end_card_asset_id=logo_id if video else "",
+                    real_format=plan.real_format,
+                    prepared_edit=planned if unchanged else {},
+                )
+                await run_in_threadpool(queue_prompt, db, brief, request.state.prompt_account)
+                db.commit()
+                return RedirectResponse("/admin/create#my-posts" if request.state.editor else "/admin/media-queue", status_code=303)
             if plan.as_uploaded:
                 brief = CreativeBrief(
                     campaign=plan.title,

@@ -7,7 +7,7 @@ from html.parser import HTMLParser
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, ValidationInfo, field_validator, model_validator
 from sqlalchemy import case, or_, select, update
 
 from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
@@ -19,7 +19,7 @@ from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
 from .provenance import requires_ai_review
 from .provider_errors import ProviderError
-from .real_edit import real_choice
+from .real_edit import RealEditPlan, real_choice
 from .recovery import runway_failure
 from .renditions import fitted_size, image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
@@ -99,6 +99,10 @@ class CreativeBrief(BaseModel):
     as_uploaded: bool = False
     # Your own video only: the app's ambient music replaces its sound (always, when it has none).
     ambient_music: bool = False
+    # Real project posts from an idea: the format chosen on the plan page, and the edit planned there,
+    # used when the media, format and length weren't changed (social/real_edit.py).
+    real_format: Literal["", "photo", "video"] = ""
+    prepared_edit: dict = Field(default_factory=dict)
 
     @field_validator("rights")
     @classmethod
@@ -139,6 +143,8 @@ class CreativeBrief(BaseModel):
             return self
         if self.ambient_music:
             raise ValueError("Ambient music without a description is only for posting your own video")
+        if self.prepared_edit and self.operation != "real":
+            raise ValueError("A planned edit is only for real project posts")
         if self.operation == "audio" and len(set(self.reference_ids + self.audio_reference_ids)) > 3:
             raise ValueError("Audio generation accepts at most three reference bites in total")
         if self.operation == "image" and "tiktok" in self.platforms and self.create_posts:
@@ -381,7 +387,9 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         if operation in {"real", "mixed"}:
             # A mixed campaign alternates real projects with AI inspiration, so each kind has its own turn.
             turn = sequence // 2 if operation == "mixed" and not drive_only else sequence
-            real = real_choice(db, brief, sources, profile, platform, turn, live=live, drive_only=drive_only)
+            real = real_choice(
+                db, brief, sources, profile, platform, turn, live=live, drive_only=drive_only, keep_order=not campaign
+            )
             if (operation == "real" or drive_only) and not real:
                 raise ValueError(no_real_media(platform))
         if operation == "mixed":
@@ -553,7 +561,26 @@ def _real_values(db, settings, brief, values, real, platform, profile, batch, st
         "execution_mode": settings.ai_mode,
         "end_card": None,
         "end_card_asset_id": "",
+        "prepared_edit": {},
     }
+    try:
+        # Sent back by the browser from the plan page, so it's read as untrusted until it validates.
+        prepared = RealEditPlan.model_validate(
+            {k: v for k, v in brief.prepared_edit.items() if k in RealEditPlan.model_fields}
+        ) if brief.prepared_edit else None
+    except ValidationError:
+        prepared = None
+    if (
+        prepared
+        and prepared.items
+        and real_format == brief.real_format
+        and {i.asset_id for i in prepared.items} <= set(media_ids)
+        and {c.asset_id for c in prepared.audio} <= set(sound_ids)
+    ):
+        # The plan page's edit fits this platform's media; otherwise the worker plans another.
+        values["prepared_edit"] = prepared.model_dump() | {
+            k: str(brief.prepared_edit.get(k, ""))[:100] for k in ("planner", "version")
+        }
     if real_format == "video":
         if brief.duration > profile.max_duration:
             raise ValueError(f"{platform}: choose a duration of at most {profile.max_duration:g} seconds")

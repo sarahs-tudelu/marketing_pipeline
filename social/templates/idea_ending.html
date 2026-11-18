@@ -1,0 +1,5 @@
+      <fieldset><legend>Ending</legend>
+        <p>Every video ends with a cut to the Tudelu logo ({{ end_card_seconds }} seconds{{ ', added after your video' if plan.as_uploaded else '' }}).</p>
+        {% if logos %}{% if logos|length > 1 %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>{% else %}<input type="hidden" name="logo_id" value="{{ logos[0].id }}"><p class="muted">Logo: {{ logos[0].original_name }}</p>{% endif %}
+        {% else %}<p class="error" role="status">There's no logo in the asset library yet, so this video can't be made. {% if editor %}Ask an admin to upload the logo{% else %}<a href="/admin/upload">Upload the logo</a>{% endif %} as a PNG and tick <i>This is the Tudelu logo</i>, then plan the idea again.</p>{% endif %}
+      </fieldset>

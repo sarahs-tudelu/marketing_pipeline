@@ -77,7 +77,8 @@ def test_photo_is_saved_and_posted_as_it_is(db, settings, facts, offline):  # no
     with TestClient(create_app(settings)) as client:
         page = client.get("/admin/create").text
         assert 'enctype="multipart/form-data"' in page and 'name="files"' in page
-        assert 'value="pinterest"' not in page and "Post from library media" in page
+        # Pinterest takes only real project posts from Drive media, which the idea page can now make.
+        assert "Real project only" in page and "Post from library media" in page
         planned = plan(client, facts, [("files", ("terrace.jpg", jpeg(), "image/jpeg"))])
         assert planned.status_code == 200, planned.text
         upload = db.scalar(select(Asset).where(Asset.original_name == "terrace.jpg"))

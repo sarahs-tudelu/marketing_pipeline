@@ -130,6 +130,13 @@ def run():
             coalesce=True,
             next_run_time=now(),
         )
+        from .media_search import describe_library
+
+        # Real library media gets a short description of what it shows, so idea searches can find it.
+        scheduler.add_job(
+            describe_library, "interval", seconds=settings.worker_interval_seconds,
+            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
+        )
         scheduler.add_job(
             tick,
             "interval",

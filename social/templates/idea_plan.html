@@ -34,11 +34,43 @@
         {% else %}<p>Sound: your video has none. There are no ambient tracks in the asset library yet, so the app makes simple ambient music itself. To use real music, {% if editor %}ask an admin to upload tracks{% else %}<a href="/admin/upload">upload tracks</a>{% endif %} and tick <i>Ambient music for real videos</i>.</p>{% endif %}
       {% else %}<label>Sound<select name="sound"><option value="own" {{ '' if plan.ambient_music else 'selected' }}>Keep its own sound</option><option value="ambient" {{ 'selected' if plan.ambient_music else '' }}>{{ 'Ambient track from the asset library (' ~ music_tracks[0].original_name ~ ')' if music_tracks else 'Ambient music made by the app' }} instead</option></select></label>
         <small class="muted">Every video has sound. Ambient music for your own videos {{ 'comes from the tracks in your asset library' if music_tracks else 'is made by the app until you add tracks to the asset library' }}, never AI, so your video isn't labelled as AI.</small>{% endif %}{% endfor %}
-      <fieldset><legend>Ending</legend>
-        <p>Every video ends with a cut to the Tudelu logo ({{ end_card_seconds }} seconds{{ ', added after your video' if plan.as_uploaded else '' }}).</p>
-        {% if logos %}{% if logos|length > 1 %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>{% else %}<input type="hidden" name="logo_id" value="{{ logos[0].id }}"><p class="muted">Logo: {{ logos[0].original_name }}</p>{% endif %}
-        {% else %}<p class="error" role="status">There's no logo in the asset library yet, so this video can't be made. {% if editor %}Ask an admin to upload the logo{% else %}<a href="/admin/upload">Upload the logo</a>{% endif %} as a PNG and tick <i>This is the Tudelu logo</i>, then plan the idea again.</p>{% endif %}
-      </fieldset>
+      {% include "idea_ending.html" %}
+    {% endif %}
+  </section>
+  {% elif plan.operation == 'real' %}
+  {% set planned = plan.real_edit.get('items', []) %}{% set chosen_ids = planned|map(attribute='asset_id')|list %}
+  <input type="hidden" name="operation" value="real">
+  <input type="hidden" name="real_plan" value="{{ json.dumps(plan.real_edit) }}">
+  <input type="hidden" name="real_matches" value="{{ json.dumps(plan.real_matches) }}">
+  <input type="hidden" name="planned_format" value="{{ plan.real_format }}">
+  <input type="hidden" name="planned_duration" value="{{ plan.duration }}">
+  {% for value in plan.real_sounds %}<input type="hidden" name="real_sounds" value="{{ value }}">{% endfor %}
+  <section id="real-plan">
+    <h2>Adjust anything before editing</h2>
+    <div class="two">
+      <label>Post name<input name="campaign" required maxlength="200" value="{{ plan.title }}"></label>
+      <label>Format<select name="real_format"><option value="video" {{ 'selected' if plan.real_format == 'video' else '' }}>Video of your media</option><option value="photo" {{ 'selected' if plan.real_format == 'photo' else '' }}>Photo or collage</option></select></label>
+    </div>
+    <div class="two">
+      <label>Length (seconds, videos)<input type="number" name="duration" min="5" max="90" value="{{ plan.duration }}"></label>
+      <label>Content style<select name="plan_kind"><option value="promotional" {{ 'selected' if plan.kind == 'promotional' else '' }}>Promotional</option><option value="non_promotional" {{ 'selected' if plan.kind == 'non_promotional' else '' }}>Editorial / non-promotional</option></select></label>
+    </div>
+    <fieldset><legend>{{ 'Clips, in viewing order' if plan.real_format == 'video' else 'Photos' }}</legend>
+      <ol class="plan-notes real-media">
+      {% for item in planned %}{% set a = plan_assets.get(item.asset_id) %}{% if a %}
+        <li><label class="checkbox"><input type="checkbox" name="real_media" value="{{ a.id }}" checked>{{ a.original_name }}{% if plan.real_format == 'video' %}<span class="tag">{{ '%.1f–%.1f s'|format(item.start, item.end) if a.media.mime.startswith('video/') else 'photo · %.1f s'|format(item.end - item.start) }}</span>{% endif %}{% if item.get('note') %} · {{ item.note }}{% endif %}</label></li>
+      {% endif %}{% endfor %}
+      </ol>
+    </fieldset>
+    {% set others = plan.real_matches|rejectattr('asset_id', 'in', chosen_ids)|list %}
+    {% if others %}<fieldset><legend>Other matches you can add</legend>
+      {% for m in others %}{% set a = plan_assets.get(m.asset_id) %}{% if a %}<label class="checkbox"><input type="checkbox" name="real_media" value="{{ a.id }}">{{ a.original_name }}<span class="tag">{{ a.media.mime.split('/')[0] }}</span>{% if m.get('why') %} · {{ m.why }}{% endif %}</label>{% endif %}{% endfor %}
+    </fieldset>{% endif %}
+    <p class="muted">The editor chose these and planned their crops, colour{{ ' and trims' if plan.real_format == 'video' else '' }}. Untick a file to leave it out, or tick another match to add it; the edit is then planned again when the job runs. Changing the format or length does the same.</p>
+    {% if plan.real_format == 'video' %}
+      {% if plan.real_sounds %}<p>Sound: {% for s in plan.real_sounds %}{% set a = plan_assets.get(s) %}{{ a.original_name if a else 'your audio' }}{{ ', ' if not loop.last else '' }}{% endfor %}, placed where it fits over the clips' own sound.</p>
+      {% else %}<p>Sound: the clips' own sound. Silent footage gets {{ music_tracks[0].original_name ~ ' from your asset library' if music_tracks else 'ambient music made by the app' }}, never AI.</p>{% endif %}
+      {% include "idea_ending.html" %}
     {% endif %}
   </section>
   {% else %}
@@ -46,7 +78,7 @@
     <h2>Adjust anything before generating</h2>
     <div class="two">
       <label>Post name<input name="campaign" required maxlength="200" value="{{ plan.title }}"></label>
-      <label>Format<select name="operation" data-format-switch>{% for value, label in formats.items() if value != 'auto' %}<option value="{{ value }}" {{ 'selected' if plan.operation == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
+      <label>Format<select name="operation" data-format-switch>{% for value, label in formats.items() if value not in ('auto', 'real') %}<option value="{{ value }}" {{ 'selected' if plan.operation == value else '' }}>{{ label }}</option>{% endfor %}</select></label>
     </div>
     <div class="two">
       <label data-show-for="video video_edit">Length (seconds)<input type="number" name="duration" min="5" max="90" value="{{ plan.duration }}"></label>
@@ -72,23 +104,20 @@
     <div data-show-for="video video_edit">
       <label>Music<textarea name="soundtrack" rows="2" maxlength="1800" placeholder="Leave blank for calm ambient music">{{ plan.soundtrack }}</textarea></label>
       <small>Every video has sound. Runway composes an instrumental track for the full length of the video. Left blank, it's calm ambient music in a style your recent videos haven't used (piano, bells, soft keys, marimba, pads or nature sounds). Mention vocals if you want them.</small>
-      <fieldset><legend>Ending</legend>
-        <p>Every video ends with a cut to the Tudelu logo ({{ end_card_seconds }} seconds{{ ', added after your video' if plan.as_uploaded else '' }}).</p>
-        {% if logos %}{% if logos|length > 1 %}<label>Logo<select name="logo_id">{% for a in logos %}<option value="{{ a.id }}">{{ a.original_name }}</option>{% endfor %}</select></label>{% else %}<input type="hidden" name="logo_id" value="{{ logos[0].id }}"><p class="muted">Logo: {{ logos[0].original_name }}</p>{% endif %}
-        {% else %}<p class="error" role="status">There's no logo in the asset library yet, so this video can't be made. {% if editor %}Ask an admin to upload the logo{% else %}<a href="/admin/upload">Upload the logo</a>{% endif %} as a PNG and tick <i>This is the Tudelu logo</i>, then plan the idea again.</p>{% endif %}
-      </fieldset>
+      {% include "idea_ending.html" %}
     </div>
   </section>
   {% endif %}
   <section>
-    <h2>{{ 'What happens next' if plan.as_uploaded else 'What will be generated' }}</h2>
+    {% set own_media = plan.as_uploaded or plan.operation == 'real' %}
+    <h2>{{ 'What happens next' if own_media else 'What will be generated' }}</h2>
     <p>{{ work_summary }}</p>
-    {% if not plan.as_uploaded %}<p class="muted">Nothing is generated until you choose below. Each Runway prompt is written from your idea, tudelu.com, the approved facts and your Public uploads just before it is sent.</p>{% endif %}
+    {% if not own_media %}<p class="muted">Nothing is generated until you choose below. Each Runway prompt is written from your idea, tudelu.com, the approved facts and your Public uploads just before it is sent.</p>{% endif %}
     <div class="actions">
       <button class="primary" name="mode" value="once">Create now</button>
       <button name="mode" value="next">Use for next automatic post</button>
       <button name="mode" value="back" formnovalidate>Change the idea</button>
     </div>
-    <small>Create now {{ 'prepares your media' if plan.as_uploaded else 'generates the media' }}, writes the caption and runs checks, even when automatic posts are off. You review the finished post before approving its schedule. Next automatic post waits until automation is on, then also requires your review. Global and platform pauses still apply.</small>
+    <small>Create now {{ 'prepares your media' if own_media else 'generates the media' }}, writes the caption and runs checks, even when automatic posts are off. You review the finished post before approving its schedule. Next automatic post waits until automation is on, then also requires your review. Global and platform pauses still apply.</small>
   </section>
 </form>

@@ -219,11 +219,11 @@ pre{overflow:auto;padding:16px;font-family:var(--mono);font-size:12.5px;white-sp
   .idea-main>p:first-of-type{margin-bottom:8px}
   .idea-form textarea[name=prompt]{min-height:190px}
   .idea-side{padding:18px 20px 20px;background:var(--background);border:1px solid var(--border);border-radius:var(--radius)}
-  .idea-side fieldset{margin:0 0 16px;padding:0;border:0}
+  .idea-side fieldset{margin:0 0 12px;padding:0;border:0}
   .idea-side legend{margin-bottom:8px;padding:0}
-  .idea-side .choice-row{flex-direction:column;gap:6px}
-  .idea-side .choice{padding:7px 12px;font-size:14px;background:var(--card)}
-  .idea-side .checkbox{margin:6px 0;font-size:14px}
+  .idea-side .choice-row{flex-direction:column;gap:4px}
+  .idea-side .choice{padding:5px 12px;font-size:14px;background:var(--card)}
+  .idea-side .checkbox{margin:3px 0;font-size:14px}
   .idea-side small{margin-top:8px}
   .idea-side>p{margin:0;font-size:13px}
   .idea-side details{margin:0 0 12px;padding:10px 0;border-top:1px solid var(--divider)}
