@@ -168,6 +168,10 @@ Set `ANALYTICS_ENABLED=true` to collect official read-only per-post metrics at m
 
 Use Performance in admin or `tudelu analytics`. Metrics are platform-specific and not falsely equated. Recommendations compare engagement per view for the latest five versus previous five eligible live posts, mark limited samples, and never change caps or schedules automatically. Simulated metrics are excluded. Facebook video IDs and metric availability may depend on the current Page/video surface; unavailable metrics remain unavailable instead of being filled with invented zeros.
 
+## Usage and costs
+
+**Settings → Usage & costs** shows AI spend for the last 7, 30 or 90 days next to how posts performed: spend, cost per published post, views and engagement first, then spend by provider, stage and platform, daily spend, and performance by platform and by real versus AI media. Details expand underneath: cost per post with each request, spend that didn't become a published post, every step and model, billed totals against the app's records, provider connections and the price table. Runway's billed costs use the existing key; Claude's use `ANTHROPIC_API_KEY` when it's an organization admin's personal key; OpenAI's need `OPENAI_ADMIN_KEY`. Migration `f9c2a1e7d340` adds the tables; run it before starting the updated web and worker. See [usage and costs](docs/usage.md).
+
 ## Configuration and development
 
 [`.env.example`](.env.example) lists every environment variable with comments. [Configuration reference](docs/configuration.md) lists defaults and profile fields. [Platform verification](docs/platform-verification.md) records current official references, conflicts and supported API flows. The source contains no real tokens or product claims.

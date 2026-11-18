@@ -41,6 +41,7 @@ from .rendering_guidelines import (
     STRUCTURE_SELECTION,
 )
 from .rendering_guidelines import policy as rendering_policy
+from .usage import labelled
 
 # promptText limit for gen4_image, gen4.5 and aleph2, in UTF-16 code units (Runway OpenAPI).
 PROMPT_LIMIT = 1000
@@ -395,6 +396,7 @@ def _checked_system(name, context):
     return name
 
 
+@labelled("prompt_writer")
 def write_prompt(db, settings, job):
     """Return brief fields for the composed Runway prompt(s) and their provenance."""
     context, provenance = gather_sources(db, settings, job)

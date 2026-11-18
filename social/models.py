@@ -1,6 +1,17 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, now, uid
@@ -266,3 +277,46 @@ class MediaJob(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class UsageRecord(Base):
+    """One paid AI request the app made, with what it was for and, when known, the post it served."""
+
+    __tablename__ = "usage_records"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(20), index=True)
+    purpose: Mapped[str] = mapped_column(String(60))
+    model: Mapped[str] = mapped_column(String(120), default="")
+    units: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Runway reports the credits it charged; token costs come from the price table, so they're estimates.
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    estimated: Mapped[bool] = mapped_column(Boolean, default=True)
+    request_id: Mapped[str] = mapped_column(String(120), default="", index=True)
+    post_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    media_job_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    platform: Mapped[str] = mapped_column(String(20), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+
+
+class ProviderCost(Base):
+    """A provider's billed cost for one day and model or line item, read from its cost API."""
+
+    __tablename__ = "provider_costs"
+    __table_args__ = (UniqueConstraint("provider", "day", "item"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    day: Mapped[date] = mapped_column(Date, index=True)
+    item: Mapped[str] = mapped_column(String(200), default="")
+    amount_usd: Mapped[float] = mapped_column(Float, default=0)
+    units: Mapped[dict] = mapped_column(JSON, default=dict)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ProviderSync(Base):
+    """When each provider's costs were last read, and why they couldn't be."""
+
+    __tablename__ = "provider_syncs"
+    provider: Mapped[str] = mapped_column(String(20), primary_key=True)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    error: Mapped[str] = mapped_column(Text, default="")
+    details: Mapped[dict] = mapped_column(JSON, default=dict)

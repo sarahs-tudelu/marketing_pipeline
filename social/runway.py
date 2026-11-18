@@ -121,6 +121,29 @@ class Runway:
                 category="poll",
             ) from None
 
+    def organization(self):
+        """The API project's credit balance and tier (GET /v1/organization)."""
+        return self._read("GET", "/organization")
+
+    def usage(self, start, before):
+        """Credits used per model per day, start inclusive and before exclusive, at most 90 days."""
+        return self._read("POST", "/organization/usage", {"startDate": start.isoformat(), "beforeDate": before.isoformat()})
+
+    def _read(self, method, path, payload=None):
+        try:
+            response = self.client.request(method, BASE + path, headers=self.headers, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ValueError()
+            return result
+        except (ValueError, httpx.HTTPError):
+            raise ProviderError(
+                "Could not read Runway's account usage. Check the API key and try again later.",
+                provider="Runway",
+                category="usage",
+            ) from None
+
     def download(self, url):
         # Output URLs expire. Ingest promptly; never persist signed URLs or forward API credentials.
         try:

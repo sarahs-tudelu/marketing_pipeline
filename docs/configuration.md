@@ -91,6 +91,11 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `OPENAI_AUDIO_REVIEW_MODEL` | `"gpt-audio-1.5"` | Full-track listening/transcription for the audio review gate; uses OPENAI_API_KEY. |
 | `OPENAI_IMAGE_MODEL` | `"gpt-image-2.5-sunburst-2026-09-08"` | Related configuration in the group above. |
 | `OPENAI_EMBEDDING_MODEL` | `"text-embedding-3-small"` | Related configuration in the group above. |
+| `OPENAI_ADMIN_KEY` | `(unset secret)` | Organization Admin key (`sk-admin-…`) for billed OpenAI costs in Settings → Usage & costs. See [usage](usage.md). |
+| `OPENAI_COST_PROJECT_ID` | `(unset)` | Counts only this OpenAI project (`proj_…`); unset reads the whole organization. |
+| `ANTHROPIC_ADMIN_KEY` | `(unset secret)` | Optional. Claude costs are read with `ANTHROPIC_API_KEY` when it's an admin's personal key not scoped to a workspace; this Admin API key (`sk-ant-admin…`) overrides it. |
+| `ANTHROPIC_COST_API_KEY_ID` | `(unset)` | Counts only this Anthropic API key (`apikey_…`); unset reads the whole organization. |
+| `USAGE_SYNC_HOURS` | `6` | Hours between reads of the providers' billed costs (1–48). **Refresh billed costs** reads them at once. |
 | `EMBEDDING_PROVIDER` | `"hash"` | hash = offline similarity fixture; openai required for live publishing. |
 | `REVIEW_MIN_SCORE` | `0.9` | Independent reviewer acceptance and duplicate similarity thresholds (0..1). |
 | `DUPLICATE_THRESHOLD` | `0.94` | Related configuration in the group above. |

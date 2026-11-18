@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     openai_audio_review_model: str = "gpt-audio-1.5"
     openai_image_model: str = "gpt-image-2.5-sunburst-2026-09-08"
     openai_embedding_model: str = "text-embedding-3-small"
+    # Settings → Usage reads billed costs from each provider's cost API. OpenAI needs an organization Admin
+    # key. Claude costs are read with ANTHROPIC_API_KEY when it's an admin's personal key that isn't scoped to a
+    # workspace; ANTHROPIC_ADMIN_KEY overrides it. The optional IDs keep other projects' or apps' spend out.
+    openai_admin_key: SecretStr = SecretStr("")
+    openai_cost_project_id: str = ""
+    anthropic_admin_key: SecretStr = SecretStr("")
+    anthropic_cost_api_key_id: str = ""
+    usage_sync_hours: int = Field(default=6, ge=1, le=48)
     embedding_provider: Literal["hash", "openai"] = "hash"
     review_min_score: float = Field(default=0.9, ge=0, le=1)
     duplicate_threshold: float = Field(default=0.94, gt=0, le=1)

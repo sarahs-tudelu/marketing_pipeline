@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from sqlalchemy import select, update
 
+from . import usage
 from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
 from .db import now
 from .facts import Facts, active, caption_fact_ids, content_digest, render
@@ -53,6 +54,7 @@ def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="
     return post
 
 
+@usage.for_post
 def generate(db, settings, post, providers=None, *, revision_request="", previous_caption=""):
     lock_post(db, post)
     if post.status != "draft":

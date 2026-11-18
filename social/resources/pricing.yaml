@@ -1,0 +1,14 @@
+# Prices for estimating what each AI request cost, in US dollars. Settings → Usage shows a provider's
+# billed costs instead once its cost API is connected; these then split that spend across posts.
+# Checked 2026-11-18 against each provider's own pricing pages. Token prices are per million tokens.
+runway:
+  # Runway reports the credits each task charged; a credit costs $0.01 (docs.dev.runwayml.com/guides/pricing).
+  credit_usd: 0.01
+anthropic:
+  # platform.claude.com pricing: cache reads are 0.05x input, 5-minute cache writes 1.25x input.
+  claude-opus-5-5: {input: 4.00, output: 20.00, cached_input: 0.20, cache_write: 5.00}
+openai:
+  # developers.openai.com model pages.
+  gpt-6-astra: {input: 10.00, cached_input: 1.00, output: 50.00}
+  gpt-audio-1.5: {input: 2.50, output: 10.00, audio_input: 32.00, audio_output: 64.00}
+  text-embedding-3-small: {input: 0.02}

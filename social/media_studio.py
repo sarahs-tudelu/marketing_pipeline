@@ -1299,8 +1299,13 @@ def process_jobs(db, settings, provider=None):
     ).all()
     runway = provider or Runway(settings)
     configured = settings
+    from . import usage
+
     try:
         for job in jobs:
+            # The previous job has committed; save its recorded requests before starting this one.
+            usage.flush(db)
+            usage.attribute(media_job_id=job.id, platform=job.platform, post_id=job.post_id)
             settings = job_settings(configured, job.brief)
             db.refresh(control)
             account = db.get(Account, job.platform)
@@ -1333,7 +1338,13 @@ def process_jobs(db, settings, provider=None):
                         )
                     task = runway.task(job.task_id)
                     if task.get("status") in {"PENDING", "THROTTLED", "RUNNING"}:
+                        estimate = (task.get("estimatedCost") or {}).get("credits")
+                        if estimate is not None and job.brief.get("active_estimate") != estimate:
+                            # Kept in case the finished task doesn't report its final cost.
+                            job.brief = job.brief | {"active_estimate": estimate}
+                            db.commit()
                         continue
+                    usage.record_runway_task(job, task)
                     if task.get("status") in {"FAILED", "CANCELED", "CANCELLED"}:
                         # Kept as failed with its task ID; the In progress page offers a new submission.
                         raise ValueError(runway_failure(job, task))
@@ -1422,7 +1433,9 @@ def process_jobs(db, settings, provider=None):
                 db.refresh(account)
                 if control.killed or account.paused:
                     continue
-                job.brief = job.brief | {"active_generation": phase}
+                job.brief = job.brief | {
+                    "active_generation": phase, "active_model": payload.get("model", ""), "active_estimate": None,
+                }
                 job.brief = {k: v for k, v in job.brief.items() if k != "runway_retry_at"}
                 # Persist before the paid request; crash recovery never blindly re-submits.
                 claimed = db.execute(
@@ -1465,6 +1478,8 @@ def process_jobs(db, settings, provider=None):
                 # A scene the quality review rejected is corrected and made again without waiting.
                 auto_retry(db, settings, job)
     finally:
+        usage.attribute()
+        usage.flush(db)
         if provider is None:
             runway.close()
 

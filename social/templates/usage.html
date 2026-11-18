@@ -1,0 +1,158 @@
+{% set u = usage %}
+{% macro units_text(units) -%}
+{%- set names = {'credits': 'credits', 'input': 'in', 'cached_input': 'cached in', 'cache_write': 'cache write', 'audio_input': 'audio in', 'output': 'out', 'audio_output': 'audio out'} -%}
+{%- for key, label in names.items() if units.get(key) -%}{{ units[key]|compact }} {{ label }}{{ ' · ' if not loop.last }}{%- endfor -%}
+{%- endmacro %}
+{# The page's security policy blocks inline styles, so bar sizes are SVG attributes. A bar is square at
+   its baseline and rounded 4px at its data end: a rounded rect plus a square rect over its first half. #}
+{% macro hbar(share) -%}
+{%- set w = ([share * 100, 0.8]|max if share > 0 else 0)|round(2) -%}
+<svg class="hbar" width="100%" height="12" aria-hidden="true" focusable="false">{% if w %}<rect width="{{ w }}%" height="12" rx="4"/><rect width="{{ (w / 2)|round(2) }}%" height="12"/>{% endif %}</svg>
+{%- endmacro %}
+{% macro vbar(share) -%}
+{%- set h = ([share * 100, 1.5]|max if share > 0 else 0)|round(2) -%}
+<svg class="vbar" width="100%" height="100%" aria-hidden="true" focusable="false">{% if h %}<rect y="{{ (100 - h)|round(2) }}%" width="100%" height="{{ h }}%" rx="4"/><rect y="{{ (100 - h / 2)|round(2) }}%" width="100%" height="{{ (h / 2)|round(2) }}%"/>{% endif %}</svg>
+{%- endmacro %}
+{% macro day_label(day) %}{{ day.strftime('%b') }} {{ day.day }}{% endmacro %}
+{% set source_tags = {'billed': 'Billed', 'recorded': "Runway's task charges", 'estimated': 'Estimated'} %}
+<div class="usage-filters">
+  <div class="period" role="group" aria-label="Period">{% for d in u.periods %}<a href="/admin/usage?days={{ d }}" {% if d == u.days %}aria-current="true"{% endif %}>Last {{ d }} days</a>{% endfor %}</div>
+  <form method="post" action="/forms/usage/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="days" value="{{ u.days }}"><button>Refresh billed costs</button></form>
+</div>
+
+<div class="metrics usage-tiles">
+  <div>
+    <span class="tile-label">AI spend</span><strong>{{ u.total|money }}</strong>
+    <span>{% if u.change is none %}Nothing to compare with yet{% elif u.change >= 2 %}{{ (u.change + 1)|round(1) }}× the {{ u.days }} days before{% else %}{{ '+' if u.change > 0 else '' }}{{ u.change|percent(0) }} on the {{ u.days }} days before{% endif %}</span>
+    <span>{{ 'Billed by every provider' if u.all_billed else 'Includes estimates where a provider isn’t connected' }}</span>
+  </div>
+  <div>
+    <span class="tile-label">Cost per published post</span><strong>{{ u.cost_per_post|money }}</strong>
+    <span>{{ u.published }} live post{{ 's' if u.published != 1 }} published</span>
+    <span>All AI spend, including media that wasn’t posted</span>
+  </div>
+  <div>
+    <span class="tile-label">Views</span><strong>{{ u.overall.views|compact }}</strong>
+    <span>{{ u.overall.measured }} of {{ u.published }} posts measured</span>
+    <span>{{ u.overall.cost_per_1k_views|money }} per 1,000 views</span>
+  </div>
+  <div>
+    <span class="tile-label">Engagement rate</span><strong>{{ u.overall.engagement|percent }}</strong>
+    <span>{{ u.overall.interactions|compact }} interactions</span>
+    <span>Interactions per view</span>
+  </div>
+</div>
+
+<section class="usage-section">
+  <div class="section-head"><h2>Costs</h2><a href="#usage-details">Details</a></div>
+  {% if not u.total and not u.recorded_total %}<p class="muted">No AI spend in this period yet. The app records each AI request from this release on, and billed costs appear once a provider is connected (see <a href="#usage-connections">Provider connections</a>).</p>{% endif %}
+  {% set pmax = (u.providers|map(attribute='amount')|max) or 0 %}
+  <div class="usage-grid">
+    <div>
+      <h3>By provider</h3>
+      <ul class="hbars">{% for p in u.providers|sort(attribute='amount', reverse=true) %}
+        <li><span class="hbar-label">{{ p.label }}<span class="tag">{{ source_tags[p.source] }}</span></span><span class="hbar-value">{{ p.amount|money }}</span>{{ hbar(p.amount / pmax if pmax else 0) }}</li>{% endfor %}
+      </ul>
+    </div>
+    <div>
+      <h3>By stage</h3>
+      {% if u.stage_bars %}<ul class="hbars">{% for b in u.stage_bars %}
+        <li><span class="hbar-label">{{ b.label }}</span><span class="hbar-value">{{ b.amount|money }}</span>{{ hbar(b.share) }}</li>{% endfor %}
+      </ul>{% else %}<p class="muted">No requests recorded yet.</p>{% endif %}
+    </div>
+    <div>
+      <h3>By platform</h3>
+      {% if u.platform_bars %}<ul class="hbars">{% for b in u.platform_bars %}
+        <li><span class="hbar-label">{{ b.label|platform if b.label != 'Not tied to a post' else b.label }}</span><span class="hbar-value">{{ b.amount|money }}</span>{{ hbar(b.share) }}</li>{% endfor %}
+      </ul>{% else %}<p class="muted">No requests recorded yet.</p>{% endif %}
+    </div>
+  </div>
+  <p class="muted usage-note">Stages and platforms come from the app’s record of each request ({{ u.recorded_total|money }} in this period); providers bill by day and model, so their totals can’t be split this way.</p>
+
+  <div class="usage-daily">
+    <div class="usage-subhead"><h3>Daily spend</h3><small class="muted">Highest day {{ u.peak|money }}</small></div>
+    <div class="vbars{{ ' dense' if u.series|length > 40 else '' }}" role="group" aria-label="AI spend per day for the last {{ u.days }} days; the table below lists each day">
+      {% for s in u.series %}{% set edge = ' start' if loop.index0 < loop.length * 0.15 else (' end' if loop.index0 > loop.length * 0.85 else '') %}<span class="vbar-slot{{ edge }}" tabindex="0" data-tip="{{ day_label(s.day) }} · {{ s.amount|money }}" aria-label="{{ day_label(s.day) }}: {{ s.amount|money }}">{{ vbar(s.amount / u.peak if u.peak else 0) }}</span>{% endfor %}
+    </div>
+    <div class="vbars-axis"><span>{{ day_label(u.series[0].day) }}</span><span>{{ day_label(u.series[-1].day) }}</span></div>
+    <details><summary>Daily spend as a table</summary>
+      <table class="usage-table"><thead><tr><th>Day</th><th class="num">Spend</th></tr></thead><tbody>{% for s in u.series|reverse if s.amount %}<tr><td>{{ s.day }}</td><td class="num">{{ s.amount|money }}</td></tr>{% else %}<tr><td colspan="2" class="empty">No spend in this period.</td></tr>{% endfor %}</tbody></table>
+    </details>
+  </div>
+</section>
+
+<section class="usage-section">
+  <div class="section-head"><h2>Performance</h2><small class="muted">Live posts published in the last {{ u.days }} days{{ '; ' ~ u.simulated ~ ' simulated left out' if u.simulated }}</small></div>
+  <table class="usage-table">
+    <thead><tr><th>Platform</th><th class="num">Posts</th><th class="num">Views</th><th class="num">Engagement</th><th class="num">AI spend</th><th class="num">Cost per post</th><th class="num">Per 1,000 views</th></tr></thead>
+    <tbody>{% for r in u.by_platform %}<tr><td>{{ r.platform|platform }}</td><td class="num">{{ r.posts }}</td><td class="num">{{ r.views|compact }}</td><td class="num">{{ r.engagement|percent }}</td><td class="num">{{ r.spend|money }}</td><td class="num">{{ r.cost_per_post|money }}</td><td class="num">{{ r.cost_per_1k_views|money }}</td></tr>{% else %}<tr><td colspan="7" class="empty">No live posts were published in this period.</td></tr>{% endfor %}</tbody>
+  </table>
+  <h3>Real projects and AI inspiration</h3>
+  <table class="usage-table">
+    <thead><tr><th>Media</th><th class="num">Posts</th><th class="num">Views</th><th class="num">Engagement</th><th class="num">Cost per post</th><th class="num">Per 1,000 views</th></tr></thead>
+    <tbody>{% for r in u.kinds %}<tr><td>{{ r.label }}</td><td class="num">{{ r.posts }}</td><td class="num">{{ r.views|compact }}</td><td class="num">{{ r.engagement|percent }}</td><td class="num">{{ r.cost_per_post|money }}</td><td class="num">{{ r.cost_per_1k_views|money }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="muted usage-note">AI spend on a platform counts every request for its posts and media jobs, including media that wasn’t posted; cost per post counts only the published posts’ own requests. Views and interactions are each post’s latest metrics from the platform.</p>
+</section>
+
+<section class="usage-section" id="usage-details">
+  <h2>Details</h2>
+  <details><summary>Cost per post<small>{{ u.posts|length }} post{{ 's' if u.posts|length != 1 }} with recorded requests</small></summary>
+    <table class="usage-table">
+      <thead><tr><th>Post</th><th>Status</th><th>Media</th><th class="num">Cost</th><th class="num">Views</th><th class="num">Engagement</th></tr></thead>
+      <tbody>{% for row in u.posts %}<tr>
+        <td><a href="/posts/{{ row.post.id }}">{{ row.post.campaign }}</a><small>{{ row.post.platform|platform }} · {{ row.post.created_at.strftime('%Y-%m-%d') }}</small></td>
+        <td><span class="status {{ row.post.status }}">{{ row.post.status|replace('_', ' ') }}</span></td>
+        <td>{{ 'AI' if row.post.ai_disclosure else 'Real' }}</td>
+        <td class="num"><details class="inline-details"><summary>{{ row.cost|money }}</summary><ul class="usage-lines">{% for line in row.lines %}<li><span>{{ line.label }}{{ ' · ' ~ line.model if line.model }}{{ ' ×' ~ line.count if line.count > 1 }}</span><span>{{ line.cost|money }}</span></li>{% endfor %}</ul></details></td>
+        <td class="num">{{ row.views|compact }}</td><td class="num">{{ row.engagement|percent }}</td>
+      </tr>{% else %}<tr><td colspan="6" class="empty">No requests tied to a post in this period.</td></tr>{% endfor %}</tbody>
+    </table>
+  </details>
+
+  <details><summary>Spend that didn’t become a published post<small>{{ (u.unposted + u.no_post + u.unattributed)|money }}</small></summary>
+    <ul class="usage-lines wide">
+      <li><span>Posts held, failed or deleted</span><span>{{ u.unposted|money }}</span></li>
+      <li><span>Media jobs that never made a post (failed, removed or still running)</span><span>{{ u.no_post|money }}</span></li>
+      <li><span>Not tied to a post: idea planning, library search and media descriptions</span><span>{{ u.unattributed|money }}</span></li>
+    </ul>
+  </details>
+
+  <details><summary>By step and model<small>{{ u.purposes|length }} row{{ 's' if u.purposes|length != 1 }}</small></summary>
+    <table class="usage-table">
+      <thead><tr><th>Step</th><th>Provider and model</th><th class="num">Requests</th><th>Usage</th><th class="num">Cost</th></tr></thead>
+      <tbody>{% for r in u.purposes %}<tr><td>{{ r.label }}<small>{{ r.stage }}</small></td><td>{{ r.provider }}<small>{{ r.model or '—' }}</small></td><td class="num">{{ r.count }}</td><td><small>{{ units_text(r.units) }}</small></td><td class="num">{{ r.cost|money }}</td></tr>{% else %}<tr><td colspan="5" class="empty">No requests recorded in this period.</td></tr>{% endfor %}</tbody>
+    </table>
+  </details>
+
+  <details><summary>Billed costs and the app’s records</summary>
+    <table class="usage-table">
+      <thead><tr><th>Provider</th><th class="num">Billed</th><th class="num">App’s records</th><th class="num">Requests</th></tr></thead>
+      <tbody>{% for p in u.providers %}<tr><td>{{ p.label }}{% if p.unpriced %}<small>{{ p.unpriced }} request{{ 's' if p.unpriced != 1 }} with no price in the price table</small>{% endif %}</td><td class="num">{{ p.billed|money }}</td><td class="num">{{ p.recorded|money }}</td><td class="num">{{ p.requests }}</td></tr>{% endfor %}</tbody>
+    </table>
+    <p class="muted usage-note">Billed totals cover everything the provider charged to this account, project or key, including requests the app made before it recorded them, benchmarks and other tools. The app’s records price Claude and OpenAI tokens from the price table below and use the credits Runway reports for each task.</p>
+    {% for p in u.providers if p.billed_items %}<h3>{{ p.label }}: billed by {{ 'model' if p.key != 'openai' else 'line item' }}</h3>
+      <ul class="usage-lines wide">{% for item in p.billed_items[:12] %}<li><span>{{ item.item }}</span><span>{{ item.amount|money }}</span></li>{% endfor %}</ul>{% endfor %}
+  </details>
+
+  <details id="usage-connections" {{ 'open' if u.providers|selectattr('needs')|list or u.providers|selectattr('error')|list else '' }}><summary>Provider connections</summary>
+    <ul class="usage-connections">{% for p in u.providers %}<li>
+      <b>{{ p.label }}</b>
+      {% if p.needs %}<span class="tag">Not connected</span><p>{{ p.needs }}</p>
+      {% elif p.error %}<span class="tag">Couldn’t read costs</span><p class="error">{{ p.error }}</p>
+      {% elif p.synced_at %}<span class="tag">Connected</span><p class="muted">Billed costs read {{ p.synced_at.strftime('%Y-%m-%d %H:%M') }} UTC, for {{ p.details.get('scope', 'the account') }}.{% if p.details.get('credit_balance') is not none %} Credit balance {{ p.details.credit_balance|compact }} credits ({{ p.details.credit_balance_usd|money }}).{% endif %}{% if p.details.get('data_refreshed_at') %} Anthropic’s data was current to {{ p.details.data_refreshed_at }}.{% endif %}</p>
+      {% else %}<span class="tag">Ready</span><p class="muted">Costs are read every {{ settings.usage_sync_hours }} hours, or now with Refresh billed costs.</p>{% endif %}
+    </li>{% endfor %}</ul>
+  </details>
+
+  <details><summary>Prices used for estimates</summary>
+    <table class="usage-table">
+      <thead><tr><th>Provider and model</th><th>Price</th></tr></thead>
+      <tbody>
+        <tr><td>Runway<small>per credit</small></td><td>{{ u.prices.runway.credit_usd|money }}</td></tr>
+        {% for provider in ['anthropic', 'openai'] %}{% for model, rates in (u.prices.get(provider) or {}).items() %}<tr><td>{{ {'anthropic': 'Anthropic', 'openai': 'OpenAI'}[provider] }}<small>{{ model }}</small></td><td>{% for kind, rate in rates.items() %}{{ kind|replace('_', ' ') }} {{ rate|money }}{{ ' · ' if not loop.last }}{% endfor %} <small>per million tokens</small></td></tr>{% endfor %}{% endfor %}
+      </tbody>
+    </table>
+    <p class="muted usage-note">From <code>social/resources/pricing.yaml</code>, checked against each provider’s pricing pages. Billed costs replace these estimates once a provider is connected.</p>
+  </details>
+</section>

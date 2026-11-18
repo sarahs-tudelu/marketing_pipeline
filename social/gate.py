@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 import httpx
 from sqlalchemy import func, select
 
+from . import usage
 from .audio_review import review_audio
 from .config import REAL_MEDIA_ONLY, profiles
 from .db import now, uid
@@ -438,6 +439,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     return results, assets
 
 
+@usage.for_post
 def run_gate(db, settings, post, *, human_actor=None, **kwargs):
     lock_post(db, post)
     if post.status != "generated":

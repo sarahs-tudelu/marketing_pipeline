@@ -326,3 +326,48 @@ body.standalone h1{margin-bottom:12px}
 @media(max-width:650px),(hover:none) and (pointer:coarse){
   input,select,textarea,textarea[name=document],textarea[name=tags]{font-size:16px}
 }
+
+/* Settings → Usage & costs. One series per chart, so one colour: the accent on white passes the
+   colour checks. Bars stay thin (12px), rounded only at the data end; values are text, not colour. */
+.usage-filters{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 20px}
+.usage-filters form{margin:0}
+.period{display:inline-flex;flex-wrap:wrap;gap:4px;padding:4px;background:var(--surface);border-radius:var(--radius-md)}
+.period a{padding:6px 14px;border-radius:var(--radius-sm);color:var(--ink-soft);font-size:14px;font-weight:500;text-decoration:none}
+.period a:hover{color:var(--ink)}
+.period a[aria-current]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgb(0 0 0 / .08)}
+.usage-tiles .tile-label{margin:0 0 6px;font-weight:500}
+.usage-tiles strong{font-weight:600}
+.usage-tiles strong+span{margin-top:8px;color:var(--ink-soft)}
+.usage-section .section-head small{margin:0}
+.usage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px 32px}
+.usage-grid h3,.usage-subhead h3{margin:0 0 12px}
+.usage-note{margin:16px 0 0;font-size:13px}
+.hbars{display:grid;gap:12px;margin:0;padding:0;list-style:none}
+.hbars li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 12px;align-items:baseline}
+.hbar-label{min-width:0;font-size:13.5px;color:var(--ink-soft)}
+.hbar-value{font-size:13.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.hbar{grid-column:1 / -1;display:block;overflow:visible}
+.hbar rect,.vbar rect{fill:var(--accent)}
+.usage-daily{margin-top:28px;padding-top:24px;border-top:1px solid var(--divider)}
+.usage-subhead{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.usage-subhead small{margin:0}
+.vbars{display:flex;align-items:flex-end;gap:2px;height:150px;border-bottom:1px solid var(--border)}
+.vbars.dense{gap:1px}
+.vbar-slot{position:relative;display:flex;flex:1 1 0;align-items:flex-end;min-width:0;height:100%;outline:none}
+.vbar{display:block;width:100%;max-width:24px;height:100%;margin:0 auto}
+.vbar-slot:hover .vbar rect,.vbar-slot:focus-visible .vbar rect{fill:var(--accent-hover)}
+.vbar-slot:focus-visible{box-shadow:inset 0 0 0 2px var(--accent-bright);border-radius:4px}
+.vbar-slot:hover::after,.vbar-slot:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;z-index:2;transform:translateX(-50%);padding:5px 9px;border-radius:6px;background:var(--ink);color:#fff;font-size:12px;font-weight:500;white-space:nowrap;pointer-events:none}
+.vbar-slot.start:hover::after,.vbar-slot.start:focus-visible::after{left:0;transform:none}
+.vbar-slot.end:hover::after,.vbar-slot.end:focus-visible::after{left:auto;right:0;transform:none}
+.vbars-axis{display:flex;justify-content:space-between;margin:6px 0 4px;color:var(--muted);font-size:12px}
+.usage-table .num{text-align:right;font-variant-numeric:tabular-nums}
+.usage-table td{padding:12px 14px}
+.inline-details{padding:0;border:0}
+.inline-details summary{font-weight:500}
+.usage-lines{display:grid;gap:6px;min-width:240px;margin:8px 0 0;padding:0;list-style:none;font-size:13px;text-align:left}
+.usage-lines li{display:flex;justify-content:space-between;gap:16px}
+.usage-lines li span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}
+.usage-lines.wide{max-width:640px}
+.usage-connections{display:grid;gap:14px;margin:8px 0 0;padding:0;list-style:none}
+.usage-connections p{margin:4px 0 0;font-size:13.5px}

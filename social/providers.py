@@ -22,6 +22,7 @@ from .product_rules import (
 from .provider_errors import ProviderError, request_json
 from .rendering_guidelines import policy as rendering_policy
 from .storage import ingest, storage
+from .usage import current_purpose, labelled, openai_purpose, record_tokens
 
 
 class CaptionGenerator(Protocol):
@@ -177,11 +178,15 @@ class Claude:
                 "messages": [{"role": "user", "content": json.dumps(context, default=str)}],
             },
         )
+        # Charged even when the answer is then rejected below.
+        record_tokens("anthropic", current_purpose("claude"), result.get("model") or self.s.anthropic_model,
+                      result.get("usage"))
         if result.get("stop_reason") != "end_turn":
             raise ValueError("Claude response incomplete or refused")
         text = "".join(c["text"] for c in result["content"] if c["type"] == "text")
         return parse_json(text)
 
+    @labelled("caption")
     def generate(self, context):
         result = self.call(
             "Write persuasive, human social copy for Tudelu. Sound warm, inviting and specific—not like a "
@@ -220,6 +225,7 @@ class Claude:
         )
         return result["parts"]
 
+    @labelled("caption_review")
     def review(self, context):
         # Independent request, no caption-generation conversation or reasoning is shared.
         result = self.call(
@@ -273,6 +279,7 @@ class Claude:
         )
         return Review.model_validate(result)
 
+    @labelled("audio_review")
     def review_audio(self, context):
         result = self.call(
             "Independently review the full audio observations and EVERY audio_parts transcript segment "
@@ -306,13 +313,17 @@ class OpenAI:
                 category="configuration",
                 status=400,
             )
-        return request_json(
+        result = request_json(
             self.client,
             "OpenAI",
             "https://api.openai.com/v1/" + endpoint,
             headers={"Authorization": "Bearer " + self.s.openai_api_key.get_secret_value()},
             payload=payload,
         )
+        if isinstance(result, dict):
+            record_tokens("openai", openai_purpose(endpoint, payload), result.get("model") or payload.get("model"),
+                          result.get("usage"))
+        return result
 
     def generate(self, prompt):
         result = self.call(

@@ -152,6 +152,12 @@ def report(db, settings):
 
 
 def engagement_rate(metrics):
+    views, actions = reach(metrics)
+    return actions / views if views else None
+
+
+def reach(metrics):
+    """(views, interactions) from one platform's metrics; (0, 0) when it reports neither."""
     if "videos" in metrics:
         rows = metrics["videos"]
         views = sum(m.get("view_count", 0) for m in rows)
@@ -181,4 +187,4 @@ def engagement_rate(metrics):
                 )
             )
             actions += sum(metrics.get("post_reactions_by_type_total", {}).values())
-    return actions / views if views else None
+    return views or 0, actions or 0

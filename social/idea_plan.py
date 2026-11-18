@@ -21,6 +21,7 @@ from .product_rules import SCOPE_REASONING, WEATHER_GUIDANCE, context_for, curre
 from .provider_errors import ProviderError
 from .rendering_guidelines import policy as rendering_policy
 from .runway import video_clip_limit
+from .usage import labelled
 
 END_CARD_SECONDS = 3
 MAX_CLIPS = 9
@@ -356,6 +357,7 @@ def _rule_plan(idea, signals, catalog, product, has_video_reference):
     )
 
 
+@labelled("idea_plan")
 def plan_idea(
     db,
     settings,

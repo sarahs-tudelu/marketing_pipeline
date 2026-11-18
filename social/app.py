@@ -79,6 +79,10 @@ from .rights import RIGHTS, owner_value, rights_label, usage_rights
 from .scheduler import schedule
 from .storage import ingest, storage
 from .upload_errors import describe_upload_error, upload_error_details
+from .usage import PERIODS as USAGE_PERIODS
+from .usage import dashboard as usage_dashboard
+from .usage import flush as flush_usage
+from .usage import sync as sync_usage
 from .video_rules import MUSIC_TAG, has_sound, music_tracks
 
 
@@ -96,6 +100,31 @@ class DraftInput(BaseModel):
 MAX_IDEA_UPLOADS = 6
 
 
+def money(value):
+    """$1,234 / $12.34 / $0.042, or a dash when unknown."""
+    if value is None:
+        return "—"
+    if abs(value) >= 1000:
+        return f"${value:,.0f}"
+    if abs(value) >= 1 or value == 0:
+        return f"${value:,.2f}"
+    return f"${value:.3f}"
+
+
+def compact(value):
+    """1,284 / 12.9K / 4.2M."""
+    if value is None:
+        return "—"
+    for size, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (10_000, "K")):
+        if abs(value) >= size:
+            return f"{value / size:.1f}".rstrip("0").rstrip(".") + suffix
+    return f"{value:,.0f}"
+
+
+def percent(value, digits=1):
+    return "—" if value is None else f"{value * 100:.{digits}f}%"
+
+
 def create_app(settings=None):
     settings = settings or get_settings()
     engine = make_engine(settings.database_dsn)
@@ -104,6 +133,9 @@ def create_app(settings=None):
     templates.env.filters["platform"] = lambda name: {"linkedin": "LinkedIn", "x": "X", "tiktok": "TikTok"}.get(
         name, str(name).title()
     )
+    templates.env.filters["money"] = money
+    templates.env.filters["compact"] = compact
+    templates.env.filters["percent"] = percent
     static_dir = Path(__file__).parent / "static"
     static_version = hashlib.sha256(
         (static_dir / "studio.js").read_bytes() + (static_dir / "studio.css").read_bytes()
@@ -226,6 +258,10 @@ def create_app(settings=None):
     def db_session():
         with factory() as db:
             yield db
+            # Work the request didn't commit is discarded, as closing the session would; then the AI requests
+            # it made are saved for Settings → Usage.
+            db.rollback()
+            flush_usage(db)
 
     DB = Annotated[object, Depends(db_session)]
 
@@ -454,6 +490,7 @@ def create_app(settings=None):
                 "rights_choices": RIGHTS,
                 "rights_label": rights_label,
                 "analytics": report(db, settings) if view == "analytics" else None,
+                "usage": usage_dashboard(db, settings, usage_days(request)) if view == "usage" else None,
                 "media_jobs": media_jobs,
                 "media_job_posts": media_job_posts,
                 "media_campaigns": db.scalars(
@@ -482,9 +519,23 @@ def create_app(settings=None):
             "media-queue",
             "media-studio",
             "automation",
+            "usage",
         }:
             raise HTTPException(404)
+        if view == "usage":
+            flush_usage(db)  # Show requests made moments ago.
         return page(request, db, view)
+
+    def usage_days(request):
+        days = request.query_params.get("days", "30")
+        return int(days) if days.isdigit() and int(days) in USAGE_PERIODS else 30
+
+    @app.post("/forms/usage/sync", dependencies=mutation)
+    async def refresh_usage(request: Request, db: DB):
+        days = str((await request.form()).get("days", "30"))
+        await run_in_threadpool(sync_usage, db, settings)
+        query = f"?days={days}" if days.isdigit() and int(days) in USAGE_PERIODS else ""
+        return RedirectResponse("/admin/usage" + query, status_code=303)
 
     @app.get("/admin/assets/{asset_id}/edit", response_class=HTMLResponse)
     def edit_media(asset_id: str, request: Request, db: DB):

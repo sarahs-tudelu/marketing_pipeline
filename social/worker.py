@@ -131,6 +131,13 @@ def run():
             next_run_time=now(),
         )
         from .media_search import describe_library
+        from .usage import tick as usage_tick
+
+        # Saves recorded AI requests, reads the providers' billed costs and backfills older Runway tasks.
+        scheduler.add_job(
+            usage_tick, "interval", seconds=settings.worker_interval_seconds,
+            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
+        )
 
         # Real library media gets a short description of what it shows, so idea searches can find it.
         scheduler.add_job(

@@ -95,6 +95,9 @@ def describe_library(factory, settings):
         if control and control.killed:
             return
         describe(db, settings, library_media(db, public=False), DESCRIBE_PER_TICK)
+        from .usage import flush
+
+        flush(db)
 
 
 def record(asset, settings):

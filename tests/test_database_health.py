@@ -23,7 +23,9 @@ def test_health_detects_unapplied_availability_migration_and_recovers(settings):
                 assert response.status_code == 503
                 assert "migration required" in response.json()["detail"]
                 assert schema_gaps(engine) == {
-                    "missing_tables": ["availability_checks", "post_availability", "post_reposts"],
+                    # Usage tables came later, with f9c2a1e7d340.
+                    "missing_tables": ["availability_checks", "post_availability", "post_reposts",
+                                       "provider_costs", "provider_syncs", "usage_records"],
                     # Added after the availability tables, by ace71117c001 (prompt account).
                     "missing_columns": {"posts": ["prompted_by", "prompted_by_label"]},
                 }

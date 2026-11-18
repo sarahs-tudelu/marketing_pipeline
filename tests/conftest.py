@@ -11,6 +11,16 @@ from social.pipeline import bootstrap, draft, generate
 from social.storage import ingest
 
 
+@pytest.fixture(autouse=True)
+def unsaved_usage():
+    """AI requests are recorded in memory until saved; no test sees another test's."""
+    from social import usage
+
+    usage.reset()
+    yield
+    usage.reset()
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(
