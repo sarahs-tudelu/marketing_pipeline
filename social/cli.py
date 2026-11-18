@@ -13,7 +13,11 @@ from .monitoring import setup_logging
 def main():
     parser = argparse.ArgumentParser(description="Tudelu official-API publishing")
     parser.add_argument(
-        "command", choices=["init", "seed", "demo", "worker", "analytics", "import-meta", "rotate-tokens"]
+        "command",
+        choices=["init", "seed", "demo", "worker", "analytics", "import-meta", "rotate-tokens", "import-campaigns"],
+    )
+    parser.add_argument(
+        "path", nargs="?", default="config/campaigns.yaml", help="Campaign file for import-campaigns"
     )
     args = parser.parse_args()
     settings = Settings()
@@ -53,6 +57,16 @@ def main():
                 settings.instagram_user_id,
             )
             print("Meta connections validated and encrypted.")
+        elif args.command == "import-campaigns":
+            from .campaigns import import_campaigns
+
+            try:
+                result = import_campaigns(db, settings, args.path)
+            except (OSError, ValueError) as exc:
+                raise SystemExit(f"Campaigns not imported: {exc}") from exc
+            print(json.dumps(result, indent=2))
+            if any(c["status"] == "failed" for c in result["campaigns"]):
+                raise SystemExit(1)
         elif args.command == "analytics":
             from .analytics import collect, report
 

@@ -1,0 +1,118 @@
+# Recurring campaigns for Tudelu's social accounts, saved with `tudelu import-campaigns`.
+#
+# Each entry is a Campaigns & advanced → Recurring campaign brief with the same fields. The import uses the
+# newest approved non-demo facts version (or `facts_version:` at the top of this file), saves every campaign
+# paused and skips names that already exist, so it is safe to run again after adding an entry. A saved
+# campaign keeps its brief and facts version; to change one, import it under a new name and pause the old
+# one. Enable each campaign in Campaigns & advanced when it
+# should start. A campaign spends only when AI_MODE=live, Automatic posts is on and every platform it lists
+# is live, connected and unpaused, so remove a platform here before importing if it won't be live soon.
+# Every batch makes one post per listed platform, and AI formats generate separate media for each.
+#
+# Together they cover the content mix: real proof, broad inspiration, non-promotional planning help, an
+# interior product in motion, outdoor living and commercial entrances for architects and contractors.
+# At these intervals they stay within each platform's target of one post a day: about 6-7 a week on LinkedIn,
+# Instagram and Facebook, and 3-4 on X, TikTok and Pinterest. Caps, windows and the promotional ratio
+# still apply, and a campaign waits while its previous batch is unpublished.
+#
+# Prompts set direction only. Captions take every factual claim from the approved facts for the campaign's
+# product (plus company facts), so keep claims, prices and performance language out of the prompts.
+# A prompt that names settings overrides the automatic use-case rotation; "Where Tudelü fits" names none.
+
+defaults:
+  rights: public
+  website: true
+
+campaigns:
+  # Proof: the company's own photos and videos of finished work, edited with standard tools only and never
+  # labelled as AI. Alternates video and photo posts; Pinterest needs Google Drive imports.
+  - campaign: Completed projects
+    operation: real
+    product: company
+    kind: mixed
+    platforms: [linkedin, facebook, instagram, pinterest]
+    duration: 20
+    interval_hours: 120
+    prompt: >-
+      Our own completed Tudelü installations, from the company's photos and videos. Open on the finished
+      structure in its real setting, then the details that show how it is made (joints, finishes, lighting),
+      and end on the space in use where the footage has it. Keep the real finishes' colors true. Present it
+      as a completed Tudelü project and describe only what the media shows: no invented location, client,
+      size, date or results.
+
+  # Reach: the always-on visual feed. Alternates real projects with AI inspiration that rotates through
+  # ten kinds of setting, eight creative directions and image and video formats (TikTok always gets video).
+  - campaign: Where Tudelü fits
+    operation: mixed
+    product: company
+    kind: mixed
+    platforms: [instagram, facebook, tiktok, pinterest]
+    duration: 15
+    interval_hours: 72
+    prompt: >-
+      One Tudelü system in one believable setting per post, so that over time the feed covers a wide range
+      of places and uses. Frame the structure at human scale in natural light, with the setting easy to
+      read and the system clearly the subject. Real project posts show our completed work; AI posts are
+      design inspiration for how a system could be used and are never described as a finished project.
+
+  # Authority: helpful, non-promotional planning advice drawn from the education facts. No sales pitch.
+  - campaign: Planning notes
+    operation: image
+    product: education
+    kind: non_promotional
+    platforms: [linkedin, facebook, x]
+    interval_hours: 96
+    prompt: >-
+      Practical planning notes for owners, architects and contractors before a project starts, one idea per
+      post: sketching a room both open and divided, recording site orientation and the hours a shaded space
+      will be used, why wind and snow requirements need site-specific assessment, matching canopy documents
+      to the configuration, and what a useful project brief brings together. Calm and helpful, never a sales
+      pitch. The image is a quiet editorial architectural scene that illustrates the idea, such as low sun
+      across a terrace or a large room part-way through being divided, with no text, numbers, diagrams or
+      labels in the frame.
+
+  # Interior product in motion: the MUTE partition retracting overhead, for hospitality, workplace and
+  # education interiors.
+  - campaign: "Rooms that change: MUTE partitions"
+    operation: video
+    product: partition_walls
+    kind: promotional
+    platforms: [linkedin, instagram, tiktok]
+    duration: 15
+    interval_hours: 120
+    prompt: >-
+      A motorized Tudelü MUTE partition dividing a large interior and then retracting overhead to open it
+      up again, with no floor track. Interior settings only: a conference or training room, a hotel
+      ballroom or event space, a classroom or multipurpose hall, an open-plan office, a generous living
+      space. Show the room divided and open, the partition's clean painted face, and the uninterrupted
+      floor where it stood. Calm, precise movement in soft daylight or warm interior light.
+
+  # Outdoor living: fixed-louver pergolas for homes and hospitality, shown through moving light and shade.
+  - campaign: "Shade through the day: pergolas"
+    operation: video
+    product: pergolas
+    kind: mixed
+    platforms: [instagram, facebook]
+    duration: 15
+    interval_hours: 120
+    prompt: >-
+      A Tudelü aluminum pergola with fixed louvers, seen as the light moves through the day: bands of shade
+      shifting across a terrace, a dining table or a lounge as the sun travels. The louvers stay fixed and
+      never rotate, open or retract. Settings: a family patio or backyard, a restaurant terrace, a hotel
+      pool deck, a rooftop terrace, a winery or garden venue. Clear, dry weather. Where it fits, integrated
+      lighting glows softly at dusk. Warm, unhurried and editorial.
+
+  # Commercial exteriors for the trade: architectural canopies at building entrances, for LinkedIn and X.
+  - campaign: "Arrivals: architectural canopies"
+    operation: image
+    product: canopies
+    kind: mixed
+    platforms: [linkedin, x]
+    interval_hours: 96
+    prompt: >-
+      Tudelü architectural canopies over the entrances of commercial and civic buildings: an office lobby
+      entrance, a storefront, a hotel arrival, a school or clinic entrance, a covered drop-off. Show the
+      canopy's slim prefinished aluminum profile and clean edges, and at dusk its integrated lighting.
+      Architectural photography with straight verticals and plain, unbranded facades without signage or
+      lettering, the canopy the hero of the composition. Aimed at architects, contractors and building
+      owners.
