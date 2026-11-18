@@ -8,7 +8,7 @@ from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
-from sqlalchemy import case, select, update
+from sqlalchemy import case, or_, select, update
 
 from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
 from .db import now, uid
@@ -1112,6 +1112,11 @@ def process_jobs(db, settings, provider=None):
     jobs = db.scalars(
         select(MediaJob)
         .where(MediaJob.state.in_(["queued", "submitting", "running", "rendering"]))
+        .where(or_(
+            MediaJob.state != "queued",
+            MediaJob.brief["runway_retry_at"].as_string().is_(None),
+            MediaJob.brief["runway_retry_at"].as_string() <= now().isoformat(),
+        ))
         .order_by(case((MediaJob.brief["workflow"].as_string() == "immediate", 0), else_=1), MediaJob.created_at)
         .limit(settings.media_jobs_per_tick)
     ).all()
@@ -1236,6 +1241,7 @@ def process_jobs(db, settings, provider=None):
                 if control.killed or account.paused:
                     continue
                 job.brief = job.brief | {"active_generation": phase}
+                job.brief = {k: v for k, v in job.brief.items() if k != "runway_retry_at"}
                 # Persist before the paid request; crash recovery never blindly re-submits.
                 claimed = db.execute(
                     update(MediaJob)

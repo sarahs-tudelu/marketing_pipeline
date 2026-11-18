@@ -52,6 +52,10 @@ run of attempts. Runway task failures (moderation, unusable references, internal
 errors) and ambiguous submissions are not retried automatically. Every attempt is a
 paid Runway task in live mode; set `MEDIA_AUTO_RETRIES=0` to turn them off.
 
+Music/audio tasks have a separate bounded recovery for `THIRD_PARTY.RATE_LIMITED`:
+[delayed music retries](runway.md#recovery) keep completed clips and wait before
+submitting another audio task. Other provider failures still need manual recovery.
+
 Structured scene prompts describe only the selected configuration. A two-post canopy
 does not receive generic instructions about hanger rods; rod-supported scenes retain
 the owner's above-roof orientation cue. The complete product requirements and setting

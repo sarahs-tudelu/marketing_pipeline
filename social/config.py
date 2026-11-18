@@ -97,7 +97,8 @@ class Settings(BaseSettings):
     runway_task_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
     media_jobs_per_tick: int = Field(default=4, ge=1, le=20)
     # Automatic paid retries when generated media fails a quality review: corrected scenes per clip,
-    # and replacements in a row for a post held by the visual check. 0 turns them off.
+    # replacements in a row for a post held by the visual check, and delayed music rate-limit retries.
+    # Each has its own bounded count. 0 turns them off.
     media_auto_retries: int = Field(default=3, ge=0, le=10)
     video_provider_url: str = ""
     video_provider_key: SecretStr = SecretStr("")

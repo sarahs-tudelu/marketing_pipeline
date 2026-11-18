@@ -1,6 +1,7 @@
 """Plain-language reasons a post or media job stopped, and which step can be redone."""
 
 import re
+from datetime import timedelta
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -15,6 +16,8 @@ CAPTION_FAILED = "Caption generation rejected: "
 TASK_FAILED = "Runway couldn't make "
 LEGACY_TASK_FAILED = "Runway task failed or was cancelled"
 MUSIC_PROMPT_LIMIT = 1800
+RATE_LIMIT_CODE = "THIRD_PARTY.RATE_LIMITED"
+MUSIC_RETRY_BASE_SECONDS = 120
 
 # validate_parts() messages, reworded for someone reading the post page.
 CAPTION_REASONS = {
@@ -253,6 +256,11 @@ def runway_failure(job, task):
         why = "The task was cancelled in Runway. Generate it again below."
     elif "SAFETY" in upper or "MODERATION" in upper:
         why = "Runway's content moderation declined it. Change the prompt below, then generate it again."
+    elif upper == RATE_LIMIT_CODE:
+        why = (
+            "Runway's upstream provider is rate limiting requests. Wait before retrying this step; "
+            "the prompt does not need to change for this error. Saved clips are kept."
+        )
     elif "INTERNAL" in upper:
         why = "Runway had an internal error. Generate it again to try a new task."
     elif upper.startswith("ASSET") or "INPUT" in upper:
@@ -269,7 +277,28 @@ def retry_option(job):
     step = pending_step(job) if job.state == "failed" else None
     if not step or not step["prompt"] or (job.task_id and not task_failed(job)):
         return None
+    if rate_limited_music(job):
+        step = step | {"rate_limited": True}
     return step
+
+
+def rate_limited_music(job):
+    step = pending_step(job)
+    return bool(
+        task_failed(job) and step and step["kind"] == "music"
+        and "The task was cancelled in Runway." not in job.error
+        and re.search(r"Runway code: " + re.escape(RATE_LIMIT_CODE) + r"\.(?:\s|$)", job.error)
+    )
+
+
+def automatic_music_retries(job):
+    """Consecutive provider-rate retries since the last explicit user attempt."""
+    count = 0
+    for failed in reversed(job.brief.get("failed_tasks", [])):
+        if not failed.get("automatic") or failed.get("failure_code") != RATE_LIMIT_CODE:
+            break
+        count += 1
+    return count
 
 
 def automatic_scene_retries(job, index):
@@ -282,9 +311,18 @@ def automatic_scene_retries(job, index):
 
 
 def auto_retry(db, settings, job):
-    """Make a scene the quality review rejected again automatically, carrying the review's findings, up to
-    MEDIA_AUTO_RETRIES times per clip. Runway task failures and other errors still wait for a person."""
-    if job.state != "failed" or job.task_id or not settings.media_auto_retries:
+    """Bounded scene corrections and delayed music retries for a definitive upstream rate-limit failure."""
+    if job.state != "failed" or not settings.media_auto_retries:
+        return False
+    if rate_limited_music(job):
+        if automatic_music_retries(job) >= settings.media_auto_retries:
+            if "Automatic music retries exhausted" not in job.error:
+                job.error += " Automatic music retries exhausted. Wait for the provider to recover, then retry the music."
+                db.commit()
+            return False
+        retry_step(db, job, pending_step(job)["prompt"], automatic=True)
+        return True
+    if job.task_id:
         return False
     step = retry_option(job)
     if not step or step["kind"] != "scene" or not step["scene_reasons"]:
@@ -328,9 +366,16 @@ def retry_step(db, job, prompt, *, automatic=False):
     if too_long:
         raise ValueError(f"Keep the prompt under {step['limit']} characters")
     brief = dict(job.brief)
+    brief.pop("runway_retry_at", None)
     failed = {"task_id": job.task_id, "stage": job.stage, "error": job.error[:500], "at": now().isoformat()}
     if automatic:
         failed["automatic"] = True
+    if rate_limited_music(job):
+        delay = MUSIC_RETRY_BASE_SECONDS
+        if automatic:
+            delay = min(delay * 2 ** automatic_music_retries(job), 1800)
+        brief["runway_retry_at"] = (now() + timedelta(seconds=delay)).isoformat()
+        failed.update(failure_code=RATE_LIMIT_CODE, retry_delay_seconds=delay)
     if step["kind"] == "scene":
         from .reference_grounding import current_plan
 

@@ -154,4 +154,22 @@ Runway submissions checkpoint `submitting` before the paid call, then save the r
 
 Use **Resume saved task / output** after correcting a download/storage/configuration problem. Known tasks are polled again without another paid submission. An interrupted/ambiguous submission becomes **uncertain** and is never automatically retried; recover the original task ID from Runway and use **Recover original task**. Do not create another job until the first submission is reconciled. When Runway reports a task as failed or cancelled, In progress says which step failed (clip N, the video, the image or the music) and why, from Runway's failure code: content moderation, an unusable reference, or an internal error. **Generate … again** submits only that step, with an editable prompt and a new seed; clips already saved are kept. It is also offered when Runway rejected a submission. Resume is not offered for a failed task, because polling it again cannot succeed. Queued or failed work can be removed from the local queue; this does not cancel or refund an already accepted Runway task.
 
+**Music provider rate limits.** A terminal music/audio task failure with code
+`THIRD_PARTY.RATE_LIMITED` now queues a new attempt after a delay: 2, 4 and 8 minutes
+with the default `MEDIA_AUTO_RETRIES=3`. Raising that setting allows more attempts,
+with delays capped at 30 minutes; `0` disables automatic retries. This limit is
+separate from scene-quality corrections. The job retains completed video clips,
+their prompts and task history, and retries only audio. The queue shows the earliest
+retry time. The delay survives worker restarts and does not prevent other ready jobs
+from running. After the limit, the job stays failed for manual recovery.
+
+For an already-failed job from an older build, use **Generate the music again** once
+after updating web/worker. That explicit retry waits two minutes and starts a fresh
+bounded retry sequence. The music prompt can remain unchanged. No database migration
+is needed. No provider or model is substituted. Other terminal failure codes, HTTP
+errors and ambiguous submissions retain their existing recovery behavior. A new
+generation can incur Runway charges; this delay does not guarantee capacity has
+recovered. Runway's [task-failure guidance](https://docs.dev.runwayml.com/errors/task-failures/)
+recommends delaying retries for temporary upstream failures.
+
 The authenticated, CSRF-protected API also exposes `POST /api/media-jobs` with a `CreativeBrief` JSON object and `GET /api/media-jobs` for status. Neither endpoint returns credentials or expiring signed output URLs.
