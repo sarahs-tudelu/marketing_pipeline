@@ -93,7 +93,7 @@ def test_reported_idea_plans_a_30_second_multi_product_video(db, settings, facts
 def test_live_planner_cannot_turn_an_explicit_video_request_into_an_image(db, settings, facts, monkeypatch):
     seen = {}
 
-    def claude(self, system, context):
+    def claude(self, system, context, **kwargs):
         seen.update(context)
         return {
             "title": "Introducing Tudelu",
@@ -122,7 +122,7 @@ def test_live_planner_cannot_turn_an_explicit_video_request_into_an_image(db, se
     assert plan.available_systems == ["Pergolas", "Canopies"]
     assert any("Gazebos" in n for n in plan.notes) and any("first 9" in n for n in plan.notes)
 
-    monkeypatch.setattr("social.providers.Claude.call", lambda *args: {"operation": "sculpture"})
+    monkeypatch.setattr("social.providers.Claude.call", lambda *args, **kwargs: {"operation": "sculpture"})
     with pytest.raises(ProviderError, match="nothing was generated"):
         plan_idea(db, settings, idea=IDEA, facts_id=facts.id)
 
@@ -285,7 +285,7 @@ def test_live_writer_returns_one_grounded_prompt_per_clip(db, settings, facts, l
     settings.ai_mode = "live"
     replies = []
 
-    def claude(self, system, context):
+    def claude(self, system, context, **kwargs):
         replies.append(context)
         return reply
 
@@ -449,7 +449,7 @@ def test_planner_fits_the_idea_to_a_configuration_and_lists_only_real_conflicts(
 ):
     seen = {}
 
-    def claude(self, system, context):
+    def claude(self, system, context, **kwargs):
         seen.update(system=system, context=context)
         return {
             "title": "Rainy dinner",

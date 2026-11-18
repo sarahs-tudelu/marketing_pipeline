@@ -70,6 +70,12 @@ _REAL = re.compile(
     r"progress (?:photos?|shots?|videos?))\b",
     re.I,
 )
+_REAL_NEGATED = re.compile(
+    r"\b(?:not|never|without|avoid|instead of|rather than|do not|don['’]t)\s+"
+    r"(?:(?:a|an|the|any|use|using|show|showing|include|including|have|of|from|"
+    r"photos?|videos?|footage|images?|pictures?|our|my|these|those)\s+){0,6}$",
+    re.I,
+)
 _EDITORIAL = re.compile(
     r"\b(editorial|inspiration|inspiring|behind the scenes|educational|how-to|tips?|non-?promotional)\b", re.I
 )
@@ -262,7 +268,9 @@ def read_signals(idea, catalog=()):
         "end_card": bool(_LOGO.search(text)),
         "all_products": bool(_ALL_PRODUCTS.search(text)),
         "editorial": bool(_EDITORIAL.search(text)),
-        "real": bool(_REAL.search(text)),
+        # A mention such as "design inspiration, not a finished project" isn't a request for originals.
+        # Evaluate each mention separately so "use our photos, not our installation footage" stays real.
+        "real": any(not _REAL_NEGATED.search(text[:match.start()]) for match in _REAL.finditer(text)),
         "settings": list(dict.fromkeys(settings))[:MAX_CLIPS],
         "systems": list(dict.fromkeys(systems))[:MAX_CLIPS],
     }
