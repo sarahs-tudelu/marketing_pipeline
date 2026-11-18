@@ -9,10 +9,11 @@ import httpx
 from sqlalchemy import select
 
 from ..config import profiles
+from ..connections import account_connected
 from ..gate import check_disclosure, media_errors, weighted_length
-from ..models import Account, Asset, Control, RequestRecord
+from ..models import Account, Control, RequestRecord
 from ..security import Vault, redact, safe_url
-from ..storage import storage
+from ..storage import load_assets, storage
 
 
 class PublishError(Exception):
@@ -97,46 +98,21 @@ class BaseAdapter:
         self.dry = not self.connected() or not settings.wants_live(self.platform, self.account)
 
     def connected(self):
-        required = bool(
-            self.account.validated_at
-            and self.credentials.get("access_token")
-            and self.s.app_base_url
-            and self.s.media_base_url
-        )
-        if self.platform == "linkedin":
-            required = required and bool(
-                self.s.linkedin_organization_id
-                and self.s.linkedin_client_id
-                and self.s.linkedin_client_secret.get_secret_value()
-            )
-        if self.platform == "x":
-            required = required and bool(self.s.x_client_id and self.s.x_client_secret.get_secret_value())
-        if self.platform == "tiktok":
-            required = required and bool(
-                self.s.tiktok_client_id and self.s.tiktok_client_secret.get_secret_value()
-            )
-            if self.s.tiktok_transfer == "url":
-                required = required and bool(self.s.tiktok_verified_url_prefix)
-        if self.platform == "pinterest":
-            required = required and bool(
-                self.s.pinterest_board_id
-                and self.s.pinterest_client_id
-                and self.s.pinterest_client_secret.get_secret_value()
-            )
-        return bool(required)
+        return account_connected(self.s, self.account, self.credentials)
 
     def headers(self):
         return {"Authorization": "Bearer " + self.credentials.get("access_token", "DRY_RUN")}
 
     def assets(self):
-        return [self.db.get(Asset, id) for id in self.post.asset_ids]
+        return load_assets(self.db, self.post.asset_ids)
 
     def validate_payload(self, post):
         profile = profiles(self.s)[self.platform]
-        errors = media_errors(self.assets(), profile, self.platform)
+        assets = self.assets()
+        errors = media_errors(assets, profile, self.platform)
         if not post.caption or weighted_length(post.caption, self.platform) > profile.max_length:
             errors.append("Invalid caption")
-        disclosure_ok, disclosure = check_disclosure(post, self.assets(), live=not self.dry, settings=self.s)
+        disclosure_ok, disclosure = check_disclosure(post, assets, live=not self.dry, settings=self.s)
         if not disclosure_ok:
             errors.extend(disclosure["reasons"])
         if errors:

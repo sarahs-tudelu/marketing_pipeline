@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import Counter, defaultdict, deque
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -82,13 +82,19 @@ def fetch(db, settings, post, client=None):
 
 
 def collect(db, settings):
-    for post in db.scalars(
-        select(Post).where(Post.status == "published", Post.published_at >= now() - timedelta(days=90))
-    ).all():
-        last = db.scalar(
-            select(Engagement).where(Engagement.post_id == post.id).order_by(Engagement.fetched_at.desc())
-        )
-        if last and last.fetched_at > now() - timedelta(hours=24):
+    at = now()
+    recently_collected = (
+        select(Engagement.id)
+        .where(Engagement.post_id == Post.id, Engagement.fetched_at > at - timedelta(hours=24))
+        .exists()
+    )
+    due = select(Post).where(
+        Post.status == "published", Post.published_at >= at - timedelta(days=90), ~recently_collected
+    )
+    for post_id in db.scalars(due.with_only_columns(Post.id)).all():
+        # The CLI and worker can both collect while a slow platform request is in flight.
+        post = db.scalar(due.where(Post.id == post_id))
+        if post is None:
             continue
         try:
             metrics = fetch(db, settings, post)
@@ -103,29 +109,52 @@ def collect(db, settings):
         db.commit()
 
 
+def published_with_metrics():
+    """One row per published post, including posts that have never been measured."""
+    latest_id = (
+        select(Engagement.id)
+        .where(Engagement.post_id == Post.id)
+        .order_by(Engagement.fetched_at.desc(), Engagement.id.desc())
+        .limit(1)
+        .correlate(Post)
+        .scalar_subquery()
+    )
+    return (
+        select(Post, Engagement)
+        .outerjoin(Engagement, Engagement.id == latest_id)
+        .where(Post.status == "published")
+    )
+
+
 def report(db, settings):
     rows = []
-    groups = defaultdict(list)
-    for post in db.scalars(select(Post).where(Post.status == "published").order_by(Post.published_at)):
-        last = db.scalar(
-            select(Engagement).where(Engagement.post_id == post.id).order_by(Engagement.fetched_at.desc())
+    measured = Counter()
+    recent_rates = defaultdict(lambda: deque(maxlen=10))
+    query = (
+        published_with_metrics()
+        .with_only_columns(
+            Post.id, Post.platform, Post.caption, Post.dry_run, Engagement.metrics, Engagement.simulated
         )
+        .order_by(Post.published_at)
+    )
+    for row in db.execute(query.execution_options(yield_per=500)):
         rows.append(
             {
-                "post_id": post.id,
-                "platform": post.platform,
-                "caption": post.caption,
-                "simulated": post.dry_run,
-                "metrics": last.metrics if last else None,
+                "post_id": row.id,
+                "platform": row.platform,
+                "caption": row.caption,
+                "simulated": row.dry_run,
+                "metrics": row.metrics,
             }
         )
-        if last and not last.simulated and not last.metrics.get("unavailable"):
-            groups[post.platform].append(last.metrics)
+        if row.metrics is not None and not row.simulated and not row.metrics.get("unavailable"):
+            measured[row.platform] += 1
+            rate = engagement_rate(row.metrics)
+            if rate is not None:
+                recent_rates[row.platform].append(rate)
     recommendations = []
     for platform, profile in profiles(settings).items():
-        count = len(groups[platform])
-        rates = [engagement_rate(m) for m in groups[platform]]
-        rates = [r for r in rates if r is not None]
+        rates = list(recent_rates[platform])
         if len(rates) < 10:
             suggestion = (
                 "Keep current cadence; fewer than 10 live posts have comparable views and engagement."
@@ -142,7 +171,7 @@ def report(db, settings):
         recommendations.append(
             {
                 "platform": platform,
-                "measured_posts": count,
+                "measured_posts": measured[platform],
                 "hard_cap": profile.hard_cap,
                 "suggestion": suggestion,
                 "automatically_applied": False,

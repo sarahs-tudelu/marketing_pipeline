@@ -27,7 +27,7 @@ import yaml
 from sqlalchemy import delete, select
 
 from .db import now
-from .models import Engagement, MediaJob, Post, ProviderCost, ProviderSync, UsageRecord
+from .models import MediaJob, Post, ProviderCost, ProviderSync, UsageRecord
 from .provider_errors import ProviderError
 
 PROVIDERS = ("runway", "openai", "anthropic")
@@ -554,17 +554,9 @@ def tick(factory, settings):
 # The dashboard ----------------------------------------------------------------------------------------
 
 
-def _latest_metrics(db, post_ids):
-    latest = {}
-    if post_ids:
-        for row in db.scalars(select(Engagement).where(Engagement.post_id.in_(post_ids)).order_by(Engagement.fetched_at)):
-            latest[row.post_id] = row
-    return latest
-
-
 def dashboard(db, settings, days=30):
     """Everything Settings → Usage shows for the last `days` days."""
-    from .analytics import reach
+    from .analytics import published_with_metrics, reach
 
     days = days if days in PERIODS else 30
     at = now()
@@ -574,16 +566,29 @@ def dashboard(db, settings, days=30):
     billed_rows = db.scalars(select(ProviderCost).where(ProviderCost.day >= before.date())).all()
     syncs = {s.provider: s for s in db.scalars(select(ProviderSync)).all()}
     job_ids = {r.media_job_id for r in current if r.media_job_id}
-    jobs = {j.id: j for j in db.scalars(select(MediaJob).where(MediaJob.id.in_(job_ids))).all()} if job_ids else {}
+    job_posts = {}
+    if job_ids:
+        links = select(MediaJob.id, MediaJob.post_id).where(MediaJob.id.in_(job_ids))
+        job_posts = {job_id: post_id for job_id, post_id in db.execute(links)}
 
     def post_of(record):
-        job = jobs.get(record.media_job_id)
-        return record.post_id or (job.post_id if job else None)
+        return record.post_id or job_posts.get(record.media_job_id)
 
-    published = db.scalars(select(Post).where(Post.status == "published", Post.published_at >= since)).all()
-    wanted = {post_of(r) for r in current} | {p.id for p in published}
-    wanted.discard(None)
-    posts = {p.id: p for p in db.scalars(select(Post).where(Post.id.in_(wanted))).all()} if wanted else {}
+    posts = {}
+    live = []
+    metrics = {}
+    simulated = 0
+    for post, latest in db.execute(published_with_metrics().where(Post.published_at >= since)):
+        posts[post.id] = post
+        if post.dry_run:
+            simulated += 1
+        else:
+            live.append(post)
+            if latest is not None:
+                metrics[post.id] = latest
+    other_ids = {post_of(r) for r in current} - posts.keys() - {None}
+    if other_ids:
+        posts.update((p.id, p) for p in db.scalars(select(Post).where(Post.id.in_(other_ids))))
 
     def platform_of(record):
         post = posts.get(post_of(record))
@@ -645,8 +650,6 @@ def dashboard(db, settings, days=30):
     recorded_total = sum(r.cost_usd or 0 for r in current)
 
     # Performance of live posts published in the period.
-    live = [p for p in published if not p.dry_run]
-    metrics = _latest_metrics(db, [p.id for p in live])
     post_costs = defaultdict(float)
     post_lines = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))
     for r in current:
@@ -739,7 +742,7 @@ def dashboard(db, settings, days=30):
                            key=lambda row: -row["cost"]),
         "overall": overall,
         "published": len(live),
-        "simulated": len(published) - len(live),
+        "simulated": simulated,
         "cost_per_post": total / len(live) if live else None,
         "by_platform": by_platform,
         "kinds": kinds,

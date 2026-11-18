@@ -14,14 +14,14 @@ from .db import now, uid
 from .facts import Facts, active, caption_fact_ids, composed, content_digest, part_fact_ids, render
 from .image_provenance import verify_asset_metadata
 from .lifecycle import PostConflict, lock_post, transition
-from .models import Asset, CheckResult, FactSheet, Post
+from .models import CheckResult, FactSheet, Post
 from .motion import middle_second, still_clips, still_reason
 from .product_rules import PRODUCT_CONSTRAINTS_VERSION, current_constraints
 from .provenance import asset_source_error, asset_type, real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 from .security import public_url
-from .storage import storage
+from .storage import load_assets, storage
 from .video_rules import video_rule_errors
 
 URL_RE = re.compile(r"https?://[^\s<>]+")
@@ -148,7 +148,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
     providers = providers or Providers(settings)
     profile = profiles(settings)[post.platform]
     facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
-    assets = [db.get(Asset, id) for id in post.asset_ids]
+    assets = load_assets(db, post.asset_ids)
     run_id = uid()
     results = []
 

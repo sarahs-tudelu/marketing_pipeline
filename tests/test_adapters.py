@@ -172,7 +172,7 @@ def test_facebook_company_reel_is_not_labeled_ai(db, settings, assets, reel_byte
     assert finishes[0]["is_ai_generated"] == "false"
 
 
-def test_facebook_reel_waits_for_upload_and_rejects_processing_errors(db, settings, assets, reel_bytes):
+def test_facebook_reel_waits_for_upload(db, settings, assets, reel_bytes):
     post = prepared(db, settings, assets, "facebook", reel_bytes, ai=True)
     uploading = {"video_status": "uploading", "uploading_phase": {"status": "in_progress"}}
     statuses, finishes, seen = [uploading, COMPLETE], [], []
@@ -184,16 +184,18 @@ def test_facebook_reel_waits_for_upload_and_rejects_processing_errors(db, settin
     assert len(finishes) == 1
     assert len([r for r in seen if r.url.host == "rupload.facebook.com"]) == 1
 
-    other = prepared(db, settings, assets, "facebook", reel_bytes, ai=True)
+
+def test_facebook_reel_rejects_processing_errors(db, settings, assets, reel_bytes):
+    post = prepared(db, settings, assets, "facebook", reel_bytes, ai=True)
     failed = {
         "video_status": "processing",
         "uploading_phase": {"status": "complete"},
         "processing_phase": {"status": "error", "error": {"message": "Resolution too low."}},
     }
     finishes = []
-    adapter = live_facebook(db, settings, other, reel_api(reel_bytes, [failed], finishes, []))
+    adapter = live_facebook(db, settings, post, reel_api(reel_bytes, [failed], finishes, []))
     with pytest.raises(PublishError, match="540x960") as error:
-        adapter.publish(other, other.idempotency_key)
+        adapter.publish(post, post.idempotency_key)
     assert error.value.kind == "validation" and not finishes
 
 

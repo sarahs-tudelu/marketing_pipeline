@@ -8,7 +8,6 @@ from test_real_ideas import plan_form
 from social.app import create_app
 from social.idea_plan import read_signals
 
-
 ILLUSTRATION = (
     "Create a tasteful watercolor-style illustration of a white pergola shading a small garden seating "
     "area. Keep the actual pergola structure believable. Lots of greenery, quiet afternoon mood, no "

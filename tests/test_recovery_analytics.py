@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from social.adapters import ADAPTERS
 from social.analytics import collect, fetch, report
@@ -175,3 +175,31 @@ def test_demo_analytics_explicitly_simulated_and_daily_deduped(db, settings, pos
     collect(db, settings)
     rows = db.scalars(select(Engagement)).all()
     assert len(rows) == 1 and rows[0].simulated and rows[0].metrics["simulated"]
+
+
+def test_report_reads_only_the_latest_measurement_and_keeps_unmeasured_posts(db, settings, post):
+    at = now()
+    post.status, post.published_at, post.dry_run = "published", at, False
+    unmeasured = Post(
+        platform=post.platform, campaign="New post", facts_id=post.facts_id, asset_ids=post.asset_ids,
+        status="published", published_at=at, dry_run=False,
+    )
+    db.add(unmeasured)
+    for when, views in [(at, 10), (at, 20), (at - timedelta(days=1), 5)]:
+        db.add(Engagement(post_id=post.id, fetched_at=when, metrics={"views": views}))
+    db.commit()
+
+    reads = []
+
+    @event.listens_for(db, "do_orm_execute")
+    def count_reads(state):
+        if state.is_select:
+            reads.append(state.statement)
+
+    result = report(db, settings)
+    assert len(reads) == 1
+    assert {row["post_id"]: row["metrics"] for row in result["posts"]} == {
+        post.id: {"views": 20},
+        unmeasured.id: None,
+    }
+    assert next(r for r in result["recommendations"] if r["platform"] == post.platform)["measured_posts"] == 1

@@ -2,6 +2,8 @@ import base64
 import hashlib
 import io
 import json
+from collections.abc import Sequence
+from itertools import batched
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote
@@ -10,11 +12,23 @@ import av
 import boto3
 from botocore.config import Config
 from PIL import Image
+from sqlalchemy import select
 
 from .image_provenance import inspect_xmp
 from .models import Asset
 from .provenance import source_error
 from .rights import owner_value, usage_rights
+
+
+def load_assets(db, asset_ids: Sequence[str]) -> list[Asset | None]:
+    """Keep the requested order, duplicates, and a None for each missing asset."""
+    if len(asset_ids) == 1:
+        return [db.get(Asset, asset_ids[0])]
+    by_id = {}
+    for batch in batched(dict.fromkeys(asset_ids), 500):
+        rows = db.scalars(select(Asset).where(Asset.id.in_(batch)))
+        by_id.update((asset.id, asset) for asset in rows)
+    return [by_id.get(asset_id) for asset_id in asset_ids]
 
 
 class MediaStore(Protocol):

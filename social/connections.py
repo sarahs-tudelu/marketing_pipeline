@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 import httpx
 from sqlalchemy import select, update
 
+from .config import PLATFORMS
 from .db import now
 from .models import Account, OAuthState
 from .monitoring import alert
@@ -44,6 +45,42 @@ def ready(settings, platform):
         and settings.token_encryption_key.get_secret_value()
         and (platform != "pinterest" or settings.pinterest_board_id)
     )
+
+
+def live_controls_available(settings):
+    return bool(
+        settings.auth_mode != "dev"
+        and settings.session_secret.get_secret_value()
+        and settings.token_encryption_key.get_secret_value()
+    )
+
+
+def account_connected(settings, account, credentials=None):
+    """Check the stored account and platform configuration without creating an API client."""
+    platform = account.platform
+    if platform not in PLATFORMS:
+        return False
+    if credentials is None:
+        credentials = Vault(settings).decrypt(account.credentials) if account.credentials else {}
+    if not (
+        account.validated_at
+        and credentials.get("access_token")
+        and settings.app_base_url
+        and settings.media_base_url
+    ):
+        return False
+    if platform in OAUTH and not (
+        getattr(settings, platform + "_client_id")
+        and getattr(settings, platform + "_client_secret").get_secret_value()
+    ):
+        return False
+    if platform == "linkedin":
+        return bool(settings.linkedin_organization_id)
+    if platform == "pinterest":
+        return bool(settings.pinterest_board_id)
+    if platform == "tiktok" and settings.tiktok_transfer == "url":
+        return bool(settings.tiktok_verified_url_prefix)
+    return True
 
 
 def requested_scopes(settings, platform):

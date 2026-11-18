@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from social.asset_edit import AssetEditConflict, edit_asset, form_values, revision
+from social.asset_edit import AssetEditConflict, descendants, edit_asset, form_values, revision
 from social.db import now
 from social.facts import content_digest
 from social.gate import evaluate, run_gate
@@ -45,6 +45,32 @@ def save(db, asset, **changes):
     )
     db.commit()
     return result
+
+
+def test_descendants_follow_shared_sources_and_cycles_once(db):
+    parents = {
+        "original": ["composite"],
+        "crop": ["original"],
+        "audio": [],
+        "composite": ["crop", "audio"],
+        "thumbnail": ["original", "composite"],
+        "other": [],
+    }
+    for name, sources in parents.items():
+        db.add(
+            Asset(
+                id=name,
+                source="company",
+                original_name=name,
+                storage_key=name,
+                checksum=name,
+                rights="public",
+                media={},
+                tags={"source_asset_ids": sources},
+            )
+        )
+    assert descendants(db, "original") == {"original", "crop", "composite", "thumbnail"}
+    assert descendants(db, "other") == {"other"}
 
 
 def test_permissions_and_owner_are_editable_without_rewriting_media(db, settings, assets):

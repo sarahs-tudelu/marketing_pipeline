@@ -8,7 +8,14 @@ from pydantic import SecretStr
 
 from social.providers import Claude, OpenAI
 from social.seed import seed_media
-from social.storage import ingest, storage, watch_folder
+from social.storage import ingest, load_assets, storage, watch_folder
+
+
+def test_load_assets_preserves_order_duplicates_and_missing_ids_across_batches(db, assets, house_logo):
+    photo = assets[0]
+    missing = [f"missing-{i}" for i in range(500)]
+    ids = [house_logo.id, *missing, photo.id, house_logo.id]
+    assert load_assets(db, ids) == [house_logo, *([None] * len(missing)), photo, house_logo]
 
 
 def test_openai_generation_and_vision_preserve_original_bytes(db, settings, assets):

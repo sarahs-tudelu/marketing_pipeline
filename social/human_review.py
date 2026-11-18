@@ -4,13 +4,14 @@ from sqlalchemy import select, update
 
 from .facts import content_digest
 from .lifecycle import lock_post, transition
-from .models import Account, Asset, Control, RequestRecord
+from .models import Account, Control, RequestRecord
+from .storage import load_assets
 
 
 def human_approval_current(db, post):
     return not post.human_review_required or (
         bool(post.human_approved_digest)
-        and post.human_approved_digest == content_digest(post, [db.get(Asset, i) for i in post.asset_ids])
+        and post.human_approved_digest == content_digest(post, load_assets(db, post.asset_ids))
     )
 
 
@@ -44,7 +45,7 @@ def approve(db, settings, post, actor, reviewed_digest):
         raise ValueError("Run the automated checks first, then review the completed media and caption.")
     require_unpublished(db, post)
     require_no_replacement(db, post)
-    if not reviewed_digest or reviewed_digest != content_digest(post, [db.get(Asset, i) for i in post.asset_ids]):
+    if not reviewed_digest or reviewed_digest != content_digest(post, load_assets(db, post.asset_ids)):
         raise ValueError("This post changed since you opened it. Refresh and review the current media and caption.")
     transition(db, post, "generated", "Human requested approval; rerunning checks", actor)
     return run_gate(db, settings, post, human_actor=actor,

@@ -13,33 +13,27 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import connections, crm_access
-from .clip_replace import clip_options, needs_runway_music, replace_part
+from .clip_replace import needs_runway_music, replace_part
 from .config import PLATFORMS, REAL_MEDIA_ONLY, get_settings, profiles
 from .db import make_engine, schema_gaps, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
 from .idea_plan import (
-    END_CARD_SECONDS,
-    FORMATS,
     MAX_CLIPS,
-    STYLES,
     IdeaPlan,
     Shot,
     default_title,
     logo_assets,
     plan_idea,
-    plan_summary,
     read_signals,
-    shot_seconds,
     uploaded_plan,
-    work_summary,
 )
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
 from .media_studio import (
@@ -54,17 +48,12 @@ from .media_studio import (
 )
 from .models import (
     Account,
-    Alert,
     Asset,
-    CheckResult,
     Control,
     FactSheet,
     MediaCampaign,
     MediaJob,
     Post,
-    PostRetry,
-    RequestRecord,
-    Transition,
 )
 from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, delete_draft, draft, generate, rewrite_caption
@@ -72,18 +61,25 @@ from .provenance import real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 from .real_edit import plan_real_idea
-from .recovery import held_reason, retry_option, retry_step, task_failed
-from .retries import block_reason as retry_block_reason
-from .retries import original_post, retry_post
-from .rights import RIGHTS, owner_value, rights_label, usage_rights
+from .recovery import retry_step, task_failed
+from .retries import retry_post
+from .rights import owner_value, usage_rights
 from .scheduler import schedule
-from .storage import ingest, storage
+from .storage import ingest, load_assets, storage
+from .studio_pages import (
+    MAX_IDEA_UPLOADS,
+    availability_by_post,
+    page_context,
+    post_context,
+    post_revision,
+    recent_media_jobs,
+    recent_posts,
+)
 from .upload_errors import describe_upload_error, upload_error_details
 from .usage import PERIODS as USAGE_PERIODS
-from .usage import dashboard as usage_dashboard
 from .usage import flush as flush_usage
 from .usage import sync as sync_usage
-from .video_rules import MUSIC_TAG, has_sound, music_tracks
+from .video_rules import MUSIC_TAG, has_sound
 
 
 class DraftInput(BaseModel):
@@ -93,11 +89,6 @@ class DraftInput(BaseModel):
     facts_id: str
     product: str = "company"
     kind: str = "promotional"
-
-
-# One photo or video and a soundtrack to post as they are, or up to three images and three audio
-# references for new AI media.
-MAX_IDEA_UPLOADS = 6
 
 
 def money(value):
@@ -312,193 +303,20 @@ def create_app(settings=None):
             )
         return {"status": "ok"}
 
-    def post_revision(db, post_id):
-        from .models import AvailabilityCheck
-
-        return (db.scalar(select(func.max(Transition.id)).where(Transition.post_id == post_id)) or 0) + (
-            db.scalar(select(func.max(AvailabilityCheck.id)).where(AvailabilityCheck.post_id == post_id)) or 0)
-
-    def page(
-        request,
-        db,
-        view,
-        post_id=None,
-        *,
-        error_message="",
-        asset_form=None,
-        upload_form=None,
-        bucket_form=None,
-        drive_form=None,
-        editing_asset_id=None,
-        media_edit_values=None,
-        idea_form=None,
-        plan=None,
-        post_busy=None,
-        status_code=200,
-    ):
+    def page(request, db, view, post=None, *, error_message="", post_busy=False, status_code=200, **form_values):
         request.session.setdefault("csrf", secrets.token_urlsafe(32))
         request.session.setdefault("browser_nonce", secrets.token_urlsafe(32))
-        from .adapters import ADAPTERS
-        from .asset_edit import form_values as asset_edit_values
-        from .availability import LABELS
-        from .drive_import import panel as drive_panel
-        from .facts import content_digest
-        from .models import AssetEdit, AvailabilityCheck, PostAvailability
-        from .reposts import existing as existing_repost
-        from .reposts import sources as repost_sources
-
-        editing_asset = db.get(Asset, editing_asset_id) if editing_asset_id else None
-
-        accounts = db.scalars(select(Account)).all()
-        state = []
-        for account in accounts:
-            a = ADAPTERS[account.platform](settings, db, None)
-            state.append(
-                {
-                    "account": account,
-                    "connected": a.connected(),
-                    "dry": a.dry,
-                    "oauth_ready": connections.ready(settings, account.platform),
-                    "live_enabled": settings.wants_live(account.platform, account),
-                    "live_available": settings.auth_mode != "dev" and bool(settings.session_secret.get_secret_value()) and bool(settings.token_encryption_key.get_secret_value()),
-                }
-            )
-        post = db.get(Post, post_id) if post_id else None
-        retry_existing = db.get(PostRetry, post.id) if post and post.status == "failed" else None
-        post_query = select(Post).where(Post.status != "deleted")
-        if view == "queues":
-            post_query = post_query.where(
-                Post.status.in_(["held", "awaiting_review", "awaiting_manual", "failed"])
-                | ((Post.status == "published") & Post.id.in_(select(PostAvailability.post_id).where(
-                    PostAvailability.state.in_(["unavailable", "unknown"]))))
-            )
-        if request.state.editor:
-            post_query = post_query.where(Post.prompted_by == request.state.actor)
-        posts = db.scalars(post_query.order_by(Post.created_at.desc()).limit(200)).all()
-        from .analytics import report
-
-        media_jobs = db.scalars(select(MediaJob).where(
-            (MediaJob.post_id.is_(None)) | ~MediaJob.post_id.in_(select(Post.id).where(Post.status == "deleted"))
-        ).order_by(MediaJob.created_at.desc()).limit(100)).all() if view == "media-queue" else []
-        media_job_posts = dict(db.execute(select(Post.id, Post.status).where(Post.id.in_([j.post_id for j in media_jobs if j.post_id]))).all())
-        active_jobs = db.scalar(
-            select(func.count(MediaJob.id)).where(
-                MediaJob.state.in_(["planned", "queued", "submitting", "running", "rendering"])
-            )
-        )
-        assets = db.scalars(select(Asset).order_by(Asset.created_at.desc())).all()
-        if request.state.editor:
-            assets = [a for a in assets if crm_access.editor_asset(a, request.state.actor)]
-        facts = db.scalars(select(FactSheet).order_by(FactSheet.created_at.desc())).all()
-        idea_form = idea_form or {}
-        if view == "create" and not idea_form and (source_id := request.query_params.get("from_post")):
-            old = db.get(Post, source_id)
-            if not old:
-                raise HTTPException(404)
-            from .clip_replace import source_job
-
-            if request.state.editor and old.prompted_by != request.state.actor:
-                raise HTTPException(404)
-            source = source_job(db, old)
-            brief = source.brief if source else {}
-            idea_form = {"prompt": brief.get("prompt", old.campaign), "platforms": [old.platform], "product": old.product, "kind": old.kind, "rights": brief.get("rights", "public"), "owner": brief.get("owner", ""), "reference_ids": brief.get("reference_ids", old.asset_ids if not source else [])}
-        default_facts = next((f.id for f in facts if not f.document.get("demo_only")), facts[0].id if facts else "")
+        context = page_context(request, db, settings, view, **form_values)
+        if post is not None:
+            context.update(post_context(db, settings, post, editor=request.state.editor))
+            if not request.state.editor:
+                context["post_busy"] = post_busy or post.status == "publishing" or post_processing(engine, post.id)
+        context.update(csrf=request.session["csrf"], static_version=static_version, error_message=error_message)
         return templates.TemplateResponse(
             request=request,
             name="editor.html" if request.state.editor else "studio.html",
             status_code=status_code,
-            context={
-                "view": view,
-                "editor": request.state.editor,
-                "my_jobs": db.scalars(select(MediaJob).where(
-                    MediaJob.brief["prompted_by"].as_string() == request.state.actor, MediaJob.post_id.is_(None)
-                ).order_by(MediaJob.created_at.desc()).limit(100)).all() if request.state.editor and view == "create" else [],
-                "static_version": static_version,
-                "error_message": error_message,
-                "asset_form": asset_form or {},
-                "upload_form": upload_form or {},
-                "bucket_form": bucket_form or {},
-                "drive": drive_panel(db, settings) if view == "assets" else None,
-                "drive_form": drive_form,
-                "editing_asset": editing_asset,
-                "media_edit_values": media_edit_values if media_edit_values is not None else (asset_edit_values(editing_asset) if editing_asset else {}),
-                "asset_history": db.scalars(select(AssetEdit).where(AssetEdit.asset_id == editing_asset_id).order_by(AssetEdit.created_at.desc(), AssetEdit.id.desc()).limit(30)).all() if editing_asset else [],
-                "media_base_url": (settings.media_base_url or "/media").rstrip("/"),
-                "csrf": request.session["csrf"],
-                "posts": posts,
-                "post": post,
-                "availability_labels": LABELS,
-                "availability_by_post": {a.post_id: a for a in db.scalars(select(PostAvailability).where(PostAvailability.post_id.in_([p.id for p in posts])))},
-                "availability": db.get(PostAvailability, post.id) if post else None,
-                "availability_history": db.scalars(select(AvailabilityCheck).where(AvailabilityCheck.post_id == post.id).order_by(AvailabilityCheck.id.desc()).limit(20)).all() if post else [],
-                "repost_existing": existing_repost(db, post) if post and post.status == "published" else None,
-                "repost_sources": repost_sources(db, post) if post else [],
-                "posting_assets": [db.get(Asset, i) for i in post.asset_ids if db.get(Asset, i)] if post else [],
-                "reviewed_digest": content_digest(post, [db.get(Asset, i) for i in post.asset_ids]) if post else "",
-                "post_wants_live": settings.wants_live(post.platform, db.get(Account, post.platform)) if post else False,
-                "retry_existing": retry_existing,
-                "clip_fix": clip_options(db, post) if post else None,
-                "held": held_reason(db, post) if post else None,
-                "finish_runway": needs_runway_music(db, post) if post and post.status == "held" else False,
-                "retry_steps": {j.id: step for j in media_jobs if (step := retry_option(j))},
-                "task_failed": {j.id for j in media_jobs if task_failed(j)},
-                "retry_original": original_post(db, post) if post else None,
-                "retry_block_reason": retry_block_reason(db, settings, post) if post and post.status == "failed" and not retry_existing else "",
-                "post_busy": ((post.status == "publishing" or post_processing(engine, post.id)) if post_busy is None else post_busy) if post else False,
-                "post_revision": post_revision(db, post.id) if post else 0,
-                "connections": state,
-                "any_live": any(not c["dry"] for c in state),
-                "control": db.get(Control, 1),
-                "automation_enabled": settings.automates_posts(db.get(Control, 1)),
-                "platforms": PLATFORMS,
-                "real_media_only": REAL_MEDIA_ONLY,
-                "assets": assets,
-                "facts": facts,
-                "default_facts_id": default_facts,
-                "active_jobs": active_jobs,
-                "idea_form": idea_form,
-                "idea_uploads": [a for i in idea_form.get("upload_ids", []) if (a := db.get(Asset, i))],
-                "max_idea_uploads": MAX_IDEA_UPLOADS,
-                "plan": plan,
-                "plan_assets": {a.id: a for a in assets} if view == "plan" else {},
-                "plan_summary": plan_summary(plan, idea_form.get("platforms", []), settings.runway_video_model) if plan else "",
-                "work_summary": work_summary(plan, idea_form.get("platforms", []), settings.runway_video_model) if plan else "",
-                "clip_seconds": shot_seconds(plan, settings.runway_video_model) if plan else [],
-                "formats": FORMATS,
-                "styles": STYLES,
-                "max_clips": MAX_CLIPS,
-                "end_card_seconds": END_CARD_SECONDS,
-                "logos": logo_assets(assets) if view in {"create", "plan"} else [],
-                "music_tracks": music_tracks(db) if view == "plan" else [],
-                "alerts": db.scalars(select(Alert).order_by(Alert.created_at.desc()).limit(15)).all(),
-                "checks": db.scalars(
-                    select(CheckResult).where(CheckResult.post_id == post_id).order_by(CheckResult.id.desc())
-                ).all()
-                if post
-                else [],
-                "history": db.scalars(
-                    select(Transition).where(Transition.post_id == post_id).order_by(Transition.id)
-                ).all()
-                if post
-                else [],
-                "requests": db.scalars(select(RequestRecord).where(RequestRecord.post_id == post_id)).all()
-                if post
-                else [],
-                "settings": settings,
-                "json": json,
-                "yaml": yaml,
-                "rights_choices": RIGHTS,
-                "rights_label": rights_label,
-                "analytics": report(db, settings) if view == "analytics" else None,
-                "usage": usage_dashboard(db, settings, usage_days(request)) if view == "usage" else None,
-                "media_jobs": media_jobs,
-                "media_job_posts": media_job_posts,
-                "media_campaigns": db.scalars(
-                    select(MediaCampaign).order_by(MediaCampaign.created_at.desc())
-                ).all()
-                if view == "media-studio"
-                else [],
-            },
+            context=context,
         )
 
     @app.get("/", response_class=HTMLResponse)
@@ -526,10 +344,6 @@ def create_app(settings=None):
             flush_usage(db)  # Show requests made moments ago.
         return page(request, db, view)
 
-    def usage_days(request):
-        days = request.query_params.get("days", "30")
-        return int(days) if days.isdigit() and int(days) in USAGE_PERIODS else 30
-
     @app.post("/forms/usage/sync", dependencies=mutation)
     async def refresh_usage(request: Request, db: DB):
         days = str((await request.form()).get("days", "30"))
@@ -539,9 +353,10 @@ def create_app(settings=None):
 
     @app.get("/admin/assets/{asset_id}/edit", response_class=HTMLResponse)
     def edit_media(asset_id: str, request: Request, db: DB):
-        if not db.get(Asset, asset_id):
+        asset = db.get(Asset, asset_id)
+        if not asset:
             raise HTTPException(404, "Media not found")
-        return page(request, db, "asset-edit", editing_asset_id=asset_id)
+        return page(request, db, "asset-edit", editing_asset=asset)
 
     @app.post("/forms/assets/{asset_id}/save-media", dependencies=mutation)
     async def save_media(asset_id: str, request: Request, db: DB):
@@ -565,7 +380,7 @@ def create_app(settings=None):
             db.rollback()
             status = 409 if isinstance(exc, AssetEditConflict) else 503 if isinstance(exc, SQLAlchemyError) else 400
             message = "The media details could not be saved. Try again shortly." if isinstance(exc, SQLAlchemyError) else str(exc)
-            return page(request, db, "asset-edit", editing_asset_id=asset_id, media_edit_values=values, error_message=message, status_code=status)
+            return page(request, db, "asset-edit", editing_asset=asset, media_edit_values=values, error_message=message, status_code=status)
         return RedirectResponse(f"/admin/assets/{asset_id}/edit?saved=1", status_code=303)
 
     @app.get("/posts/{post_id}", response_class=HTMLResponse)
@@ -573,7 +388,7 @@ def create_app(settings=None):
         post = db.get(Post, post_id)
         if not post or post.status == "deleted" or (request.state.editor and post.prompted_by != request.state.actor):
             raise HTTPException(404)
-        return page(request, db, "post", post_id)
+        return page(request, db, "post", post)
 
     @app.get("/posts/{post_id}/media/{asset_id}")
     def post_media(post_id: str, asset_id: str, request: Request, db: DB):
@@ -596,14 +411,8 @@ def create_app(settings=None):
 
     @app.get("/api/posts")
     def list_posts(request: Request, db: DB):
-        from .models import PostAvailability
-
-        query = select(Post).where(Post.status != "deleted")
-        if request.state.editor:
-            query = query.where(Post.prompted_by == request.state.actor)
-        posts = db.scalars(query.order_by(Post.created_at.desc()).limit(500)).all()
-        availability = {a.post_id: a for a in db.scalars(select(PostAvailability).where(
-            PostAvailability.post_id.in_([p.id for p in posts])))}
+        posts = recent_posts(db, actor=request.state.actor if request.state.editor else None, limit=500)
+        availability = availability_by_post(db, posts)
         return [
             {
                 "id": p.id,
@@ -652,9 +461,7 @@ def create_app(settings=None):
                 "post_status": post_status,
                 "completed_clips": sum(bool(s.get("output_asset_id")) for s in j.brief.get("video_segments", [])),
             }
-            for j, post_status in db.execute(select(MediaJob, Post.status).outerjoin(Post, Post.id == MediaJob.post_id)
-                .where(Post.status.is_(None) | (Post.status != "deleted"))
-                .order_by(MediaJob.created_at.desc()).limit(100))
+            for j, post_status in recent_media_jobs(db)
         ]
 
     @app.get("/api/posts/{post_id}/activity")
@@ -772,7 +579,7 @@ def create_app(settings=None):
             values["upload_ids"].append(asset.id)
 
     def idea_uploads(db, values):
-        uploads = [db.get(Asset, i) for i in values.get("upload_ids", [])]
+        uploads = load_assets(db, values.get("upload_ids", []))
         if any(a is None for a in uploads):
             raise ValueError("A file you added is no longer in the asset library. Add it again.")
         return uploads
@@ -875,7 +682,7 @@ def create_app(settings=None):
                 )
                 plan = uploaded_plan(idea, uploads, requested_style=values["kind"] or "auto", silent=silent)
                 return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
-            references = [db.get(Asset, i) for i in values["reference_ids"]]
+            references = load_assets(db, values["reference_ids"])
             if any(a is None for a in references):
                 raise ValueError("A selected reference is no longer in the asset library")
             references += [a for a in uploads if a.id not in values["reference_ids"]]
@@ -1183,7 +990,7 @@ def create_app(settings=None):
             facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
             post.parts = parts
             post.fact_ids = caption_fact_ids(parts)
-            post.ai_disclosure = any(requires_ai_review(db.get(Asset, id)) for id in post.asset_ids)
+            post.ai_disclosure = any(requires_ai_review(a) for a in load_assets(db, post.asset_ids))
             post.caption = render(parts, profiles(settings)[post.platform], facts, post.platform, settings)
             post.approved_digest = ""
             post.human_review_required, post.human_approved_digest = True, ""
@@ -1202,7 +1009,7 @@ def create_app(settings=None):
                 # assembled again; the new post replaces this one.
                 replace_part(db, post, "music", "", actor)
                 return {"id": post.id, "status": post.status}
-            assets = [db.get(Asset, i) for i in post.asset_ids]
+            assets = load_assets(db, post.asset_ids)
             if None in assets:
                 raise ValueError("Media this post uses is missing from the asset library")
             finished = [finish_video(db, settings, a, post.platform) for a in assets]
@@ -1266,7 +1073,7 @@ def create_app(settings=None):
 
     def compose_post(db, values):
         asset_ids = values["asset_ids"]
-        assets = [db.get(Asset, i) for i in asset_ids]
+        assets = load_assets(db, asset_ids)
         if not assets or None in assets:
             raise ValueError("Choose a photo or video from the asset library")
         if values["platform"] in REAL_MEDIA_ONLY:
@@ -1312,13 +1119,13 @@ def create_app(settings=None):
             await run_in_threadpool(replace_part, db, post, part, str(form.get("prompt", "")), request.state.actor)
         except PostBusy:
             db.rollback()
-            return page(request, db, "post", post_id, post_busy=True, status_code=202)
+            return page(request, db, "post", post, post_busy=True, status_code=202)
         except PostConflict:
             db.rollback()
             return RedirectResponse(f"/posts/{post_id}", status_code=303)
         except ValueError as exc:
             db.rollback()
-            return page(request, db, "post", post_id, error_message=str(exc), status_code=400)
+            return page(request, db, "post", post, error_message=str(exc), status_code=400)
         return RedirectResponse("/admin/media-queue", status_code=303)
 
     @app.post("/forms/posts/{post_id}/{action}", dependencies=mutation)
@@ -1334,7 +1141,7 @@ def create_app(settings=None):
             result = await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts, str(form.get("revision_request", "")), str(form.get("reviewed_digest", "")), form.get("confirmed_removed") == "on")
         except PostBusy:
             db.rollback()
-            return page(request, db, "post", post_id, post_busy=True, status_code=202)
+            return page(request, db, "post", post, post_busy=True, status_code=202)
         except PostConflict:
             db.rollback()
             if db.get(Post, post_id).status == "deleted":
@@ -1343,7 +1150,7 @@ def create_app(settings=None):
             return RedirectResponse(f"/posts/{post_id}", status_code=303)
         except ValueError as exc:
             db.rollback()
-            return page(request, db, "post", post.id, error_message=str(exc), status_code=400)
+            return page(request, db, "post", post, error_message=str(exc), status_code=400)
         if action == "restart" and post.status == "deleted":
             return RedirectResponse(f"/admin/create?from_post={post.id}", status_code=303)
         return RedirectResponse("/" if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)
@@ -1355,8 +1162,6 @@ def create_app(settings=None):
 
     @app.post("/forms/live-platform", dependencies=mutation)
     async def live_platform(request: Request, db: DB):
-        from .adapters import ADAPTERS
-
         form = await request.form()
         platform, value = str(form.get("platform", "")), str(form.get("enabled", ""))
         account = db.get(Account, platform)
@@ -1364,10 +1169,9 @@ def create_app(settings=None):
             raise HTTPException(400, "Select a platform and a valid live-posting setting")
         enabled = value == "true"
         if enabled:
-            if settings.auth_mode == "dev" or not settings.session_secret.get_secret_value() or not settings.token_encryption_key.get_secret_value():
+            if not connections.live_controls_available(settings):
                 raise HTTPException(400, "Configure authenticated access before enabling live posting")
-            selected = ADAPTERS[platform](settings, db, None)
-            if not selected.connected():
+            if not connections.account_connected(settings, account):
                 raise HTTPException(400, "Connect and validate this platform before enabling live posting")
         account.live_enabled = enabled
         db.commit()

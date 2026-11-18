@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections import defaultdict
 from copy import deepcopy
 from datetime import timezone
 from pathlib import PurePath
@@ -101,13 +102,22 @@ def ancestry(db, assets):
 
 
 def descendants(db, asset_id):
+    """Find the edited asset and everything derived from it, including nested renditions."""
+    children = defaultdict(list)
+    links = select(Asset.id, Asset.tags["source_asset_ids"]).execution_options(yield_per=500)
+    for child_id, parent_ids in db.execute(links):
+        for parent_id in parent_ids or ():
+            children[parent_id].append(child_id)
+
     found = {asset_id}
-    candidates = db.scalars(select(Asset)).all()
-    while True:
-        added = {a.id for a in candidates if found.intersection((a.tags or {}).get("source_asset_ids", []))}
-        if added <= found:
-            return found
-        found.update(added)
+    pending = [asset_id]
+    while pending:
+        parent_id = pending.pop()
+        for child_id in children.get(parent_id, ()):
+            if child_id not in found:
+                found.add(child_id)
+                pending.append(child_id)
+    return found
 
 
 def edit_asset(db, asset, values, *, original_name, expected_revision, actor):

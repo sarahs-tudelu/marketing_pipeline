@@ -1,9 +1,9 @@
 import httpx
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from social.app import create_app
-from social.models import Post, RequestRecord, Transition
+from social.models import Asset, FactSheet, Post, RequestRecord, Transition
 from social.seed import demo
 
 
@@ -52,6 +52,19 @@ def test_admin_pages_login_and_csrf(db, settings):
         token = client.get("/api/session").json()["csrf"]
         assert client.post("/forms/control", data={"enabled": "true", "csrf": token}).status_code == 200
         assert "Publishing is stopped" in client.get("/").text
+
+
+def test_connections_page_skips_post_and_library_data(settings, post):
+    app = create_app(settings)
+    with TestClient(app) as client:
+        loaded = set()
+
+        @event.listens_for(app.state.factory, "loaded_as_persistent")
+        def record_model(session, instance):
+            loaded.add(type(instance))
+
+        assert client.get("/admin/connections").status_code == 200
+        assert loaded.isdisjoint({Post, Asset, FactSheet})
 
 
 def test_basic_auth_protects_admin(db, settings):

@@ -9,12 +9,13 @@ from .db import now
 from .facts import Facts, active, caption_fact_ids, content_digest, render
 from .gate import evaluate, run_gate
 from .lifecycle import PostConflict, lock_post, transition
-from .models import Account, Asset, Control, FactSheet, Post, RequestRecord, Transition
+from .models import Account, Control, FactSheet, Post, RequestRecord, Transition
 from .monitoring import alert, event
 from .provenance import real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
 from .recovery import CAPTION_FAILED, caption_error
+from .storage import load_assets
 
 
 def bootstrap(db):
@@ -29,11 +30,12 @@ def bootstrap(db):
 def draft(db, platform, campaign, asset_ids, facts_id, product="company", kind="promotional", *, commit=True, human_review_required=True):
     if platform not in PLATFORMS or kind not in {"promotional", "non_promotional"}:
         raise ValueError("Invalid platform/content kind")
-    if not asset_ids or any(not db.get(Asset, id) for id in asset_ids) or not db.get(FactSheet, facts_id):
+    assets = load_assets(db, asset_ids or [])
+    if not assets or None in assets or not db.get(FactSheet, facts_id):
         raise ValueError("Select existing assets and facts version")
-    if any(db.get(Asset, id).media["mime"].startswith("audio/") for id in asset_ids):
+    if any(asset.media["mime"].startswith("audio/") for asset in assets):
         raise ValueError("Audio must be combined with a video in Media Studio before creating a post")
-    if platform in REAL_MEDIA_ONLY and (error := real_drive_media_error(db, [db.get(Asset, i) for i in asset_ids])):
+    if platform in REAL_MEDIA_ONLY and (error := real_drive_media_error(db, assets)):
         raise ValueError(error)
     post = Post(
         platform=platform,
@@ -64,7 +66,7 @@ def generate(db, settings, post, providers=None, *, revision_request="", previou
         )
     providers = providers or Providers(settings)
     facts = Facts.model_validate(db.get(FactSheet, post.facts_id).document)
-    assets = [db.get(Asset, id) for id in post.asset_ids]
+    assets = load_assets(db, post.asset_ids)
     post.ai_disclosure = any(requires_ai_review(a) for a in assets)
     profile = profiles(settings)[post.platform]
     variant = int(hashlib.sha256(post.id.encode()).hexdigest()[:8], 16)
