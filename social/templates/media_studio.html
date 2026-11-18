@@ -19,7 +19,8 @@
       </select></label>
     </div>
     <fieldset><legend>Platforms — each gets its own framing and caption</legend>
-      {% for p in platforms if p not in real_media_only %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ p }}" {{ 'checked' if p in asset_form.get('platforms', ['instagram']) else '' }}>{{ p|platform }}</label>{% endfor %}
+      {% for p in platforms %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ p }}" {{ 'checked' if p in asset_form.get('platforms', ['instagram']) else '' }}>{{ p|platform }}{% if p in real_media_only %}<span class="tag">Real project or varied only</span>{% endif %}</label>{% endfor %}
+      <small>Pinterest only gets real project posts made from photos and videos imported from Google Drive: one in every batch of a varied campaign, never AI media.</small>
     </fieldset>
     <div class="two">
       <label>Product tag<input name="product" required value="{{ asset_form.get('product', 'company') }}"></label>

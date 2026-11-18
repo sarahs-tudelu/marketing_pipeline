@@ -42,6 +42,7 @@ from .idea_plan import (
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
 from .media_studio import (
     CreativeBrief,
+    check_real_media,
     finish_video,
     platform_copy,
     queue_jobs,
@@ -639,9 +640,10 @@ def create_app(settings=None):
                 workflow={"once": "immediate", "next": "next", "recurring": "automatic"}[mode],
             )
             if form.get("mode") == "recurring":
-                validate_sources(db, brief)
+                sources = validate_sources(db, brief)
                 if not brief.create_posts or brief.operation == "audio":
                     raise ValueError("Recurring campaigns must create image/video posts")
+                check_real_media(db, settings, brief, sources)
                 db.add(MediaCampaign(name=brief.campaign, brief=brief.model_dump() | request.state.prompt_account, enabled=False))
             else:
                 await run_in_threadpool(queue_prompt, db, brief, request.state.prompt_account)

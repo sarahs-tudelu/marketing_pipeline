@@ -13,9 +13,9 @@ from PIL import Image
 from test_runway_media import brief_for
 
 from social.config import profiles
-from social.gate import media_errors
-from social.media_studio import process_jobs, queue_jobs
-from social.models import Asset, MediaCampaign, Post
+from social.gate import media_errors, run_gate
+from social.media_studio import check_real_media, process_jobs, queue_jobs, validate_sources
+from social.models import Asset, CheckResult, MediaCampaign, Post
 from social.pipeline import generate
 from social.provenance import requires_ai_review
 from social.providers import OpenAI, Providers
@@ -297,3 +297,84 @@ def test_the_editor_sees_every_candidate_and_its_answer_is_bounded(db, settings,
     saved = job.brief["real_edit"]["items"][0]
     assert (saved["zoom"], saved["straighten"], saved["brightness"]) == (2.0, 8.0, 1.2)
     assert job.source_asset_ids == [still.id, clip.id]
+
+
+def from_drive(db, settings, data, name):
+    tags = {"google_drive_file_id": f"drive-{name}", "google_drive_folder_id": "projects"}
+    return ingest(db, settings, data, name, rights="public", tags=tags)
+
+
+def test_pinterest_gets_a_real_drive_project_in_every_batch_of_a_varied_campaign(db, settings, house_logo):
+    photo = from_drive(db, settings, jpeg((150, 110, 80), (1000, 1500)), "terrace.jpg")
+    clip = from_drive(db, settings, footage(sound=False), "installation.mp4")
+    upload = ingest(db, settings, jpeg((80, 110, 150)), "phone-upload.jpg", rights="public")
+    db.commit()
+    brief = brief_for(db, settings, operation="mixed", kind="mixed", duration=10,
+                      platforms=["instagram", "pinterest"], reference_ids=[upload.id, photo.id, clip.id])
+    campaign = MediaCampaign(name="Projects", brief=brief.model_dump())
+    db.add(campaign)
+    db.flush()
+    jobs = []
+    for sequence in range(4):
+        jobs += queue_jobs(db, settings, brief, campaign=campaign, sequence=sequence)
+        db.commit()
+    pins = [j for j in jobs if j.platform == "pinterest"]
+    # Never AI media, never media that didn't come from Google Drive; video and photo posts alternate.
+    assert [(j.brief["operation"], j.brief["real_format"]) for j in pins] == [("real", "video"), ("real", "photo")] * 2
+    assert all(set(j.brief["reference_ids"]) <= {photo.id, clip.id} for j in pins)
+    instagram = [j.brief["operation"] for j in jobs if j.platform == "instagram"]
+    assert instagram[0] == "real" and instagram[2] == "real" and "real" not in (instagram[1], instagram[3])
+    # Each job lists only its own platform, so an AI job for Instagram isn't held to Pinterest's rule.
+    assert all(j.brief["platforms"] == [j.platform] for j in jobs)
+
+
+def test_a_real_pinterest_post_uses_drive_media_and_passes_the_drive_check(db, settings, house_logo):
+    clip = from_drive(db, settings, footage(), "installation.mp4")
+    photo = from_drive(db, settings, jpeg((180, 120, 60), (1000, 1500)), "finished.jpg")
+    upload = ingest(db, settings, jpeg((80, 110, 150)), "phone-upload.jpg", rights="public")
+    site = from_drive(db, settings, wav_bytes(), "site-voice.wav")
+    voice = ingest(db, settings, wav_bytes(), "voice-memo.wav", rights="public")
+    db.commit()
+    brief = brief_for(db, settings, operation="real", duration=10, platforms=["pinterest"],
+                      reference_ids=[clip.id, upload.id, photo.id], audio_reference_ids=[voice.id, site.id])
+    [job] = queue_jobs(db, settings, brief)
+    db.commit()
+    assert job.brief["reference_ids"] == [clip.id, photo.id] and job.brief["audio_reference_ids"] == [site.id]
+    for _ in range(3):
+        process_jobs(db, settings)
+    assert job.state == "complete", job.error
+    post = db.get(Post, job.post_id)
+    assert post.platform == "pinterest"
+    generate(db, settings, post)
+    run_gate(db, settings, post)
+    checks = {c.name: c for c in db.query(CheckResult).filter(CheckResult.post_id == post.id)}
+    assert checks["drive_media"].passed and checks["media"].passed and checks["video_finish"].passed
+
+
+def test_a_campaign_with_pinterest_needs_drive_media_before_it_is_saved(db, settings):
+    upload = ingest(db, settings, jpeg((80, 110, 150)), "phone-upload.jpg", rights="public")
+    db.commit()
+    brief = brief_for(db, settings, operation="mixed", kind="mixed", platforms=["instagram", "pinterest"],
+                      reference_ids=[upload.id])
+    with pytest.raises(ValueError, match="only posts real photos and videos imported from Google Drive"):
+        check_real_media(db, settings, brief, validate_sources(db, brief))
+    # AI formats still can't select Pinterest.
+    with pytest.raises(ValueError, match="Choose Real project or a varied campaign"):
+        brief_for(db, settings, operation="video", platforms=["pinterest"])
+
+
+def test_an_ai_image_job_in_a_campaign_with_tiktok_still_runs(db, settings, house_logo):
+    photo = ingest(db, settings, jpeg((150, 110, 80)), "terrace.jpg", rights="public")
+    db.commit()
+    brief = brief_for(db, settings, operation="mixed", platforms=["instagram", "tiktok"], reference_ids=[photo.id])
+    campaign = MediaCampaign(name="Ideas", brief=brief.model_dump())
+    db.add(campaign)
+    db.flush()
+    jobs = queue_jobs(db, settings, brief, campaign=campaign, sequence=1)
+    db.commit()
+    image = next(j for j in jobs if j.platform == "instagram")
+    assert image.brief["operation"] == "image"
+    for _ in range(3):
+        process_jobs(db, settings)
+    # Its brief used to list TikTok as well, and failed TikTok's video-only rule when it was rechecked.
+    assert image.state == "complete", image.error

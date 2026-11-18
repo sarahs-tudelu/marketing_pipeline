@@ -119,10 +119,11 @@ class CreativeBrief(BaseModel):
             raise ValueError("Campaign, prompt and usage rights cannot be blank")
         if len(set(self.platforms)) != len(self.platforms) or set(self.platforms) - set(PLATFORMS):
             raise ValueError("Select distinct supported platforms")
-        if set(self.platforms) & REAL_MEDIA_ONLY:
+        # Real project posts and varied campaigns give Pinterest real Google Drive media only.
+        if set(self.platforms) & REAL_MEDIA_ONLY and self.operation not in {"real", "mixed"}:
             raise ValueError(
-                "Pinterest only posts real photos and videos from Google Drive. Create Pinterest posts from "
-                "Post from library media instead."
+                "Pinterest only posts real photos and videos from Google Drive. Choose Real project or a varied "
+                "campaign, or create Pinterest posts from Post from library media."
             )
         if self.operation == "audio" and self.create_posts:
             raise ValueError("Save audio to the library, or add it as a video soundtrack")
@@ -369,19 +370,20 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         concept, direction = next(
             (c for c in CONCEPTS if c[0] not in used), CONCEPTS[sequence % len(CONCEPTS)]
         )
-        values = brief.model_dump()
+        # Each job is rechecked on its own when it runs, so it lists only its platform: an image job for
+        # Instagram mustn't fail TikTok's video rule or Pinterest's real-media rule.
+        values = brief.model_dump() | {"platforms": [platform]}
         operation = brief.operation
         repeat = sequence  # Earlier batches of this campaign with the same format, for reference rotation.
         real = None
+        # Pinterest takes only real media imported from Google Drive, so it gets a real project every batch.
+        drive_only = platform in REAL_MEDIA_ONLY
         if operation in {"real", "mixed"}:
             # A mixed campaign alternates real projects with AI inspiration, so each kind has its own turn.
-            turn = sequence // 2 if operation == "mixed" else sequence
-            real = real_choice(db, brief, sources, profile, platform, turn, live=live)
-            if operation == "real" and not real:
-                raise ValueError(
-                    f"{platform.title()}: no real photos or videos fit this post. Add photos or videos of "
-                    "completed projects to the asset library, or choose them in the brief."
-                )
+            turn = sequence // 2 if operation == "mixed" and not drive_only else sequence
+            real = real_choice(db, brief, sources, profile, platform, turn, live=live, drive_only=drive_only)
+            if (operation == "real" or drive_only) and not real:
+                raise ValueError(no_real_media(platform))
         if operation == "mixed":
             options = ["image", "video"]
             if any(a.media["mime"].startswith("video/") for a in sources):
@@ -389,7 +391,7 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
                 options.append("video_edit")
             if platform == "tiktok":
                 options = [v for v in options if v != "image"]
-            if real and sequence % 2 == 0:
+            if real and (drive_only or sequence % 2 == 0):
                 operation = "real"
             else:
                 turn = sequence // 2 if real else sequence
@@ -493,6 +495,31 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         result.append(_add_job(db, brief, campaign, batch, platform, values))
     db.flush()
     return result
+
+
+def no_real_media(platform):
+    if platform in REAL_MEDIA_ONLY:
+        return (
+            f"{platform.title()} only posts real photos and videos imported from Google Drive, and none fit "
+            "this post. Import project photos or videos through Asset library → Automatic Google Drive imports, "
+            f"or untick {platform.title()}."
+        )
+    return (
+        f"{platform.title()}: no real photos or videos fit this post. Add photos or videos of completed "
+        "projects to the asset library, or choose them in the brief."
+    )
+
+
+def check_real_media(db, settings, brief, sources):
+    """Before a campaign is saved: every platform that needs real media has some to start from."""
+    if brief.operation not in {"real", "mixed"}:
+        return
+    for platform in brief.platforms:
+        drive_only = platform in REAL_MEDIA_ONLY
+        if brief.operation == "real" or drive_only:
+            profile = profiles(settings)[platform]
+            if not real_choice(db, brief, sources, profile, platform, 0, drive_only=drive_only):
+                raise ValueError(no_real_media(platform))
 
 
 def _add_job(db, brief, campaign, batch, platform, values):

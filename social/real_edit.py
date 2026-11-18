@@ -196,21 +196,28 @@ def recent_uses(db):
     return uses
 
 
-def real_choice(db, brief, sources, profile, platform, turn, *, live=False):
+def real_choice(db, brief, sources, profile, platform, turn, *, live=False, drive_only=False):
     """The real-project post for a platform: (format, media IDs, audio IDs), or None when nothing fits.
 
     The real photos and videos picked for the brief are used; with none picked, the library's. Media not
     shown recently comes first. Formats alternate between video and photo by turn; TikTok gets video.
+    `drive_only` (Pinterest) keeps only media imported from Google Drive, audio included.
     """
     public = brief.rights != "not_public"
-    media = [a for a in sources if a.id in brief.reference_ids and real_asset(a, live=live, public=public)]
+
+    def fits(asset, check):
+        return check(asset, live=live, public=public) and (
+            not drive_only or bool((asset.tags or {}).get("google_drive_file_id"))
+        )
+
+    media = [a for a in sources if a.id in brief.reference_ids and fits(a, real_asset)]
     if not media:
         media = [
             a
             for a in db.scalars(
                 select(Asset).where(Asset.source == "company").order_by(Asset.created_at.desc()).limit(400)
             ).all()
-            if real_asset(a, live=live, public=public) and _product_rank(a, brief.product) is not None
+            if fits(a, real_asset) and _product_rank(a, brief.product) is not None
         ]
     uses = recent_uses(db)
     media.sort(key=lambda a: (_product_rank(a, brief.product) or 0, a.id in uses, -uses.get(a.id, 0)))
@@ -228,7 +235,7 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False):
         ids += [a.id for a in photos[: (VIDEO_CANDIDATES if videos else PHOTO_CANDIDATES)]]
     sounds = []
     if chosen == "video":
-        sounds = [a.id for a in sources if a.id in brief.audio_reference_ids and real_sound(a, live=live, public=public)]
+        sounds = [a.id for a in sources if a.id in brief.audio_reference_ids and fits(a, real_sound)]
     return chosen, ids, sounds[:3]
 
 
