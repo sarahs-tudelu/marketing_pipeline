@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import portalocker
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import case, func, select, text
 
@@ -103,6 +104,32 @@ def tick(factory, settings):
         deliver_alerts(db, settings)
 
 
+def make_scheduler(factory, settings):
+    # max_instances=1 applies to each job, not to the worker. Share one executor across
+    # importing, library decoding and rendering to prevent overlapping memory spikes.
+    scheduler = BlockingScheduler(timezone="UTC", executors={
+        "default": ThreadPoolExecutor(max_workers=2),
+        "media": ThreadPoolExecutor(max_workers=1),
+    })
+    from .availability import tick as availability_tick
+    from .drive_import import tick as drive_tick
+    from .media_search import describe_library
+    from .usage import tick as usage_tick
+
+    for job in (tick, drive_tick, describe_library):
+        scheduler.add_job(
+            job, "interval", seconds=settings.worker_interval_seconds,
+            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
+            executor="media", misfire_grace_time=None,
+        )
+    for job in (availability_tick, usage_tick):
+        scheduler.add_job(
+            job, "interval", seconds=settings.worker_interval_seconds,
+            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
+        )
+    return scheduler
+
+
 def run():
     settings = get_settings()
     setup_logging()
@@ -112,47 +139,7 @@ def run():
         with factory() as db:
             bootstrap(db)
             import_meta_from_env(db, settings)
-        scheduler = BlockingScheduler(timezone="UTC")
-        from .availability import tick as availability_tick
-        from .drive_import import tick as drive_tick
-
-        scheduler.add_job(
-            availability_tick, "interval", seconds=settings.worker_interval_seconds,
-            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
-        )
-
-        scheduler.add_job(
-            drive_tick,
-            "interval",
-            seconds=settings.worker_interval_seconds,
-            args=[factory, settings],
-            max_instances=1,
-            coalesce=True,
-            next_run_time=now(),
-        )
-        from .media_search import describe_library
-        from .usage import tick as usage_tick
-
-        # Saves recorded AI requests, reads the providers' billed costs and backfills older Runway tasks.
-        scheduler.add_job(
-            usage_tick, "interval", seconds=settings.worker_interval_seconds,
-            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
-        )
-
-        # Real library media gets a short description of what it shows, so idea searches can find it.
-        scheduler.add_job(
-            describe_library, "interval", seconds=settings.worker_interval_seconds,
-            args=[factory, settings], max_instances=1, coalesce=True, next_run_time=now(),
-        )
-        scheduler.add_job(
-            tick,
-            "interval",
-            seconds=settings.worker_interval_seconds,
-            args=[factory, settings],
-            max_instances=1,
-            coalesce=True,
-            next_run_time=now(),
-        )
+        scheduler = make_scheduler(factory, settings)
         event("worker_started", interval=settings.worker_interval_seconds)
         try:
             scheduler.start()

@@ -591,6 +591,7 @@ def create_app(settings=None):
                 event("asset_upload_failed", stage="idea", **upload_error_details(exc))
                 raise ValueError(f"{file.filename}: {describe_upload_error(exc)[1]}") from None
             finally:
+                data = None  # Release this upload before reading the next file in the batch.
                 await file.close()
             # Kept even if a later step fails, so the file isn't uploaded twice.
             values["upload_ids"].append(asset.id)

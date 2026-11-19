@@ -198,6 +198,54 @@ Run the migration command on every release, even when the old `migrate` containe
 
 If pages and workers fail with `ProgrammingError` after an update, check for an unapplied migration. For example, revision `d8e4b2c61709` adds `availability_checks`, `post_availability` and `post_reposts`; running its application code against revision `c6f3a7b95247` causes these failures. With the current image already built, the migration command above applies the missing revision. It does not change live-posting settings. `/health` now checks required database tables and columns and returns HTTP 503 with a migration message when they are missing, instead of reporting a healthy application.
 
+## Memory limits and out-of-memory recovery
+
+The Droplet Compose file targets the 4 vCPU / 8 GiB host: it limits the web container to 1 GiB,
+the media worker to 4 GiB and three CPUs, and Caddy to 128 MiB. Each container's memory-plus-swap limit equals its memory
+limit, so it cannot exhaust the host through swap thrashing. On an 8 GiB host these ceilings
+leave about 2.9 GiB for the OS, Docker and other processes; they contain an individual process's spike, but
+do not guarantee that every large media job will fit. `WEB_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`
+and `WORKER_CPUS` can override the defaults in `.env`. Smaller hosts must lower these limits
+to fit their available resources; for the previous 2 GiB host, 512m for web, 1g for worker
+and 1.0 worker CPU contain spikes but may terminate large renders. Increase memory limits
+only after accounting for all services. Container recreation is required;
+`docker compose restart` does not apply changed limits or mounts.
+
+Multipart upload temporary files use the disk-backed `scratch` volume at `/tmp`, rather
+than a RAM-backed tmpfs. This keeps a 250 MB upload's temporary file out of the memory
+budget while the application reads and validates it. Multi-source video rendering streams
+bucket originals to private temporary directories in the runtime media volume, verifies
+their checksums, and removes those files when processing finishes or raises an error.
+Local originals are read directly from their existing paths. A hard process kill can leave
+staged files behind; inspect disk usage and remove only abandoned staging directories while
+the worker is stopped. Do not remove the runtime volume or original media to recover memory.
+
+The worker runs importing, library description and media/post processing through one shared
+executor, so these expensive jobs wait for one another. Availability and cost polling use
+their own executor. Long imports or renders can therefore delay a scheduled publication;
+durable job state and all publication checks still apply. Downloads avoid a second complete
+file buffer, planner previews are reduced before accumulation, and audio trims retain only
+the requested interval. Silence detection still examines the full audio stream.
+
+After regaining access to an unresponsive host, inspect the OOM evidence and current use:
+
+```sh
+sudo journalctl -k --since "24 hours ago" | grep -Ei 'out of memory|oom-kill|killed process'
+docker stats --no-stream
+free -h
+df -h
+```
+
+Pause resource-heavy work while recovering. Apply the normal update procedure above when
+the host has enough free memory to build, or resize it first. A successful restart alone
+does not fix the memory pressure. After the update, check `docker stats` during a representative
+import and render; if the worker still reaches its limit, resize the Droplet before raising
+`WORKER_MEMORY_LIMIT`. Review failed jobs before retrying, especially any provider submission
+whose outcome is uncertain. This change introduces no database migration and does not change
+live-posting settings. Deployment and restarts remain the server owner's responsibility.
+
+Docker documents [memory and swap limits](https://docs.docker.com/reference/compose-file/services/#mem_limit).
+
 ## Rotation and live activation
 
 Changing a Secret Manager version does not change the managed PostgreSQL user's password. Coordinate rotation with that user's password change in DigitalOcean, store the new value, then update the version reference and restart affected services during maintenance. Likewise, preserve the old Fernet key during token rotation; the existing `new,old` key-ring procedure in the README still applies, with that key-ring stored as a Secret Manager value.

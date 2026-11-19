@@ -169,6 +169,9 @@ def test_uploaded_audio_is_laid_at_its_place_over_the_lowered_clip_sound():
 
 
 def test_real_video_is_trimmed_joined_scored_and_stays_company_media(db, settings, house_logo, monkeypatch):
+    from social import real_edit
+    from social.storage import LocalStore
+
     def forbidden(*args, **kwargs):
         raise AssertionError("Real media must never be sent to Runway")
 
@@ -176,6 +179,24 @@ def test_real_video_is_trimmed_joined_scored_and_stays_company_media(db, setting
     clip = ingest(db, settings, footage(), "installation.mp4", rights="public")
     still = ingest(db, settings, jpeg((180, 120, 60)), "finished.jpg", rights="public")
     bite = ingest(db, settings, wav_bytes(), "site-voice.wav", rights="public")
+    rendering = False
+    read, render = LocalStore.read, real_edit.real_copy
+
+    def bounded_read(store, key):
+        if rendering and key in {clip.storage_key, still.storage_key, bite.storage_key}:
+            pytest.fail("Real edits must render verified source files without buffering all originals")
+        return read(store, key)
+
+    def bounded_render(*args):
+        nonlocal rendering
+        rendering = True
+        try:
+            return render(*args)
+        finally:
+            rendering = False
+
+    monkeypatch.setattr(LocalStore, "read", bounded_read)
+    monkeypatch.setattr(real_edit, "real_copy", bounded_render)
     db.commit()
     brief = brief_for(
         db, settings, operation="real", duration=10,

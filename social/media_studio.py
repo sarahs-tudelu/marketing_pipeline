@@ -24,7 +24,7 @@ from .recovery import runway_failure
 from .renditions import fitted_size, image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, job_settings, payload_for, video_clip_limit
-from .storage import ingest, storage
+from .storage import ingest, source_files, storage
 from .video_rules import (
     AMBIENT_STYLES,
     NO_LOGO,
@@ -916,78 +916,76 @@ def _finish(db, settings, job):
         result = real_copy(db, settings, job)
     else:
         profile = profiles(settings)[job.platform]
-        data = storage(settings).read(first.storage_key)
-        if hashlib.sha256(data).hexdigest() != first.checksum:
-            raise ValueError("Source integrity failed before creating the publishing rendition")
         end_card = brief.get("end_card") if brief["operation"] != "image" else None
         logo = db.get(Asset, end_card["asset_id"]) if end_card else None
         if end_card and not logo:
             raise ValueError("The end-card logo is missing from the asset library; upload it and create the post again")
         sound_tags = {}
         if brief["operation"] == "image":
+            data = storage(settings).read(first.storage_key)
+            if hashlib.sha256(data).hexdigest() != first.checksum:
+                raise ValueError("Source integrity failed before creating the publishing rendition")
             data = image_rendition(data, profile.image_width, profile.image_height,
                                    source=first.source, generator=first.generator)
             name = f"{job.platform}-{job.id}.jpg"
         else:
-            sound_asset = next((a for a in originals if a.media["mime"].startswith("audio/")), None)
-            soundtrack = storage(settings).read(sound_asset.storage_key) if sound_asset else None
-            if not logo:
-                # Planned before every video ended on the logo: the card is added after the footage.
-                logo = default_logo(db, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+            with source_files(settings, [a for a in originals if not a.media["mime"].startswith("audio/")]) as files:
+                sound_asset = next((a for a in originals if a.media["mime"].startswith("audio/")), None)
+                soundtrack = storage(settings).read(sound_asset.storage_key) if sound_asset else None
                 if not logo:
-                    raise ValueError(NO_LOGO)
-                end_card = {"asset_id": logo.id, "seconds": END_CARD_SECONDS}
-            if brief.get("video_segments"):
-                clips = []
-                for segment in brief["video_segments"]:
-                    asset = db.get(Asset, segment.get("output_asset_id"))
-                    if not asset:
-                        raise ValueError("A planned video clip is missing; resume generation before assembly")
-                    clip_data = storage(settings).read(asset.storage_key)
-                    if hashlib.sha256(clip_data).hexdigest() != asset.checksum:
-                        raise ValueError("Video clip integrity failed before assembly")
-                    clips.append((clip_data, 0, segment["duration"]))
-            else:
-                clips = [(data, 0, brief["duration"])]
-            excess = sum(c[2] for c in clips) + end_card["seconds"] - profile.max_duration
-            if excess > 0:
-                clips[-1] = clips[-1][:2] + (max(MIN_CLIP_SECONDS, clips[-1][2] - excess),)
-            sound_tags = {"video_sound": "music" if sound_asset else "own"}
-            if soundtrack is not None:
-                if hashlib.sha256(soundtrack).hexdigest() != sound_asset.checksum:
-                    raise ValueError("Soundtrack integrity failed before assembly")
-                if brief.get("audio_fallback"):
-                    # Seed Audio has no duration parameter. Keep its original bytes and fit only
-                    # the publishing copy, including the logo ending, before full-stream audio review.
-                    seconds = sum(c[2] for c in clips) + end_card["seconds"]
-                    soundtrack = fit_track(soundtrack, seconds)
-                    sound_tags.update(audio_fallback=brief["audio_fallback"], soundtrack_fit={
-                        "asset_id": sound_asset.id, "checksum": sound_asset.checksum,
-                        "generator": sound_asset.generator, "source_seconds": sound_asset.media["duration"],
-                        "seconds": seconds, "looped": sound_asset.media["duration"] < seconds,
-                        "crossfade_seconds": 2.0, "fade_out_seconds": 1.5,
-                    })
-            if soundtrack is None and not any(has_sound(c[0]) for c in clips):
-                # Planned before every video had sound: Runway composes calm ambient music first,
-                # then the video is assembled with it.
-                style = next_ambient_style(db)
-                job.brief = job.brief | {
-                    "audio_prompt": AMBIENT_STYLES[style][1],
-                    "ambient_style": style,
-                    "soundtrack_model": "music",
-                    "soundtrack_asset_id": "",
-                }
-                job.stage, job.state = "audio", "queued"
-                db.commit()
-                return
-            logo_data = storage(settings).read(logo.storage_key)
-            if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
-                raise ValueError("Logo integrity failed before creating the end card")
-            card = logo_card(logo_data, profile.video_width, profile.video_height, end_card["seconds"])
-            clips.append((card, 0, end_card["seconds"]))
-            data = video_sequence(clips, profile.video_width, profile.video_height, soundtrack,
-                                  require_full_duration=bool(brief.get("video_segments")))
-            name = f"{job.platform}-{job.id}.mp4"
+                    # Planned before every video ended on the logo: the card is added after the footage.
+                    logo = default_logo(db, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+                    if not logo:
+                        raise ValueError(NO_LOGO)
+                    end_card = {"asset_id": logo.id, "seconds": END_CARD_SECONDS}
+                if brief.get("video_segments"):
+                    clips = []
+                    for segment in brief["video_segments"]:
+                        asset = db.get(Asset, segment.get("output_asset_id"))
+                        if not asset:
+                            raise ValueError("A planned video clip is missing; resume generation before assembly")
+                        clips.append((files[asset.id], 0, segment["duration"]))
+                else:
+                    clips = [(files[first.id], 0, brief["duration"])]
+                excess = sum(c[2] for c in clips) + end_card["seconds"] - profile.max_duration
+                if excess > 0:
+                    clips[-1] = clips[-1][:2] + (max(MIN_CLIP_SECONDS, clips[-1][2] - excess),)
+                sound_tags = {"video_sound": "music" if sound_asset else "own"}
+                if soundtrack is not None:
+                    if hashlib.sha256(soundtrack).hexdigest() != sound_asset.checksum:
+                        raise ValueError("Soundtrack integrity failed before assembly")
+                    if brief.get("audio_fallback"):
+                        # Seed Audio has no duration parameter. Keep its original bytes and fit only
+                        # the publishing copy, including the logo ending, before full-stream audio review.
+                        seconds = sum(c[2] for c in clips) + end_card["seconds"]
+                        soundtrack = fit_track(soundtrack, seconds)
+                        sound_tags.update(audio_fallback=brief["audio_fallback"], soundtrack_fit={
+                            "asset_id": sound_asset.id, "checksum": sound_asset.checksum,
+                            "generator": sound_asset.generator, "source_seconds": sound_asset.media["duration"],
+                            "seconds": seconds, "looped": sound_asset.media["duration"] < seconds,
+                            "crossfade_seconds": 2.0, "fade_out_seconds": 1.5,
+                        })
+                if soundtrack is None and not any(has_sound(c[0]) for c in clips):
+                    # Planned before every video had sound: Runway composes calm ambient music first,
+                    # then the video is assembled with it.
+                    style = next_ambient_style(db)
+                    job.brief = job.brief | {
+                        "audio_prompt": AMBIENT_STYLES[style][1],
+                        "ambient_style": style,
+                        "soundtrack_model": "music",
+                        "soundtrack_asset_id": "",
+                    }
+                    job.stage, job.state = "audio", "queued"
+                    db.commit()
+                    return
+                logo_data = storage(settings).read(logo.storage_key)
+                if hashlib.sha256(logo_data).hexdigest() != logo.checksum:
+                    raise ValueError("Logo integrity failed before creating the end card")
+                card = logo_card(logo_data, profile.video_width, profile.video_height, end_card["seconds"])
+                clips.append((card, 0, end_card["seconds"]))
+                data = video_sequence(clips, profile.video_width, profile.video_height, soundtrack,
+                                      require_full_duration=bool(brief.get("video_segments")))
+                name = f"{job.platform}-{job.id}.mp4"
         # A multi-clip video records every clip's prompt, not only the first clip's.
         clip_prompts = list(dict.fromkeys(s["prompt"] for s in brief.get("video_segments", []) if s.get("prompt")))
         result = ingest(

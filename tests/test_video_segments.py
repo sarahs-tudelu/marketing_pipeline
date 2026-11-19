@@ -93,6 +93,14 @@ def test_short_segment_cannot_be_stretched_to_fill_requested_length():
 
 
 def test_full_pipeline_joins_saved_clips_and_soundtrack_once(db, settings, monkeypatch):
+    from pathlib import Path
+
+    def assemble(clips, *args, **kwargs):
+        # Only the short logo card is in memory; saved generated clips stay on disk.
+        assert all(isinstance(data, Path) and data.is_file() for data, _, _ in clips[:-1])
+        return video_sequence(clips, *args, **kwargs)
+
+    monkeypatch.setattr('social.media_studio.video_sequence', assemble)
     # Keep the real duration/frame path while avoiding HD encode cost in the test.
     p = profiles(settings)
     p['linkedin'] = p['linkedin'].model_copy(update={'video_width': 64, 'video_height': 64, 'min_width': 64, 'min_height': 64})

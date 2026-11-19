@@ -45,25 +45,41 @@ def image_rendition(data, width, height, *, source=None, generator=None):
         return result
 
 
+def media_input(data):
+    """PyAV/Pillow input: original bytes for small media, verified file paths for large sequences."""
+    return io.BytesIO(data) if isinstance(data, (bytes, bytearray, memoryview)) else str(data)
+
+
 def audio_samples(data, start=0, duration=None):
-    with av.open(io.BytesIO(data)) as source:
+    with av.open(media_input(data)) as source:
         if not source.streams.audio:
             return None
         stream = source.streams.audio[0]
         resampler = av.AudioResampler(format="fltp", layout="stereo", rate=48000)
         parts = []
         count = 0
+        begin = round(start * 48000)
+        end = None if duration is None else round((start + duration) * 48000)
+
+        def keep(frames):
+            nonlocal count
+            for frame in frames:
+                samples = frame.to_ndarray()
+                stop = count + samples.shape[1]
+                left = max(begin - count, 0)
+                right = min(samples.shape[1], end - count) if end is not None else samples.shape[1]
+                if right > left:
+                    parts.append(samples[:, left:right].copy())
+                count = stop
+
         for frame in source.decode(stream):
-            converted = [f.to_ndarray() for f in resampler.resample(frame)]
-            parts.extend(converted)
-            count += sum(p.shape[1] for p in converted)
-            if duration is not None and count >= round((start + duration) * 48000):
+            keep(resampler.resample(frame))
+            if end is not None and count >= end:
                 break
-        parts.extend(f.to_ndarray() for f in resampler.resample(None))
+        keep(resampler.resample(None))
         if not parts:
             return None
-        samples = np.concatenate(parts, axis=1)
-        return samples[:, round(start * 48000): None if duration is None else round((start + duration) * 48000)]
+        return np.concatenate(parts, axis=1)
 
 
 def video_rendition(data, width, height, duration, soundtrack=None, *, start=0):
@@ -90,7 +106,7 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
         has_audio = soundtrack is not None
         if not has_audio:
             for data, _, _ in clips:
-                with av.open(io.BytesIO(data)) as source:
+                with av.open(media_input(data)) as source:
                     has_audio = has_audio or bool(source.streams.audio)
         audio = target.add_stream("aac", rate=48000) if has_audio else None
         if audio:
@@ -100,7 +116,7 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
                 raise ValueError("Video intervals must fit the 90-second finished-video limit")
             clip_start = next_index
             max_frames = round(duration * 30)
-            with av.open(io.BytesIO(data)) as source:
+            with av.open(media_input(data)) as source:
                 original = source.streams.video[0]
                 fps = float(original.average_rate or 30)
                 origin = None

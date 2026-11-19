@@ -93,10 +93,27 @@ def next_ambient_style(db):
 
 def has_sound(data):
     """True when a video or audio file has audible sound, not just a silent track."""
-    from .renditions import audio_samples
+    import av
 
-    samples = audio_samples(data)
-    return samples is not None and samples.size > 0 and float(np.sqrt(np.mean(np.square(samples)))) >= SILENCE_RMS
+    from .renditions import media_input
+
+    energy, count = 0.0, 0
+    with av.open(media_input(data)) as source:
+        if not source.streams.audio:
+            return False
+        resampler = av.AudioResampler(format="fltp", layout="stereo", rate=48000)
+
+        def measure(frames):
+            nonlocal energy, count
+            for frame in frames:
+                samples = frame.to_ndarray()
+                energy += float(np.square(samples, dtype=np.float64).sum())
+                count += samples.size
+
+        for frame in source.decode(source.streams.audio[0]):
+            measure(resampler.resample(frame))
+        measure(resampler.resample(None))
+    return bool(count and np.sqrt(energy / count) >= SILENCE_RMS)
 
 
 def ambient_tag(style, seconds):

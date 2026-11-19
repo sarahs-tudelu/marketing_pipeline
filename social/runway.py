@@ -2,6 +2,7 @@
 review is a new task with a new seed (see recovery.auto_retry and clip_replace.auto_regenerate)."""
 
 import hashlib
+import io
 import re
 from pathlib import Path
 from urllib.parse import urljoin
@@ -154,13 +155,13 @@ class Runway:
                         url = urljoin(url, response.headers["location"])
                         continue
                     response.raise_for_status()
-                    chunks, size = [], 0
-                    for chunk in response.iter_bytes():
+                    output, size = io.BytesIO(), 0
+                    for chunk in response.iter_bytes(chunk_size=65536):
                         size += len(chunk)
                         if size > self.s.max_upload_bytes:
                             raise ValueError("Generated file exceeds MAX_UPLOAD_BYTES")
-                        chunks.append(chunk)
-                    return b"".join(chunks)
+                        output.write(chunk)
+                    return output.getvalue()
             raise ValueError("Too many output redirects")
         except (ValueError, httpx.HTTPError):
             raise ProviderError(

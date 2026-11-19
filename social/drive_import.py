@@ -1,6 +1,7 @@
 """Read-only Google Drive ingestion, with durable pagination and immutable assets."""
 
 import hashlib
+import io
 import json
 import re
 from copy import deepcopy
@@ -226,17 +227,20 @@ class DriveClient:
         with self.request(
             file["id"], params={"alt": "media", "supportsAllDrives": "true"}, stream=True
         ) as response:
-            data = bytearray()
+            data = io.BytesIO()
+            checksum = hashlib.md5(usedforsecurity=False)
             for chunk in response.iter_content(chunk_size=65536):
-                if len(data) + len(chunk) > limit:
-                    raise DriveError(too_large(max(size, len(data) + len(chunk)), limit))
-                data.extend(chunk)
-        if len(data) != size or (
+                if data.tell() + len(chunk) > limit:
+                    raise DriveError(too_large(max(size, data.tell() + len(chunk)), limit))
+                data.write(chunk)
+                checksum.update(chunk)
+        if data.tell() != size or (
             file.get("md5Checksum")
-            and hashlib.md5(data, usedforsecurity=False).hexdigest() != file["md5Checksum"]
+            and checksum.hexdigest() != file["md5Checksum"]
         ):
             raise DriveError("File changed during download or was incomplete; importing will retry")
-        return bytes(data)
+        # BytesIO.getvalue() shares its immutable buffer instead of copying a full bytearray.
+        return data.getvalue()
 
     def manifest(self, file, parent, drive_id):
         result = self.listing(parent, drive_id=drive_id, name=file["name"] + ".json")

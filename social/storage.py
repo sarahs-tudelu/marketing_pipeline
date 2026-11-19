@@ -3,8 +3,10 @@ import hashlib
 import io
 import json
 from collections.abc import Sequence
+from contextlib import contextmanager
 from itertools import batched
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol
 from urllib.parse import quote
 
@@ -129,6 +131,53 @@ class S3Store:
 
 def storage(settings):
     return S3Store(settings) if settings.storage_backend == "s3" else LocalStore(settings)
+
+
+@contextmanager
+def source_files(settings, assets):
+    """Verified originals on disk for multi-source rendering, never all buffered in RAM.
+
+    Local originals are borrowed. Bucket files are streamed to the runtime media volume,
+    independently of the host's /tmp configuration, and removed on success or failure.
+    """
+    store = storage(settings)
+    root = (settings.media_dir / ".processing").resolve()
+    try:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with TemporaryDirectory(prefix="sources-", dir=root) as directory:
+            target = Path(directory).resolve()
+            if not target.is_relative_to(root):
+                raise ValueError("Invalid media staging directory")
+            files = {}
+            for asset in assets:
+                if asset.id in files:
+                    continue
+                checksum, size = hashlib.sha256(), 0
+                if isinstance(store, LocalStore):
+                    path = store.path(asset.storage_key)
+                    with path.open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            checksum.update(chunk)
+                else:
+                    path = target / f"{len(files)}{Path(asset.storage_key).suffix}"
+                    body = store.open(asset.storage_key)["Body"]
+                    try:
+                        with path.open("wb") as stream:
+                            for chunk in iter(lambda: body.read(1024 * 1024), b""):
+                                size += len(chunk)
+                                if size > settings.max_upload_bytes:
+                                    raise ValueError("Source exceeds MAX_UPLOAD_BYTES before rendering")
+                                checksum.update(chunk)
+                                stream.write(chunk)
+                    finally:
+                        body.close()
+                if checksum.hexdigest() != asset.checksum:
+                    raise ValueError("Source integrity failed before rendering")
+                files[asset.id] = path
+            yield files
+    finally:
+        if hasattr(store, "client"):
+            store.client.close()
 
 
 # M4V is Apple's name for an MP4 video.

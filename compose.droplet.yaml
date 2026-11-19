@@ -18,6 +18,8 @@ x-app: &app
   secrets: [google_adc]
   volumes:
     - runtime:/app/data
+    # Multipart uploads can be 250 MB. Keep their temporary files on disk, not in RAM.
+    - scratch:/tmp
     - type: bind
       source: ${DATABASE_CA_HOST_DIR:?Set the managed database certificate directory}
       target: /run/database-certs
@@ -25,7 +27,6 @@ x-app: &app
       bind:
         create_host_path: false
   read_only: true
-  tmpfs: ["/tmp"]
   init: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -39,6 +40,8 @@ services:
     restart: "no"
   web:
     <<: *app
+    mem_limit: ${WEB_MEMORY_LIMIT:-1g}
+    memswap_limit: ${WEB_MEMORY_LIMIT:-1g}
     command: ["uvicorn", "social.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers"]
     expose: ["8000"]
     healthcheck:
@@ -51,12 +54,17 @@ services:
       migrate: {condition: service_completed_successfully}
   worker:
     <<: *app
+    mem_limit: ${WORKER_MEMORY_LIMIT:-4g}
+    memswap_limit: ${WORKER_MEMORY_LIMIT:-4g}
+    cpus: ${WORKER_CPUS:-3.0}
     command: ["tudelu", "worker"]
     stop_grace_period: 60s
     depends_on:
       migrate: {condition: service_completed_successfully}
   proxy:
     image: caddy:2.11.7-alpine
+    mem_limit: 128m
+    memswap_limit: 128m
     environment:
       APP_BASE_URL: ${APP_BASE_URL:?Set the HTTPS app origin}
       MEDIA_BASE_URL: ${MEDIA_BASE_URL:?Set the HTTPS media origin}
@@ -79,5 +87,6 @@ secrets:
 
 volumes:
   runtime:
+  scratch:
   caddy_data:
   caddy_config:

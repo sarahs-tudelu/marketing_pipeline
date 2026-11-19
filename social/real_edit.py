@@ -29,9 +29,9 @@ from .db import now
 from .idea_plan import END_CARD_SECONDS
 from .models import Account, Asset, MediaJob
 from .provenance import requires_ai_review
-from .renditions import audio_samples, logo_card, video_sequence
+from .renditions import audio_samples, logo_card, media_input, video_sequence
 from .rights import combined_rights
-from .storage import ingest, storage
+from .storage import ingest, source_files, storage
 from .video_rules import MUSIC_TAG, NO_LOGO, SILENCE_RMS, default_logo, seed_for
 
 VERSION = "real-edit-2026-11-19-v1"
@@ -663,12 +663,19 @@ def ask_planner(
         data = _read(settings, asset)
         photo = asset.media["mime"].startswith("image/")
         times = [] if photo else sample_times(float(asset.media.get("duration") or 0))
-        pictures = [_open(data)] if photo else video_frames(data, times)
+        if photo:
+            picture = _open(data)
+            width, height = picture.size  # Keep the EXIF-corrected orientation in the planner record.
+            pictures = [_reduce(picture, 768)]
+            del picture
+        else:
+            pictures = video_frames(data, times)
+            width, height = asset.media.get("width"), asset.media.get("height")
         record = {
             "asset_id": asset.id,
             "kind": "photo" if photo else "video",
-            "width": pictures[0].width if pictures else asset.media.get("width"),
-            "height": pictures[0].height if pictures else asset.media.get("height"),
+            "width": width,
+            "height": height,
             "duration": None if photo else asset.media.get("duration"),
             "has_sound": bool(asset.media.get("audio_codecs")),
             "frame_times": times,
@@ -676,6 +683,7 @@ def ask_planner(
         }
         content.append({"type": "input_text", "text": json.dumps(record)})
         content.extend(_picture(p) for p in pictures)
+        del pictures, data  # Do not retain the last full source during the provider call.
     with httpx.Client(timeout=settings.ai_timeout_seconds) as client:
         result = OpenAI(settings, client).call(
             "responses",
@@ -715,7 +723,7 @@ def sample_times(duration):
 
 
 def video_frames(data, times):
-    """The frames at the given seconds, decoded the way the editor renders them."""
+    """Planner previews at the given seconds; never retain a list of full-resolution frames."""
     frames = []
     with av.open(io.BytesIO(data)) as container:
         stream = container.streams.video[0]
@@ -724,7 +732,9 @@ def video_frames(data, times):
             container.seek(int(at * 1_000_000), backward=True, any_frame=False)
             for picture in container.decode(stream):
                 if picture.time is None or picture.time + 0.02 >= at:
-                    frames.append(picture.to_image())
+                    preview = picture.to_image()
+                    preview.thumbnail((768, 768))
+                    frames.append(preview)
                     break
     return frames
 
@@ -749,7 +759,7 @@ def _read(settings, asset):
 
 
 def _open(data):
-    with Image.open(io.BytesIO(data)) as image:
+    with Image.open(media_input(data)) as image:
         return ImageOps.exif_transpose(image).convert("RGB")
 
 
@@ -988,34 +998,38 @@ def real_copy(db, settings, job):
     sounds = [db.get(Asset, i) for i in dict.fromkeys(c.asset_id for c in plan.audio)]
     if any(a is None for a in originals + sounds):
         raise ValueError("Media chosen for this post is missing from the asset library. Remove the job and create the post again.")
-    media = {a.id: (a, _read(settings, a)) for a in originals}
     logo = music = None
     sound_tags = {}
-    if video:
-        live = settings.wants_live(job.platform, db.get(Account, job.platform))
-        planned = brief.get("end_card") or {}
-        logo = db.get(Asset, planned.get("asset_id", "")) or default_logo(db, live=live)
-        if not logo:
-            raise ValueError(NO_LOGO)
-        card = planned.get("seconds", END_CARD_SECONDS)
-        ambient = real_ambient(
-            db,
-            live=live,
-            public=brief["rights"] != "not_public",
-            track_id=brief.get("ambient_track_id", ""),
-            style=brief.get("fallback_ambient_style", ""),
-        )
-        data, sound_tags = video_post(
-            settings, plan, media, {a.id: _read(settings, a) for a in sounds},
-            profile.video_width, profile.video_height, _read(settings, logo), card, ambient,
-            seed_for(job.batch_key.rsplit(":", 1)[0]),
-        )
-        music = music_asset(db, sound_tags)
-        name = f"{job.platform}-{job.id}.mp4"
-    else:
-        pictures = {i: _open(data) for i, (_, data) in media.items()}
-        data = photo_post(pictures, plan, profile.image_width, profile.image_height)
-        name = f"{job.platform}-{job.id}.jpg"
+    with source_files(settings, originals + sounds) as files:
+        media = {a.id: (a, files[a.id]) for a in originals}
+        if video:
+            live = settings.wants_live(job.platform, db.get(Account, job.platform))
+            planned = brief.get("end_card") or {}
+            logo = db.get(Asset, planned.get("asset_id", "")) or default_logo(db, live=live)
+            if not logo:
+                raise ValueError(NO_LOGO)
+            card = planned.get("seconds", END_CARD_SECONDS)
+            ambient = real_ambient(
+                db,
+                live=live,
+                public=brief["rights"] != "not_public",
+                track_id=brief.get("ambient_track_id", ""),
+                style=brief.get("fallback_ambient_style", ""),
+            )
+            data, sound_tags = video_post(
+                settings, plan, media, {a.id: files[a.id] for a in sounds},
+                profile.video_width, profile.video_height, _read(settings, logo), card, ambient,
+                seed_for(job.batch_key.rsplit(":", 1)[0]),
+            )
+            music = music_asset(db, sound_tags)
+            name = f"{job.platform}-{job.id}.mp4"
+        else:
+            pictures = {
+                i: _reduce(_open(path), 2 * max(profile.image_width, profile.image_height))
+                for i, (_, path) in media.items()
+            }
+            data = photo_post(pictures, plan, profile.image_width, profile.image_height)
+            name = f"{job.platform}-{job.id}.jpg"
     used = originals + sounds + [a for a in (logo, music) if a]
     customer = [a for a in used if (a.tags or {}).get("real_customer_content")]
     edit = {k: v for k, v in saved.items() if k not in {"problem"}} | {"tools": TOOLS}
