@@ -2,7 +2,9 @@
 
 import hashlib
 import math
+import time
 from datetime import timedelta
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Literal
 
@@ -15,6 +17,7 @@ from .db import now, uid
 from .idea_plan import END_CARD_SECONDS, MAX_CLIPS, MIN_CLIP_SECONDS, Shot
 from .lifecycle import transition
 from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob, Post
+from .monitoring import event
 from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
 from .provenance import requires_ai_review
@@ -212,6 +215,49 @@ class WebsiteText(HTMLParser):
             self.lines.append(text)
 
 
+class WebsiteContextError(ValueError):
+    def __init__(self, reason, *, retryable=False, retry_after=0):
+        self.retryable, self.retry_after = retryable, retry_after
+        super().__init__(
+            f"Could not read tudelu.com brand context: {reason}. Retry later or turn off website inspiration."
+        )
+
+
+def website_retry_after(response):
+    """Honor a site's Retry-After without retaining response headers or URLs in errors."""
+    value = response.headers.get("retry-after", "")
+    try:
+        delay = int(value) if value.isdigit() else parsedate_to_datetime(value).timestamp() - time.time()
+        now() + timedelta(seconds=delay)  # Reject delays outside the supported timestamp range.
+        return max(0, delay)
+    except (ValueError, TypeError, OverflowError):
+        return 0
+
+
+def _website_snapshot():
+    # Fixed company origin; no arbitrary URLs, scripts, or instructions are executed.
+    with httpx.Client(timeout=httpx.Timeout(15, connect=5), follow_redirects=False) as client:
+        with client.stream("GET", "https://tudelu.com/") as response:
+            response.raise_for_status()
+            content = bytearray()
+            for part in response.iter_bytes(chunk_size=65536):
+                if len(content) + len(part) > 2_000_000:
+                    raise WebsiteContextError("the website response exceeded the 2 MB limit")
+                content.extend(part)
+    parser = WebsiteText()
+    parser.feed(content.decode("utf-8", errors="replace"))
+    text = " | ".join([m for m in parser.meta if m.strip()] + parser.lines)[:6000]
+    if not text:
+        raise WebsiteContextError("the page contained no readable brand context")
+    return {
+        "url": "https://tudelu.com/",
+        "text": text,
+        "image_descriptions": list(dict.fromkeys(parser.images))[:30],
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "fetched_at": now().isoformat(),
+    }
+
+
 def website_snapshot(settings):
     if settings.ai_mode == "fixture":
         return {
@@ -220,32 +266,27 @@ def website_snapshot(settings):
             "image_descriptions": [],
             "demo_only": True,
         }
-    try:
-        # Fixed company origin; no arbitrary URLs, scripts, or instructions are executed.
-        with httpx.Client(timeout=15, follow_redirects=False) as client:
-            with client.stream("GET", "https://tudelu.com/") as response:
-                response.raise_for_status()
-                content = bytearray()
-                for part in response.iter_bytes():
-                    content.extend(part)
-                    if len(content) > 2_000_000:
-                        raise ValueError("Website response too large")
-        parser = WebsiteText()
-        parser.feed(content.decode("utf-8", errors="replace"))
-        text = " | ".join([m for m in parser.meta if m.strip()] + parser.lines)[:6000]
-        if not text:
-            raise ValueError("No brand context on website")
-        return {
-            "url": "https://tudelu.com/",
-            "text": text,
-            "image_descriptions": list(dict.fromkeys(parser.images))[:30],
-            "sha256": hashlib.sha256(content).hexdigest(),
-            "fetched_at": now().isoformat(),
-        }
-    except (httpx.HTTPError, ValueError):
-        raise ValueError(
-            "Could not read tudelu.com brand context. Retry later or turn off website inspiration."
-        ) from None
+    for attempt in range(2):
+        status = None
+        try:
+            return _website_snapshot()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            error = WebsiteContextError(
+                f"the website returned HTTP {status}", retryable=status in {408, 429} or status >= 500,
+                retry_after=max(300 if status == 429 else 0, website_retry_after(exc.response)),
+            )
+        except httpx.TimeoutException:
+            error = WebsiteContextError("the website request timed out", retryable=True)
+        except httpx.HTTPError:
+            error = WebsiteContextError("the website connection failed", retryable=True)
+        except WebsiteContextError as exc:
+            error = exc
+        event("website_context_failed", attempt=attempt + 1, status=status, retryable=error.retryable,
+              reason=str(error))
+        if not error.retryable or error.retry_after or attempt == 1:
+            raise error from None
+        time.sleep(1)
 
 
 def validate_sources(db, brief, *, live=False):
@@ -723,6 +764,15 @@ def replenish_campaigns(db, settings):
             campaign.sequence += 1
             campaign.next_run_at = now() + timedelta(hours=brief.interval_hours)
             campaign.error = ""
+            db.commit()
+        except WebsiteContextError as exc:
+            db.rollback()
+            campaign.error = str(exc)
+            if exc.retryable:
+                campaign.next_run_at = now() + timedelta(seconds=max(300, exc.retry_after))
+                campaign.error += f" Campaign remains enabled; next attempt at {campaign.next_run_at.isoformat()} UTC."
+            else:
+                campaign.enabled = False
             db.commit()
         except ValueError as exc:
             db.rollback()

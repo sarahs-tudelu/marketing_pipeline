@@ -27,6 +27,15 @@ API and campaign-file import use the same validation. The interval sets the next
 worker timing, automation/live-account requirements and waiting for the previous batch still apply.
 Not public is a usage-rights restriction, not a switch that changes a connected platform to dry-run mode.
 
+Website inspiration reads fresh text from the fixed `https://tudelu.com/` origin. Temporary connection,
+timeout and server failures receive at most one immediate retry; a rate limit or `Retry-After` response
+defers the retry instead. If the fetch still fails temporarily, an enabled campaign stays enabled and
+tries again after at least five minutes, respecting a longer `Retry-After`. The failed fetch creates no
+media jobs and does not advance the campaign sequence. Access errors, unexpected redirects, oversized
+pages and pages without readable context still require attention. The error includes a sanitized cause;
+the app does not silently replace website inspiration with fixture or invented content. Campaigns paused
+by the older generic website error must be enabled again manually after the site is reachable.
+
 Before starting updated services, run `tudelu init` (or `alembic upgrade head`) using the intended deployment environment. Migration `9b61d8c4a201` adds `media_jobs` and `media_campaigns` without modifying existing posts. Migration `d3a7f1c58e42` adds the optional asset `owner` column; existing rights text is unchanged. The Droplet Compose migration service runs this upgrade during deployment. Rebuild/recreate both web and worker. This repository update does not deploy to the Droplet or enable live publication.
 
 ## Inputs and operations
