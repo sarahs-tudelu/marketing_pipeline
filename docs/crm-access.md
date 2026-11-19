@@ -15,4 +15,16 @@ The Studio records the authenticated CRM account ID and its display label at sub
 3. Set `AUTH_MODE=crm`, `CRM_ACCESS_URL` to the full HTTPS CRM API URL ending in `/auth/social-studio/access`, and `CRM_SESSION_COOKIE` to the CRM's configured cookie name (production default `TUDELU_TOKEN`). Set `APP_BASE_URL` to the Studio origin. Keep the separate media delivery origin for publishing. The existing office/VPN network rule also applies.
 4. Apply the Studio migration with the normal release procedure before starting the updated web and worker. It adds nullable attribution columns to existing posts. Studio sends only the named cookie to the configured endpoint and checks the CRM decision on each protected request. An unavailable CRM returns a temporary sign-in error.
 
+For the production Tudelu hostnames, set `SOCIAL_STUDIO_URL=https://social.tudelu.com` in the CRM frontend environment. In `/opt/tudelu/.env` on the Studio Droplet, set:
+
+```dotenv
+AUTH_MODE=crm
+APP_BASE_URL=https://social.tudelu.com
+CRM_ACCESS_URL=https://api.tudelu.com/api/auth/social-studio/access
+CRM_SESSION_COOKIE=TUDELU_TOKEN
+MEDIA_BASE_URL=https://media.tudelu.com
+```
+
+The production CRM session cookie must cover `social.tudelu.com`. Follow the [Droplet release procedure](digitalocean.md#deploy-after-configuration) after editing the environment. To confirm the running web container picked up the change, run `docker compose -f compose.droplet.yaml exec -T web printenv AUTH_MODE CRM_ACCESS_URL CRM_SESSION_COOKIE` from `/opt/tudelu`.
+
 After deployment, verify one admin can open Connections, an editor can submit an idea and open its result, and another editor gets a missing-post response for the same post URL. Confirm that removing the editor role blocks a previously open tab on refresh.

@@ -254,6 +254,7 @@ def test_droplet_compose_only_exposes_https_proxy():
     assert "db" not in config["services"] and "postgres" not in config["volumes"]
     assert "depends_on" not in config["services"]["migrate"]
     for name in ("web", "worker", "migrate"):
+        assert config["services"][name]["environment"]["AUTH_MODE"] == "${AUTH_MODE:-basic}"
         mount = next(m for m in config["services"][name]["volumes"] if isinstance(m, dict))
         assert mount["target"] == "/run/database-certs" and mount["read_only"]
         assert mount["bind"]["create_host_path"] is False

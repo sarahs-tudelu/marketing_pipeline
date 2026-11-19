@@ -11,7 +11,7 @@ x-app: &app
   environment:
     ENVIRONMENT: production
     SECRET_BACKEND: google
-    AUTH_MODE: basic
+    AUTH_MODE: ${AUTH_MODE:-basic}
     GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google_adc
     SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
     TUDELU_ENV_FILE: /dev/null
