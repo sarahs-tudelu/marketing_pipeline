@@ -10,7 +10,7 @@
     <label>Your prompt<textarea name="prompt" rows="4" maxlength="1000" required placeholder="Describe the scene, mood, movement or edit you have in mind.">{{ asset_form.get('prompt', '') }}</textarea></label>
     <div class="two">
       <label>Make<select name="operation">
-        {% for value, label in [('image','AI image'),('video','AI video from text or an image'),('video_edit','AI re-render of an uploaded video'),('real','Real project: edit your photos and videos'),('audio','Audio from a prompt or audio bite'),('mixed','Varied: real projects and AI inspiration (recurring)')] %}
+        {% for value, label in [('image','AI image'),('video','AI video from a photo or video reference'),('video_edit','AI re-render of an uploaded video'),('real','Real project: edit your photos and videos'),('audio','Audio from a prompt or audio bite'),('mixed','Varied: real projects and AI inspiration (recurring)')] %}
         <option value="{{ value }}" {{ 'selected' if asset_form.get('operation') == value else '' }}>{{ label }}</option>{% endfor %}
       </select></label>
       <label>Content style<select name="kind">
@@ -28,9 +28,11 @@
     </div>
     <label class="checkbox"><input type="checkbox" name="website" {{ 'checked' if asset_form.get('website', 'on') == 'on' else '' }}>Use website text for creative direction</label>
     <small>Your prompt controls settings, architecture and supported colors and finishes. Company references guide accurate products under the Builder rules, with a shared look across clips. Each generated video clip includes a new scene image followed by animation.</small>
-    <p class="muted">Each Runway prompt is written when the job starts, from your prompt, tudelu.com, the selected approved facts, Public company uploads and previous generations. It always depicts a system Tudelu offers. Approved facts remain the only source for caption claims.</p>
+    <p class="muted">The worker writes each Runway prompt from your idea, product references, approved facts and the website context you select. Not public references can be used for Not public output. Approved facts supply the caption claims.</p>
     <fieldset><legend>Reference media from your library / bucket</legend>
-      <p class="muted">Real project: your own photos and videos of completed projects, or none to use the real media in the library. They're edited with standard tools only (crop, straighten, colour, collage, trim and join, your audio placed as recorded) and keep no AI label. AI images: up to 3 references. AI video: 1 product reference image. AI re-render: 1 video, redrawn by Runway; longer edits are split into segments of up to 30 seconds. Audio: up to 3 bites. A mixed campaign alternates real projects from the selected real media with AI inspiration made from the selected images.</p>
+      <p class="muted">Leave the selection empty to let a campaign find photos and videos that fit your prompt, or choose the files you want it to draw from. A single photo can guide a new AI video. A video reference can supply a still frame.</p>
+      <p class="muted">Varied campaigns alternate real project posts with AI inspiration. To show both in one video, try “Open with our original pergola photo, then show the same design at dusk.” Allow at least 7 seconds including the logo ending.</p>
+      <small>AI images accept up to 3 references. AI video accepts 1 reference. Re-rendering uses 1 source video. Audio accepts up to 3 bites.</small>
       {% with p=campaign_picker, picker_name='reference_ids', picker_checked=asset_form.get('reference_ids', []), picker_id='campaign-library', picker_title='Choose from the asset library' %}{% include "media_picker.html" %}{% endwith %}
     </fieldset>
     <details><summary>Video soundtrack</summary>
@@ -43,7 +45,7 @@
       <label>Recurring interval (hours)<input type="number" name="interval_hours" min="0" step="any" required aria-describedby="campaign-interval-help" value="{{ asset_form.get('interval_hours', '24') }}"></label>
     </div>
     <p id="campaign-interval-help" class="muted">Not public: any positive number of hours, including decimals (0.25 = 15 minutes). Public: 24 to 720 whole hours. The next batch waits for the previous batch to finish.</p>
-    <p class="muted">5 to 90 seconds, including the 3-second logo ending. Generated clips are at most {{ 8 if settings.runway_video_model == 'veo3.1' else 10 }} seconds; edit segments are at most 30 seconds. Each clip uses a separate Runway task and incurs its own generation cost.</p>
+    <p class="muted">Videos run 5 to 90 seconds including the 3-second logo ending. Each generated clip runs up to {{ 8 if settings.runway_video_model == 'veo3.1' else 10 }} seconds and incurs Runway generation costs. Re-rendered segments run up to 30 seconds. The app inserts original shots locally.</p>
     {% with values=asset_form, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
     <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
     <p class="muted">Create now runs media, captions, checks and scheduling even when routine automation is off. Next automatic post waits for Automatic posts to be on. Global and platform pauses still apply. Recurring campaigns are saved paused and wait for live, connected accounts.</p>

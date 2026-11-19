@@ -172,6 +172,8 @@ def parts(db, job, vision, audio):
         if all(s.get("output_asset_id") for s in segments):
             marked = flagged(vision, segments)
             for s in segments:
+                if s.get("original_asset_id"):
+                    continue
                 prompt = s.get("prompt") or prompts.get(s["index"], "")
                 if not prompt:
                     return []
@@ -449,6 +451,11 @@ def auto_regenerate(db, settings, post):
     if attempt > limit:
         return None
     visual = [p for p in parts(db, job, vision, {}) if p["kind"] != "music"]
+    segments = job.brief.get("video_segments") or []
+    original_indices = {s["index"] for s in segments if s.get("original_asset_id")}
+    if original_indices and original_indices.intersection(flagged(vision, segments)):
+        # A different AI take cannot correct a problem in the recorded original.
+        return None
     chosen = [p for p in visual if p["flagged"]] or visual
     if not chosen:
         return None

@@ -95,6 +95,11 @@ def vision_context(context):
             "generation_prompt": (asset.get("source_or_creation_record") or {}).get("prompt", ""),
             "creative_brief": {key: brief[key] for key in ("prompt", "concept", "system") if key in brief},
         }
+        inserts = [{"start": s["start"], "duration": s["duration"], "kind": s.get("original_kind")}
+                   for s in tags.get("video_sequence", []) if isinstance(s, dict) and s.get("original_asset_id")
+                   and "start" in s and "duration" in s]
+        if inserts:
+            record["scene_intent"]["original_shots"] = inserts
         assets.append(record)
     return {
         "review_scope": "media_only",
@@ -498,6 +503,9 @@ class OpenAI:
                 "supplied as company media and appended by the app after generation; that logo is expected. "
                 "Flag it only if it is distorted, cropped or not Tudelu's. Logos or brand text inside the "
                 "generated scenes before the end card remain misused logos. "
+                "original_shots gives the time spans of original photos or footage cut into this AI video. "
+                "A photo can intentionally hold still, and a cut can change the setting. Review the visible "
+                "content throughout those spans as well as in the generated scenes. "
                 "When facts.visual_guidance is present, independently compare every depicted product with its "
                 "matching product profile and global_rules, read through product_constraints, the owner's current "
                 "instructions: " + SCOPE_REASONING + " " + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " "

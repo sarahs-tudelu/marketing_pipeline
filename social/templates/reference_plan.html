@@ -1,7 +1,7 @@
 {% if plan %}
 <details><summary>{{ reference_label|default('Product reference') }}</summary>
   {% for r in plan.references %}
-  <p>{{ 'Google Drive photo' if r.origin == 'google_drive' else 'Company library reference' if r.origin == 'asset_library' else 'Tudelu website reference' }}: {{ r.original_name }}</p>
+  <p>{{ {'google_drive': 'Google Drive photo', 'asset_library': 'Company library reference', 'video_frame': 'Frame from uploaded video'}.get(r.origin, 'Tudelu website reference') }} · {{ r.original_name }}{% if r.origin == 'video_frame' %} · {{ '%g'|format(r.frame_seconds) }} s into <a href="/admin/assets/{{ r.video_asset_id }}/edit">the source video</a>{% endif %}</p>
   <a href="{{ media_base_url ~ '/' ~ (r.storage_key|urlencode) if r.asset_id else r.source_url }}" target="_blank" rel="noopener noreferrer">View source image</a>
   {% endfor %}
   {% if plan.get('scene_reference') %}<p><a href="{{ media_base_url ~ '/' ~ (plan.scene_reference.storage_key|urlencode) }}" target="_blank" rel="noopener noreferrer">View generated scene</a> · {{ 'Checked for animation' if plan.get('scene_check', {}).get('passed') else 'Rejected before animation' if plan.get('scene_check', {}).get('passed') == false else 'Awaiting scene check' }}</p>{% endif %}

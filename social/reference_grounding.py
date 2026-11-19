@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
+import av
 import httpx
 import yaml
 from PIL import Image
@@ -40,7 +41,7 @@ from .rendering_guidelines import (
     VERSION,
     policy,
 )
-from .storage import storage
+from .storage import ingest, source_files, storage
 from .video_segments import current_segment
 from .visual_context import visual_inputs
 
@@ -116,23 +117,20 @@ def builder_guidance(db, job):
     )
 
 
-def usable(asset):
+def usable(asset, *, private=False):
     return bool(
         asset
-        and asset.rights == "public"
-        and not asset.demo_only
+        and source_cleared(asset, private)
         and asset.media.get("mime", "").startswith("image/")
         and not asset.tags.get("brand_logo")
-        and not asset.tags.get("rendition")
-        and not (asset.rights_expire_at and asset.rights_expire_at <= now())
-        and not (
-            asset.tags.get("real_customer_content")
-            and not (asset.customer_permission and asset.permission_reference)
-        )
+        and (not asset.tags.get("rendition") or asset.tags.get("video_reference_frame"))
     )
 
 
 def asset_record(asset):
+    frame = asset.tags.get("video_reference_frame")
+    parents = asset.tags.get("source_asset_ids", [])
+    recorded_frame = isinstance(frame, dict) and isinstance(frame.get("seconds"), (float, int)) and bool(parents)
     return {
         "id": asset.id,
         "asset_id": asset.id,
@@ -140,7 +138,8 @@ def asset_record(asset):
         "checksum": asset.checksum,
         "original_name": asset.original_name,
         "media": asset.media,
-        "origin": "google_drive" if asset.tags.get("google_drive_file_id") else "asset_library",
+        "origin": "video_frame" if recorded_frame else "google_drive" if asset.tags.get("google_drive_file_id") else "asset_library",
+        **({"frame_seconds": frame["seconds"], "video_asset_id": parents[0]} if recorded_frame else {}),
         "source_url": asset.tags.get("source_url", ""),
         "rights": asset.rights,
         "source": asset.source,
@@ -252,14 +251,31 @@ def website_references(db, settings, job, family, client=None):
 
 def candidates(db, settings, job, profile):
     selected = job.brief.get("reference_ids", [])
+    pool = job.brief.get("campaign_reference_ids") or []
+    private = job.brief.get("rights") == "not_public"
+    if pool:
+        # A campaign with library material grounds its scenes in that shortlist.
+        inserts = [s["original_asset_id"] for s in job.brief.get("video_segments", []) if s.get("original_asset_id")]
+        selected = list(dict.fromkeys(inserts + selected))
+        pool = list(dict.fromkeys(selected + pool))
+        assets = [db.get(Asset, i) for i in pool]
+    else:
+        assets = list(db.scalars(select(Asset).where(Asset.rights == "public", Asset.removed_at.is_(None))
+                                         .order_by(Asset.created_at.desc())))
+        # Explicitly chosen private references are allowed only for a private output.
+        if private:
+            known = {a.id for a in assets}
+            assets = [db.get(Asset, i) for i in selected if i not in known] + assets
     aliases = [normalize(n) for n in [profile.product_id, profile.name, *profile.aliases]]
-    assets = [
-        a
-        for a in db.scalars(
-            select(Asset).where(Asset.rights == "public", Asset.removed_at.is_(None)).order_by(Asset.created_at.desc())
-        )
-        if usable(a) and (a.id in selected or not requires_ai_review(a))
-    ]
+    eligible = []
+    for asset in assets:
+        if not asset or asset.removed_at or asset.tags.get("rendition") or asset.tags.get("brand_logo"):
+            continue
+        if asset.media["mime"].startswith("video/") and asset.id in (pool or selected):
+            if source_cleared(asset, private):
+                eligible.append(asset)
+        elif usable(asset, private=private) and (asset.id in selected or not requires_ai_review(asset)):
+            eligible.append(asset)
 
     def rank(a):
         description = normalize(
@@ -272,11 +288,49 @@ def candidates(db, settings, job, profile):
         match = any(n in description for n in aliases)
         return (a.id not in selected, not match, not bool(a.tags.get("google_drive_file_id")))
 
-    assets.sort(key=rank)
-    records = [asset_record(a) for a in assets[:6]]
+    eligible.sort(key=rank)
+    records = [asset_record(video_reference_frame(db, settings, job, a)) if a.media["mime"].startswith("video/")
+               else asset_record(a) for a in eligible[:6]]
+    if pool:
+        return records
     # Website and Drive references are both available to the visual selector, not just their captions.
     records += website_references(db, settings, job, profile.product_id)
     return records
+
+
+def video_reference_frame(db, settings, job, original):
+    """Keep one traceable still so Runway's image endpoints never receive an MP4 as a photo."""
+    saved = job.brief.get("video_reference_frames", {})
+    if original.id in saved:
+        frame = db.get(Asset, saved[original.id])
+        if frame and not frame.removed_at and frame.tags["video_reference_frame"]["checksum"] == original.checksum:
+            return frame
+    with source_files(settings, [original]) as files, av.open(str(files[original.id])) as video:
+        stream = video.streams.video[0]
+        midpoint = original.media["duration"] / 2
+        video.seek(int(midpoint * av.time_base), backward=True)
+        picture = None
+        for picture in video.decode(stream):
+            if picture.time is None or picture.time >= midpoint:
+                break
+        if picture is None:
+            raise ValueError(f"Could not read a reference frame from {original.original_name}. Choose another file.")
+        image = picture.to_image()
+        image.thumbnail((1920, 1920))
+        output = io.BytesIO()
+        image.convert("RGB").save(output, "JPEG", quality=92)
+        seconds = float(picture.time or 0)
+    frame = ingest(
+        db, settings, output.getvalue(), f"{Path(original.original_name).stem[:190]}-frame.jpg",
+        source=original.source, generator=original.generator, prompt=original.prompt, rights=original.rights,
+        owner=original.owner, rights_expire_at=original.rights_expire_at, demo_only=original.demo_only,
+        customer_permission=original.customer_permission, permission_reference=original.permission_reference,
+        tags=original.tags | {"source_asset_ids": [original.id], "rendition": {"original_asset_id": original.id},
+                              "video_reference_frame": {"seconds": seconds, "checksum": original.checksum}},
+    )
+    job.brief = job.brief | {"video_reference_frames": saved | {original.id: frame.id}}
+    db.commit()
+    return frame
 
 
 def select_reference(settings, records, context):
@@ -469,11 +523,22 @@ def style_reference(job):
     return None
 
 
-def validate_record(db, settings, record):
+def source_cleared(asset, private, *, scene_rights=None):
+    return (
+        asset.removed_at is None
+        and not asset.demo_only
+        and (asset.rights == "public" or (private and asset.rights == "not_public")
+             or (asset.tags.get("generated_scene") and asset.rights == scene_rights))
+        and not (asset.rights_expire_at and asset.rights_expire_at <= now())
+        and not (asset.tags.get("real_customer_content") and not (asset.customer_permission and asset.permission_reference))
+    )
+
+
+def validate_record(db, settings, record, *, private=False):
     if record.get("asset_id"):
         asset = db.get(Asset, record["asset_id"])
         if (
-            not usable(asset)
+            not usable(asset, private=private)
             or asset.checksum != record["checksum"]
             or asset_record(asset)["metadata_digest"] != record.get("metadata_digest")
         ):
@@ -483,16 +548,8 @@ def validate_record(db, settings, record):
         from .asset_edit import ancestry
 
         sources, missing = ancestry(db, [asset])
-        if missing or any(
-            a.rights != "public"
-            or a.demo_only
-            or (a.rights_expire_at and a.rights_expire_at <= now())
-            or (
-                a.tags.get("real_customer_content") and not (a.customer_permission and a.permission_reference)
-            )
-            for a in sources
-        ):
-            raise ValueError("The product reference's source media is not cleared for Public use.")
+        if missing or any(not source_cleared(a, private) for a in sources):
+            raise ValueError("The product reference's source media is not cleared for this use.")
     read_reference(settings, record)
 
 
@@ -563,10 +620,12 @@ def prepare(db, settings, job):
         saved.get("scene_reference") and saved.get("request_digest") == request_digest
     ):
         for record in saved["references"]:
-            validate_record(db, settings, record)
+            validate_record(db, settings, record, private=job.brief.get("rights") == "not_public")
         return saved["references"]
     records = candidates(db, settings, job, profile)
     if not records:
+        if job.brief.get("campaign_reference_ids"):
+            raise ValueError(f"No cleared reference remains in this campaign's selection for {profile.name}.")
         raise ValueError(
             f"No Public product reference is available for {profile.name}. Import a matching photo from Google Drive or upload one."
         )
@@ -619,7 +678,7 @@ def prepare(db, settings, job):
         raise ValueError(
             "Reference review selected an unknown image. Resume to choose from the available company references."
         )
-    validate_record(db, settings, record)
+    validate_record(db, settings, record, private=job.brief.get("rights") == "not_public")
     still_prompt = choice.scene_prompt if job.brief["operation"] == "video" else choice.prompt
     scene_prompt = compose_scene_prompt(
         still_prompt or choice.prompt, choice.scene_requirements, profile

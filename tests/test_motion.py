@@ -124,3 +124,14 @@ def test_single_takes_are_measured_but_placeholders_edits_and_uploads_are_not(db
     for kwargs in ({"demo": True}, {"mode": "fixture"}, {"operation": "video_edit"}):
         other = generated_video(db, settings, frozen(), **kwargs)
         assert still_clips(db, settings, [other]) == []
+
+
+def test_hybrid_video_measures_generated_motion_around_original_shots(db, settings):
+    video = generated_video(db, settings, [*frozen(), *frozen(), *walking(), *[scene(3)] * (2 * FPS)])
+    job = db.get(MediaJob, video.tags["media_job_id"])
+    sequence = list(video.tags["video_sequence"])
+    sequence[0] = sequence[0] | {"original_asset_id": "original-photo"}
+    job.brief = job.brief | {"video_segments": sequence}
+    job.output_asset_id = video.id
+    db.commit()
+    assert [c["clip"] for c in still_clips(db, settings, [video])] == [2]

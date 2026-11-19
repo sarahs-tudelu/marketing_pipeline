@@ -214,7 +214,8 @@ def recent_uses(db):
     return uses
 
 
-def real_choice(db, brief, sources, profile, platform, turn, *, live=False, drive_only=False, keep_order=False):
+def real_choice(db, brief, sources, profile, platform, turn, *, live=False, drive_only=False, keep_order=False,
+                library=None, scores=None):
     """The real-project post for a platform: (format, media IDs, audio IDs), or None when nothing fits.
 
     The real photos and videos picked for the brief are used; with none picked, the library's. Media not
@@ -231,7 +232,9 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False, driv
 
     media = [a for a in sources if a.id in brief.reference_ids and fits(a, real_asset)]
     picked = bool(media)
-    if not media:
+    if not media and library is not None and not brief.reference_ids:
+        media = [a for a in library if fits(a, real_asset)]
+    elif not media and not brief.reference_ids:
         # Every original: platform copies of posts are company files too, and would crowd them out of a limit.
         media = [
             a
@@ -244,11 +247,13 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False, driv
         ]
     uses = recent_uses(db)
     if not (picked and keep_order):
-        media.sort(key=lambda a: (_product_rank(a, brief.product) or 0, a.id in uses, -uses.get(a.id, 0)))
+        media.sort(key=lambda a: (-(scores or {}).get(a.id, 0), _product_rank(a, brief.product) or 0,
+                                  a.id in uses, -uses.get(a.id, 0)))
     photos = [a for a in media if a.media["mime"].startswith("image/")]
     videos = [a for a in media if a.media["mime"].startswith("video/")]
     photo_posts = bool(photos and profile.image_formats)
-    formats = (["video"] if videos or (photos and not photo_posts) else []) + (["photo"] if photo_posts else [])
+    formats = (["video"] if videos or (photos and (not photo_posts or brief.real_format == "video")) else [])
+    formats += ["photo"] if photo_posts else []
     if not formats:
         return None
     chosen = brief.real_format if brief.real_format in formats else formats[turn % len(formats)]
@@ -257,6 +262,8 @@ def real_choice(db, brief, sources, profile, platform, turn, *, live=False, driv
     else:
         ids = [a.id for a in videos[:VIDEO_CANDIDATES]]
         ids += [a.id for a in photos[: (VIDEO_CANDIDATES if videos else PHOTO_CANDIDATES)]]
+        if scores:
+            ids.sort(key=lambda asset_id: -scores.get(asset_id, 0))
     sounds = []
     if chosen == "video":
         sounds = [a.id for a in sources if a.id in brief.audio_reference_ids and fits(a, real_sound)]

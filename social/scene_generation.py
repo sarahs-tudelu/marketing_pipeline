@@ -15,6 +15,7 @@ from .reference_grounding import (
     current_plan,
     read_reference,
     save_plan,
+    source_cleared,
     validate_record,
 )
 from .rendering_guidelines import SELECTION_VERSION, STRUCTURE_SELECTION, policy
@@ -33,11 +34,10 @@ class SceneCheck(BaseModel):
 
 
 def validate_scene(db, settings, record):
-    # Internally generated scene assets inherit the output's permissions, which may be private.
-    # They cannot become product evidence or bypass the separately revalidated Public sources.
+    # Intermediate scenes inherit their source permissions and can be private.
     asset = db.get(Asset, record["asset_id"])
     if (
-        asset is None
+        asset is None or asset.removed_at is not None
         or not asset.tags.get("generated_scene")
         or asset.demo_only
         or asset.checksum != record["checksum"]
@@ -53,10 +53,7 @@ def validate_scene(db, settings, record):
 
     sources, missing = ancestry(db, [asset])
     if missing or any(
-        a.demo_only
-        or (a.rights_expire_at and a.rights_expire_at <= now())
-        or (not a.tags.get("generated_scene") and a.rights != "public")
-        or (a.tags.get("real_customer_content") and not (a.customer_permission and a.permission_reference))
+        not source_cleared(a, private=asset.rights == "not_public", scene_rights=asset.rights)
         for a in sources
     ):
         raise ValueError("The generated scene's source permissions changed. Choose cleared references again.")
@@ -217,7 +214,7 @@ def save_scene(db, settings, job, data):
     segment = current_segment(job)
     records = [*plan["references"], *([plan["style_reference"]] if plan.get("style_reference") else [])]
     for record in plan["references"]:
-        validate_record(db, settings, record)
+        validate_record(db, settings, record, private=job.brief.get("rights") == "not_public")
     if plan.get("style_reference"):
         validate_scene(db, settings, plan["style_reference"])
     sources = [db.get(Asset, r["asset_id"]) for r in records if r.get("asset_id")]

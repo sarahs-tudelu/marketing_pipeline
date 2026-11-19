@@ -3,6 +3,8 @@
 import hashlib
 import math
 
+from PIL import Image, ImageOps
+
 from .models import Asset
 from .prompting import utf16_trim
 from .renditions import video_rendition
@@ -34,6 +36,69 @@ def plan_segments(duration, maximum, count=None):
         result.append({"index": index, "start": start, "duration": length})
         start += length
     return result
+
+
+def with_original_cuts(brief, cuts, candidates):
+    """Mark the original shots as available and send only the remaining footage to Runway."""
+    from .runway import video_clip_limit
+
+    available = {item["asset_id"]: item for item in candidates}
+    placements = {"opening": [], "middle": [], "closing": []}
+    remaining = sum(s["duration"] for s in brief["video_segments"])
+    for cut in cuts:
+        source = available.pop(cut.asset_id, None)
+        if not source or (source["kind"] == "photo" and cut.start) or (
+            source["kind"] == "video" and cut.start + cut.seconds > source["seconds"]
+        ):
+            raise ValueError("The planned original shot does not fit its source. Resume to replan.")
+        placements[cut.placement].append({
+            "duration": cut.seconds, "original_asset_id": cut.asset_id, "original_kind": source["kind"],
+            "source_start": cut.start, "output_asset_id": cut.asset_id,
+        })
+        remaining -= cut.seconds
+    middle = placements["middle"]
+    if remaining < (4 if middle else 2):
+        raise ValueError("The original shots leave too little time for the generated scenes. Resume to replan.")
+    segments = plan_segments(remaining, video_clip_limit(brief["runway_video_model"]), 2 if middle else None)
+    split = (len(segments) + 1) // 2
+    segments = placements["opening"] + segments[:split] + middle + segments[split:] + placements["closing"]
+    start = 0
+    for i, segment in enumerate(segments):
+        segment.update(index=i, start=start)
+        start += segment["duration"]
+    return segments
+
+
+def original_shots(db, brief):
+    from .asset_edit import ancestry
+    from .real_edit import _cleared, real_asset
+
+    originals = []
+    permissions = {"live": brief["execution_mode"] == "live", "public": brief["rights"] != "not_public"}
+    for segment in brief.get("video_segments", []):
+        if source_id := segment.get("original_asset_id"):
+            asset = db.get(Asset, source_id)
+            if not asset or asset.removed_at or not real_asset(asset, **permissions):
+                raise ValueError("An original shot is no longer cleared for this campaign.")
+            originals.append(asset)
+    sources, missing = ancestry(db, originals)
+    if missing or any(a.removed_at or not _cleared(a, **permissions) for a in sources):
+        raise ValueError("Source material for an original shot is no longer cleared for this campaign.")
+    return originals
+
+
+def sequence_clip(db, segment, files, profile):
+    from .real_edit import EditItem, still_clip
+
+    asset = db.get(Asset, segment["output_asset_id"]) if segment.get("output_asset_id") else None
+    if not asset or asset.id not in files:
+        raise ValueError("A planned video clip is missing; resume generation before assembly")
+    clip = files[asset.id]
+    if segment.get("original_asset_id") and asset.media["mime"].startswith("image/"):
+        with Image.open(clip) as picture:
+            clip = still_clip(ImageOps.exif_transpose(picture), EditItem(asset_id=asset.id, framing="fit"),
+                              profile.video_width, profile.video_height, segment["duration"])
+    return clip, segment.get("source_start", 0), segment["duration"]
 
 
 def current_segment(job):

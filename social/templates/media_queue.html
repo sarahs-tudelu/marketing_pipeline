@@ -16,6 +16,7 @@
     {% if j.state == 'uncertain' and not j.task_id %}<form method="post" action="/forms/media-jobs/{{ j.id }}/reconcile"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Original Runway task ID<input name="task_id" required pattern="[A-Za-z0-9_-]{1,100}"></label><button>Recover original task</button></form>{% endif %}
     {% if j.brief.get('video_segments') %}
       {% set completed_clips = j.brief.video_segments|selectattr('output_asset_id', 'defined')|list|length %}
+      {% for s in j.brief.video_segments if s.get('original_asset_id') %}<p>Clip {{ s.index + 1 }} uses {{ s.duration }} seconds from <a href="/admin/assets/{{ s.original_asset_id }}/edit">the original library media</a>.</p>{% endfor %}
       <p data-completed-clips="{{ completed_clips }}">Video clips saved: {{ completed_clips }} / {{ j.brief.video_segments|length }} · Finished duration: {{ j.brief.duration }} seconds</p>
       {% if j.brief.video_segments[0].get('shot') %}<ol class="clip-summary">{% for s in j.brief.video_segments %}<li>{{ s.duration }} s · {{ s.shot.setting or 'Setting chosen by the writer' }}{% if s.get('system') or s.shot.system %} · {{ s.get('system') or s.shot.system }}{% endif %}{{ ' ✓' if s.get('output_asset_id') else '' }}</li>{% endfor %}{% if j.brief.get('end_card') %}<li>{{ j.brief.end_card.seconds }} s · Tudelu logo end card</li>{% endif %}</ol>{% endif %}
     {% endif %}

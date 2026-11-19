@@ -14,8 +14,9 @@ from sqlalchemy import case, or_, select, update
 
 from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
 from .db import now, uid
-from .idea_plan import END_CARD_SECONDS, MAX_CLIPS, MIN_CLIP_SECONDS, Shot
+from .idea_plan import END_CARD_SECONDS, MAX_CLIPS, MIN_CLIP_SECONDS, Shot, campaign_video_signals
 from .lifecycle import transition
+from .media_search import campaign_references, campaign_scores, campaign_visuals, library_media
 from .models import Account, Asset, Control, FactSheet, MediaCampaign, MediaJob, Post
 from .monitoring import event
 from .pipeline import draft
@@ -41,7 +42,15 @@ from .video_rules import (
     seed_for,
     track_tag,
 )
-from .video_segments import current_segment, edit_reference, plan_segments, save_segment_prompt, segment_brief
+from .video_segments import (
+    current_segment,
+    edit_reference,
+    original_shots,
+    plan_segments,
+    save_segment_prompt,
+    segment_brief,
+    sequence_clip,
+)
 
 # Directions describe how to show the chosen Tudelu system; the prompt writer picks the system.
 CONCEPTS = (
@@ -71,6 +80,8 @@ USE_CASES = (
     "an event venue, winery or garden terrace",
     "an indoor space divided or opened up for different uses",
 )
+
+REFERENCE_TYPES = {"image": ("image/", "video/"), "video": ("image/", "video/"), "video_edit": "video/", "audio": "audio/"}
 
 
 class CreativeBrief(BaseModel):
@@ -334,9 +345,8 @@ def validate_sources(db, brief, *, live=False):
         if any(a.media["mime"].startswith("audio/") for a in visual):
             raise ValueError("Put audio in the soundtrack selection")
         return sources
-    expected = {"image": "image/", "video": "image/", "video_edit": "video/", "audio": "audio/"}
-    if brief.operation in expected and any(
-        not a.media["mime"].startswith(expected[brief.operation]) for a in visual
+    if brief.operation in REFERENCE_TYPES and any(
+        not a.media["mime"].startswith(REFERENCE_TYPES[brief.operation]) for a in visual
     ):
         raise ValueError("Reference media type does not match the selected operation")
     limit = {"image": 3, "video": 1, "video_edit": 1, "audio": 3}.get(brief.operation, 30)
@@ -416,6 +426,21 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
     batch = f"{campaign.id}:{sequence}" if campaign else uid()
     # One ambient style per batch, so each platform's version of the post sounds the same.
     style = next_ambient_style(db)
+    campaign_media, scores = [], {}
+    discover = campaign and brief.operation in {"mixed", "real", "image", "video"}
+    if discover:
+        campaign_media = (
+            [a for a in sources if a.id in brief.reference_ids] if brief.reference_ids else
+            library_media(db, product=brief.product, public=brief.rights != "not_public",
+                          live=live or settings.ai_mode == "live", limit=None)
+        )
+        scores = campaign_scores(settings, brief.prompt, campaign_media)
+    footage = brief.duration - END_CARD_SECONDS
+    best_score = max(scores.values(), default=0)
+    edit_sources = [a for a in campaign_media if a.media["mime"].startswith("video/")
+                    and a.media["duration"] >= footage and scores[a.id] == best_score]
+    signals = campaign_video_signals(brief.prompt) if brief.operation == "mixed" else {}
+    video_requested = signals.get("video")
     result = []
     for platform in brief.platforms:
         profile = profiles(settings)[platform]
@@ -442,16 +467,18 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             # A mixed campaign alternates real projects with AI inspiration, so each kind has its own turn.
             turn = sequence // 2 if operation == "mixed" and not drive_only else sequence
             real = real_choice(
-                db, brief, sources, profile, platform, turn, live=live, drive_only=drive_only, keep_order=not campaign
+                db, brief.model_copy(update={"real_format": "video"}) if video_requested else brief,
+                sources, profile, platform, turn, live=live, drive_only=drive_only, keep_order=not campaign,
+                library=campaign_media if discover else None, scores=scores,
             )
             if (operation == "real" or drive_only) and not real:
                 raise ValueError(no_real_media(platform))
         if operation == "mixed":
             options = ["image", "video"]
-            if any(a.media["mime"].startswith("video/") for a in sources):
+            if edit_sources and (not video_requested or signals["edit"]):
                 # A Runway re-render of an uploaded video is AI media too.
                 options.append("video_edit")
-            if platform == "tiktok":
+            if platform == "tiktok" or video_requested:
                 options = [v for v in options if v != "image"]
             if real and (drive_only or sequence % 2 == 0):
                 operation = "real"
@@ -480,9 +507,18 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             values["kind"] = content_kind
             result.append(_add_job(db, brief, campaign, batch, platform, values))
             continue
-        mime = {"image": "image/", "video": "image/", "video_edit": "video/", "audio": "audio/"}[operation]
+        mime = REFERENCE_TYPES[operation]
         refs = [a.id for a in sources if a.id in brief.reference_ids and a.media["mime"].startswith(mime)]
-        if campaign and refs:
+        if discover:
+            if operation == "video_edit":
+                refs = [a.id for a in campaign_references(edit_sources, scores, repeat)]
+            else:
+                refs, originals = campaign_visuals(campaign_media, scores, repeat)
+                if refs:
+                    values["campaign_reference_ids"] = refs
+                if operation == "video" and not brief.shots:
+                    values["original_candidates"] = originals
+        elif campaign and refs:
             offset = repeat % len(refs)
             refs = refs[offset:] + refs[:offset]
         refs = refs[: 3 if operation in {"image", "audio"} else 1]
@@ -982,6 +1018,7 @@ def _finish(db, settings, job):
         if end_card and not logo:
             raise ValueError("The end-card logo is missing from the asset library; upload it and create the post again")
         sound_tags = {}
+        inserts = []
         if brief["operation"] == "image":
             data = storage(settings).read(first.storage_key)
             if hashlib.sha256(data).hexdigest() != first.checksum:
@@ -990,7 +1027,9 @@ def _finish(db, settings, job):
                                    source=first.source, generator=first.generator)
             name = f"{job.platform}-{job.id}.jpg"
         else:
-            with source_files(settings, [a for a in originals if not a.media["mime"].startswith("audio/")]) as files:
+            inserts = original_shots(db, brief)
+            visuals = [a for a in originals if not a.media["mime"].startswith("audio/")]
+            with source_files(settings, visuals + inserts) as files:
                 sound_asset = next((a for a in originals if a.media["mime"].startswith("audio/")), None)
                 soundtrack = storage(settings).read(sound_asset.storage_key) if sound_asset else None
                 if not logo:
@@ -1000,12 +1039,7 @@ def _finish(db, settings, job):
                         raise ValueError(NO_LOGO)
                     end_card = {"asset_id": logo.id, "seconds": END_CARD_SECONDS}
                 if brief.get("video_segments"):
-                    clips = []
-                    for segment in brief["video_segments"]:
-                        asset = db.get(Asset, segment.get("output_asset_id"))
-                        if not asset:
-                            raise ValueError("A planned video clip is missing; resume generation before assembly")
-                        clips.append((files[asset.id], 0, segment["duration"]))
+                    clips = [sequence_clip(db, segment, files, profile) for segment in brief["video_segments"]]
                 else:
                     clips = [(files[first.id], 0, brief["duration"])]
                 excess = sum(c[2] for c in clips) + end_card["seconds"] - profile.max_duration
@@ -1048,30 +1082,27 @@ def _finish(db, settings, job):
                                       require_full_duration=bool(brief.get("video_segments")))
                 name = f"{job.platform}-{job.id}.mp4"
         # A multi-clip video records every clip's prompt, not only the first clip's.
-        clip_prompts = list(dict.fromkeys(s["prompt"] for s in brief.get("video_segments", []) if s.get("prompt")))
+        clip_prompts = [f"Clip {s['index'] + 1}: {s['prompt']}" for s in brief.get("video_segments", []) if s.get("prompt")]
+        used_media = originals + inserts + ([logo] if logo else [])
+        source_ids = brief["reference_ids"] + brief.get("grounded_reference_ids", []) + brief["audio_reference_ids"]
+        source_ids += [a.id for a in used_media]
         result = ingest(
             db,
             settings,
             data,
             name,
-            source=first.source,
+            source="ai_edited" if inserts else first.source,
             generator=first.generator,
-            prompt=" ".join(f"Clip {n}: {p}" for n, p in enumerate(clip_prompts, 1))
-            if len(clip_prompts) > 1
-            else first.prompt,
-            rights=combined_rights(first.rights, [logo] if logo else []),
+            prompt=" ".join(clip_prompts) if len(clip_prompts) > 1 or (inserts and clip_prompts) else first.prompt,
+            rights=combined_rights(first.rights, used_media),
             owner=first.owner,
             rights_expire_at=min(
-                [e for e in (first.rights_expire_at, logo.rights_expire_at if logo else None) if e], default=None
+                [a.rights_expire_at for a in used_media if a.rights_expire_at], default=None
             ),
-            demo_only=first.demo_only or bool(logo and logo.demo_only),
+            demo_only=any(a.demo_only for a in used_media),
             tags=first.tags
             | {
-                "source_asset_ids": brief["reference_ids"]
-                + brief.get("grounded_reference_ids", [])
-                + brief["audio_reference_ids"]
-                + job.source_asset_ids
-                + ([logo.id] if logo else []),
+                "source_asset_ids": list(dict.fromkeys(source_ids)),
                 "rendition": {"platform": job.platform, "original_asset_id": first.id},
                 "media_job_id": job.id,
                 **({"replaces": brief["replaces"]} if brief.get("replaces") else {}),
@@ -1433,6 +1464,8 @@ def process_jobs(db, settings, provider=None):
                     # Written once and saved before any paid request; resume reuses it.
                     job.brief = job.brief | write_prompt(db, settings, job)
                     db.commit()
+                if job.brief.get("original_candidates"):
+                    original_shots(db, job.brief)
                 save_segment_prompt(db, job)
                 from .product_rules import enforce_job_prompt
 

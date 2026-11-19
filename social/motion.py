@@ -91,6 +91,10 @@ def still_clips(db, settings, assets):
         footage = float(asset.media.get("duration") or 0) - float((asset.tags.get("end_card") or {}).get("seconds", 0))
         sequence = asset.tags.get("video_sequence") or []
         segments = sequence or [{"index": 0, "start": 0, "duration": footage}]
+        # Original shots have no generated motion to assess. Use the worker's saved timeline.
+        original_indices = {s["index"] for s in job.brief.get("video_segments", []) if s.get("original_asset_id")}
+        if job.output_asset_id == asset.id and original_indices:
+            segments = [s for s in segments if s["index"] not in original_indices]
         spans = [(s["start"], min(s["start"] + s["duration"], footage)) for s in segments]
         try:
             measured = clip_motion(storage(settings).read(asset.storage_key), spans)

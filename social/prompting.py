@@ -15,6 +15,7 @@ establish what Tudelu sells. Prompts are written in the worker before the paid R
 
 import json
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
@@ -118,6 +119,17 @@ WRITER_INSTRUCTIONS = (
     "following each shot's requested setting and supported appearance. "
     "Set the top-level system and prompt to clip 1's. When end_card is true, the app appends the official logo "
     "afterwards, so never show logos or brand names in any clip. "
+    "For campaign_references, use a compatible uploaded product as the starting point. The campaign idea "
+    "controls the action and setting. If the idea leaves these open, build on what those references show. "
+    "When original_candidates are supplied for a video, you may cut original photos and videos into the "
+    "film alongside the new AI scenes. Do so when the idea asks for original material on screen or an "
+    "original shot helps tell that story. Use an empty list when it only asks to animate a reference or "
+    "when no original fits. Return original_cuts as an ordered list of {asset_id, placement: "
+    "opening|middle|closing, seconds, start}. Use each chosen file once for 2 to 5 whole seconds, start 0 "
+    "for photos or a playable interval of the original video. Leave at least 2 seconds of generated footage "
+    "plus 3 seconds for the logo. A middle insert needs generated footage on both sides (at least 4 seconds "
+    "total). Write the generation prompt for the AI portion and match the cuts visually. An original insert cannot establish "
+    "that a generated scene depicts a real installation. "
     + STRUCTURE_SELECTION
 )
 
@@ -127,6 +139,13 @@ class WrittenShot(BaseModel):
     prompt: str = Field(default="", max_length=6000)
 
 
+class OriginalCut(BaseModel):
+    asset_id: str
+    placement: Literal["opening", "middle", "closing"]
+    seconds: int = Field(ge=2, le=5)
+    start: float = Field(default=0, ge=0, allow_inf_nan=False)
+
+
 class WrittenPrompt(BaseModel):
     system: str = Field(default="", max_length=200)
     prompt: str = Field(default="", max_length=6000)
@@ -134,6 +153,7 @@ class WrittenPrompt(BaseModel):
     sources_used: list[str] = Field(default_factory=list, max_length=40)
     problem: str = Field(default="", max_length=2000)
     visual_direction: str = Field(default="", max_length=1000)
+    original_cuts: list[OriginalCut] = Field(default_factory=list, max_length=6)
 
 
 def utf16_trim(text, limit=PROMPT_LIMIT):
@@ -201,15 +221,22 @@ def gather_sources(db, settings, job):
     }
 
     selected = []
-    for asset_id in brief["reference_ids"]:
+    campaign_ids = brief.get("campaign_reference_ids", [])
+    cut_ids = brief.get("original_candidates", [])
+    selected_ids = dict.fromkeys(brief["reference_ids"] + campaign_ids + cut_ids)
+    for asset_id in selected_ids:
         asset = db.get(Asset, asset_id)
-        if asset:
+        if asset and asset.removed_at is None and _usable(asset, at, fixture) and (
+            not asset.tags.get("real_customer_content") or asset.permission_reference
+        ) and (asset.rights != "not_public" or brief["rights"] == "not_public"):
             selected.append(
                 {
                     "asset_id": asset.id,
                     "name": asset.original_name,
                     "tags": asset.tags,
-                    "summary": _describe(db, summary_settings, asset, [1]),
+                    "summary": _describe(db, summary_settings, asset, budget),
+                    "kind": "video" if asset.media["mime"].startswith("video/") else "photo",
+                    "seconds": asset.media.get("duration", 0),
                 }
             )
 
@@ -223,7 +250,7 @@ def gather_sources(db, settings, job):
         ).all()
         # The logo isn't scene material, and platform copies repeat their originals.
         if _usable(a, at, fixture)
-        and a.id not in brief["reference_ids"]
+        and a.id not in selected_ids
         and not a.tags.get("brand_logo")
         and "rendition" not in a.tags
     ]
@@ -308,6 +335,10 @@ def gather_sources(db, settings, job):
         "selected_references": selected,
         "previous_generations": previous,
     }
+    if campaign_ids:
+        context["campaign_references"] = [a["asset_id"] for a in selected if a["asset_id"] in campaign_ids]
+    if cut_ids and brief["duration"] >= 7:
+        context["original_candidates"] = [a for a in selected if a["asset_id"] in cut_ids]
     provenance = {
         "facts_version": facts.version,
         "visual_guidance": context_for(facts.visual_guidance),
@@ -384,7 +415,13 @@ def _fixture_prompt(context):
         )
     if shots:
         system, prompt = shots[0].system, shots[0].prompt
-    return WrittenPrompt(system=system, prompt=prompt, shots=shots, sources_used=["rules"])
+    cuts = []
+    if re.search(r"\b(original|actual)\b", context["admin_idea"], re.I):
+        for item in context.get("original_candidates", []):
+            if item["kind"] == "photo" or item["seconds"] >= 2:
+                cuts.append(OriginalCut(asset_id=item["asset_id"], placement="opening", seconds=2))
+                break
+    return WrittenPrompt(system=system, prompt=prompt, shots=shots, sources_used=["rules"], original_cuts=cuts)
 
 
 def _checked_system(name, context):
@@ -470,4 +507,8 @@ def write_prompt(db, settings, job):
             "generation_prompt": clips[0]["prompt"],
             "depicted_system": ", ".join(dict.fromkeys(c["system"] for c in clips)),
         }
+    if written.original_cuts and context.get("original_candidates"):
+        from .video_segments import with_original_cuts
+
+        result["video_segments"] = with_original_cuts(job.brief, written.original_cuts, context["original_candidates"])
     return result

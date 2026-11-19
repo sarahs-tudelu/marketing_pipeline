@@ -10,6 +10,7 @@ the files that fit, best first, or says what the library lacks. Offline runs mat
 import json
 import re
 import time
+from itertools import groupby
 
 import httpx
 from pydantic import BaseModel
@@ -66,7 +67,7 @@ def _company_files(db):
     ).all()
 
 
-def library_media(db, *, product="company", live=False, public=True, drive_only=False, allowed=None):
+def library_media(db, *, product="company", live=False, public=True, drive_only=False, allowed=None, limit=LIBRARY_LIMIT):
     """Real company photos and videos a post may show, newest first."""
     return [
         a
@@ -75,7 +76,7 @@ def library_media(db, *, product="company", live=False, public=True, drive_only=
         and (not drive_only or (a.tags or {}).get("google_drive_file_id"))
         and (allowed is None or allowed(a))
         and _product_rank(a, product) is not None
-    ][:LIBRARY_LIMIT]
+    ][:limit]
 
 
 def video_gaps(db, *, product="company", live=False, public=True, drive_only=False, allowed=None):
@@ -167,6 +168,37 @@ def _overlap(idea, item):
     text = " ".join([item["name"].replace("_", " ").replace("-", " "), str(item["product"]), item["description"],
                      " ".join(item["visible_text"])])
     return len(_words(idea) & _words(text))
+
+
+def campaign_scores(settings, idea, media):
+    """Rank existing descriptions without a provider call or transaction commit in the scheduler."""
+    # Descriptions based on the actual pixels can inform a fixture run too.
+    observed = settings.model_copy(update={"ai_mode": "live"})
+    return {a.id: _overlap(idea, record(a, observed)) for a in media}
+
+
+def campaign_references(media, scores, turn):
+    """Keep the best prompt matches first and rotate equally relevant sources between posts."""
+    ranked = []
+    for _, group in groupby(sorted(media, key=lambda a: -scores[a.id]), key=lambda a: scores[a.id]):
+        peers = list(group)
+        offset = turn % len(peers)
+        ranked.extend(peers[offset:] + peers[:offset])
+    return ranked
+
+
+def campaign_visuals(media, scores, turn):
+    """Product references and possible original shots, with footage represented in a photo-heavy library."""
+    from .provenance import requires_ai_review
+
+    eligible = [a for a in media if a.rights in {"public", "not_public"}
+                and not a.tags.get("brand_logo") and not a.tags.get("rendition")]
+    photos = campaign_references([a for a in eligible if a.media["mime"].startswith("image/")], scores, turn)
+    videos = campaign_references([a for a in eligible if a.media["mime"].startswith("video/")], scores, turn)
+    # Prefer a photo at equal relevance. A closer-matching video can supply its own frame.
+    ranked = sorted(photos + videos, key=lambda a: -scores[a.id])
+    originals = list(dict.fromkeys(a.id for a in ranked[:4] + videos[:2] if not requires_ai_review(a)))
+    return [a.id for a in ranked[:6]], originals
 
 
 def word_rank(idea, records, want="any"):

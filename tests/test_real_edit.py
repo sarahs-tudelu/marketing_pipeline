@@ -248,7 +248,7 @@ def test_real_project_posts_use_only_real_media(db, settings):
 def test_mixed_campaign_alternates_real_projects_with_ai_inspiration(db, settings, house_logo):
     first = ingest(db, settings, jpeg((150, 110, 80)), "terrace.jpg", rights="public")
     second = ingest(db, settings, jpeg((80, 110, 150)), "courtyard.jpg", rights="public")
-    clip = ingest(db, settings, footage(sound=False), "installation.mp4", rights="public")
+    clip = ingest(db, settings, footage(seconds=7, sound=False), "installation.mp4", rights="public")
     db.commit()
     brief = brief_for(
         db, settings, operation="mixed", kind="mixed", duration=10, reference_ids=[first.id, second.id, clip.id]

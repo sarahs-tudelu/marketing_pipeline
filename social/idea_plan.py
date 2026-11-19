@@ -47,6 +47,10 @@ _VIDEO = re.compile(
     re.I,
 )
 _IMAGE = re.compile(r"\b(photos?|photographs?|images?|pictures?|stills?|posters?|graphics?)\b", re.I)
+_SOURCE_MEDIA = re.compile(
+    r"\b(?:photos?|images?|videos?|footage|clips?)\s*(?:/|and|or)\s*(?:photos?|images?|videos?|footage|clips?)\b"
+    r"|\b(?:our|uploaded|library|reference|source|original|existing|real)\s+(?:videos?|footage|clips?)\b", re.I
+)
 _SOUND = re.compile(
     r"\b(music|musical|soundtrack|song|melody|instrumental|piano|guitar|strings|beats?|audio|"
     r"ambient (?:sound|track|audio)s?|sound ?bed)\b",
@@ -239,6 +243,11 @@ def _name_pattern(key):
     """Whole-word match for a catalog name in singular or plural form."""
     stem = key[:-1] if key.endswith("s") and not key.endswith("ss") else key
     return re.compile(r"(?<!\w)" + re.escape(stem) + r"s?(?!\w)")
+
+
+def campaign_video_signals(idea):
+    """An idea can name source footage while leaving the campaign's output format open."""
+    return read_signals(_SOURCE_MEDIA.sub("media", idea))
 
 
 def read_signals(idea, catalog=()):
