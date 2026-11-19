@@ -50,6 +50,7 @@ PURPOSES = {
     "scene_review": ("Scene review", "Planning and editing"),
     "real_media_edit": ("Real media editing", "Planning and editing"),
     "media_search": ("Library search", "Planning and editing"),
+    "media_changes": ("Media change requests", "Planning and editing"),
     "visual_summary": ("Media descriptions", "Planning and editing"),
     "caption": ("Captions", "Captions"),
     "caption_review": ("Caption fact check", "Checks"),

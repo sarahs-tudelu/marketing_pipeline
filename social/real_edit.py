@@ -34,9 +34,10 @@ from .rights import combined_rights
 from .storage import ingest, storage
 from .video_rules import MUSIC_TAG, NO_LOGO, SILENCE_RMS, default_logo, seed_for
 
-VERSION = "real-edit-2026-11-18-v1"
+VERSION = "real-edit-2026-11-19-v1"
 PHOTO_CANDIDATES = 8  # Photos the editor chooses from for a photo post.
-VIDEO_CANDIDATES = 4  # Videos (and as many photos) it chooses from for a video.
+VIDEO_CANDIDATES = 6  # Videos (and up to four photos) it chooses from for a video.
+VIDEO_PHOTOS = 4
 FRAMES_PER_VIDEO = 6  # At least; longer videos get a frame about every 5 seconds, up to MAX_FRAMES.
 MAX_FRAMES = 20
 MAX_ITEMS = 8
@@ -106,6 +107,8 @@ class RealEditPlan(BaseModel):
     keep_clip_sound: bool = True
     story: str = ""
     problem: str = ""
+    # For a revision: one sentence on what was changed, or why part of the request couldn't be done.
+    changes: str = ""
 
 
 PLANNER_INSTRUCTIONS = (
@@ -132,7 +135,11 @@ PLANNER_INSTRUCTIONS = (
     "Give them a coherent flow: for example a wide establishing view, then materials and details, then the "
     "space in use; installation footage in the order the work happened, ending on the finished structure. "
     "A clip from a video uses start and end seconds within it, at least 1.5 seconds long; cut at calm moments "
-    "and leave out shaky or blurry parts (frame_times show when each sampled frame was taken). A photo can "
+    "and leave out shaky or blurry parts (frame_times show when each sampled frame was taken). Several clips "
+    "can come from different moments of the same video, such as a wall opening and then closing; never show the "
+    "same moment twice. clip_seconds, when given, is [shortest, longest] for every clip: keep each clip within "
+    "it and use more clips to fill footage_seconds. footage_only true means the idea asks for clips, so use "
+    "videos only, no photos. A photo can "
     "be shown as a still for end seconds (start 0, at most 6); the app adds a slow push-in. framing fill crops "
     "to the output shape around the focus point; fit shows the whole frame over a blurred copy of itself, for "
     "footage whose shape is very different from the output. Use the same colour values for clips of the same "
@@ -142,7 +149,13 @@ PLANNER_INSTRUCTIONS = (
     "when that sound is wind, handling noise or unrelated talk. "
     "note is a few words on what each item shows, such as 'crew lifting the first panel into the track'. "
     "story is one sentence describing the post. problem is empty, or explains why none of the candidates "
-    "can show a completed project (then items is empty). Return only JSON matching the schema."
+    "can show a completed project (then items is empty). "
+    "change_request, when given, comes from an admin who reviewed previous_edit, the edit of this post they "
+    "saw: make the changes it asks for with these candidates and keep everything else of previous_edit "
+    "(media, order, trims, crops and colour) unless the request says otherwise. Candidates not in "
+    "previous_edit were added for the change. changes is one sentence on what you changed, naming anything "
+    "the request asked for that standard edits of these media can't do; it is empty when there's no "
+    "change_request. Return only JSON matching the schema."
 )
 
 
@@ -255,16 +268,24 @@ _SEQUENCE = re.compile(
     r"\b(process|steps?|install\w*|progress|timeline|time-?lapse|walk-?through|tour|before and after|how)\b", re.I
 )
 DEFAULT_SECONDS = 20
+_FOOTAGE = re.compile(r"\b(clips?|footage)\b", re.I)
+
+
+def _span(clip_seconds):
+    low, high = (f"{s:g}" for s in clip_seconds)
+    return low if low == high else f"{low}–{high}"
 
 
 def plan_real_idea(
-    db, settings, *, idea, title, uploads, platforms, product, kind, rights, requested="", signals=None, allowed=None
+    db, settings, *, idea, title, uploads, platforms, product, kind, rights, requested="", signals=None, allowed=None,
+    revision=None, replanning=False,
 ):
     """The real project plan for an idea: which company photos and videos to use, and the edit.
 
     The photos and videos added with the idea are the media; without any, the library is searched for what
     the idea describes. Returns the format, length, edit, matches and notes for the plan page, or raises
-    ValueError saying what is missing.
+    ValueError saying what is missing. `replanning` marks `uploads` as the media ticked on the plan page,
+    planned again; `revision` then holds the admin's change request and the edit it changes.
     """
     from .config import REAL_MEDIA_ONLY, profiles
     from .media_search import search, video_gaps
@@ -300,7 +321,7 @@ def plan_real_idea(
         want = "photo" if signals.get("image") else "any"
     library = {"product": product, "public": public, "drive_only": drive_only, "allowed": allowed}
     if pictures:
-        found = [(a, "Added with your idea") for a in pictures]
+        found = [(a, "Chosen on the plan page" if replanning else "Added with your idea") for a in pictures]
     else:
         found, problem = search(db, settings, idea, want=want, **library)
         if not found:
@@ -322,10 +343,19 @@ def plan_real_idea(
     video = chosen == "video"
     if video and not videos:
         notes.append(_no_footage(db, pictures, library, video_gaps))
+    # A revision keeps the clips as the admin left them unless the request itself gives clip lengths.
+    clips = (clip_lengths(revision.get("request", "")) if revision else signals.get("clip_seconds")) if video else None
+    # An idea asking for clips or footage gets clips only when the search found videos; files added with
+    # the idea are all used.
+    footage_only = video and bool(videos) and not pictures and bool(_FOOTAGE.search(idea))
     if video:
-        candidates = videos[:VIDEO_CANDIDATES] + photos[: (VIDEO_CANDIDATES if videos else PHOTO_CANDIDATES)]
+        candidates = videos[:VIDEO_CANDIDATES] + (
+            [] if footage_only else photos[: (VIDEO_PHOTOS if videos else PHOTO_CANDIDATES)]
+        )
         longest = min(profiles(settings)[p].max_duration for p in platforms)
         duration = int(max(END_CARD_SECONDS + 2, min(signals.get("seconds") or DEFAULT_SECONDS, longest)))
+        if clips:
+            notes.append(f"Each clip lasts {_span(clips)} seconds, as written in your idea.")
     else:
         candidates, duration = photos[:PHOTO_CANDIDATES], 5
     footage = duration - END_CARD_SECONDS if video else 0
@@ -333,16 +363,26 @@ def plan_real_idea(
     size = (profile.video_width, profile.video_height) if video else (profile.image_width, profile.image_height)
     if settings.ai_mode == "live":
         request = {"prompt": idea, "campaign": title, "product": product, "kind": kind, "platform": platforms[0]}
-        plan = ask_planner(db, settings, request, candidates, sounds if video else [], video, footage, size)
+        plan = ask_planner(
+            db, settings, request, candidates, sounds if video else [], video, footage, size,
+            clip_seconds=clips, footage_only=footage_only, revision=revision,
+        )
         planner = settings.openai_vision_model
+    elif revision:
+        plan, planner = fixture_revision(revision, candidates, [], video, footage), "fixture/" + VERSION
     else:
-        plan, planner = fixture_plan(candidates, sounds if video else [], video, footage), "fixture/" + VERSION
-    plan = fit_plan(plan, candidates, sounds if video else [], video, footage, portrait=size[1] > size[0])
+        plan = fixture_plan(candidates, sounds if video else [], video, footage, clip_seconds=clips)
+        planner = "fixture/" + VERSION
+    plan = fit_plan(
+        plan, candidates, sounds if video else [], video, footage, portrait=size[1] > size[0], clip_seconds=clips
+    )
     if video:
         used = sum(i.end - i.start for i in plan.items)
         if used < footage - 1:
             duration = max(END_CARD_SECONDS + 2, math.ceil(used) + END_CARD_SECONDS)
             notes.append(f"The matching footage fills {math.ceil(used)} seconds, so the video is {duration} seconds long.")
+    if plan.changes:
+        notes.insert(0, "What the editor changed: " + plan.changes)
     return {
         "real_format": chosen,
         "duration": duration,
@@ -352,6 +392,16 @@ def plan_real_idea(
         "notes": notes,
         "planner": planner,
     }
+
+
+def room_for(settings, idea, platforms, current):
+    """The length of a video that more media is added to: at least `current`, and the idea's length (or
+    the default) when that is longer, within the platforms' limits. The edit can end sooner."""
+    from .config import profiles
+    from .idea_plan import read_signals
+
+    longest = min(profiles(settings)[p].max_duration for p in platforms)
+    return int(min(longest, max(current, read_signals(idea)["seconds"] or DEFAULT_SECONDS)))
 
 
 def _no_footage(db, pictures, library, video_gaps):
@@ -389,17 +439,26 @@ def plan_edit(db, settings, job):
     footage = brief["duration"] - END_CARD_SECONDS if video else 0
     size = (profile.video_width, profile.video_height) if video else (profile.image_width, profile.image_height)
     prepared = brief.get("prepared_edit") or {}
+    revision = brief.get("revision") or {}
+    # A revision keeps the clips as the admin reviewed them unless the request itself gives clip lengths.
+    clips = clip_lengths(revision.get("request", "") if revision else brief["prompt"]) if video else None
     if prepared:
-        # Planned on the idea's plan page and kept by the admin; checked against the media again below.
+        # Planned on the idea's plan page and kept by the admin, trims included; checked against the media
+        # again below, without the idea's clip lengths, so the admin's own trims stay.
         plan = RealEditPlan.model_validate({k: v for k, v in prepared.items() if k in RealEditPlan.model_fields})
-        planner = prepared.get("planner", "")
+        planner, clips = prepared.get("planner", ""), None
     elif brief["execution_mode"] == "fixture":
-        plan, planner = fixture_plan(assets, sounds, video, footage), "fixture/" + VERSION
+        plan = fixture_revision(revision, assets, sounds, video, footage) if revision else fixture_plan(
+            assets, sounds, video, footage, clip_seconds=clips
+        )
+        planner = "fixture/" + VERSION
     else:
         request = {k: brief[k] for k in ("prompt", "campaign", "product", "kind")} | {"platform": job.platform}
-        plan = ask_planner(db, settings, request, assets, sounds, video, footage, size)
+        plan = ask_planner(
+            db, settings, request, assets, sounds, video, footage, size, clip_seconds=clips, revision=revision
+        )
         planner = settings.openai_vision_model
-    plan = fit_plan(plan, assets, sounds, video, footage, portrait=size[1] > size[0])
+    plan = fit_plan(plan, assets, sounds, video, footage, portrait=size[1] > size[0], clip_seconds=clips)
     job.brief = job.brief | {
         "real_edit": plan.model_dump() | {"planner": planner, "version": VERSION, "planned_at": now().isoformat()}
     }
@@ -409,10 +468,51 @@ def plan_edit(db, settings, job):
     return plan
 
 
-def fixture_plan(assets, sounds, video, footage):
-    """A fixed edit for offline runs: the first photo, or the first clips shared equally."""
+def clip_lengths(text):
+    """[shortest, longest] seconds per clip when the text gives them, or None."""
+    from .idea_plan import read_signals
+
+    return read_signals(text).get("clip_seconds") if text else None
+
+
+def fixture_revision(revision, assets, sounds, video, footage):
+    """Offline revision: the previous edit, with any newly added media appended."""
+    previous = RealEditPlan.model_validate(
+        {k: v for k, v in (revision.get("previous_edit") or {}).items() if k in RealEditPlan.model_fields}
+        | {"changes": "Offline fixture revision: the previous edit is kept."}
+    )
+    used = {i.asset_id for i in previous.items}
+    added = [a for a in assets if a.id not in used]
+    if added:
+        extra = fixture_plan(added, [], video, footage)
+        previous.items += extra.items
+    return previous
+
+
+def fixture_plan(assets, sounds, video, footage, *, clip_seconds=None):
+    """A fixed edit for offline runs: the first photo, or the first clips shared equally (or, with clip
+    lengths, clips of the longest length taken in turn from the media until the footage is filled)."""
     if not video:
         return RealEditPlan(layout="single", items=[EditItem(asset_id=assets[0].id)], story="Offline fixture edit")
+    if clip_seconds:
+        items, offsets, total = [], {}, 0.0
+        for _ in range(MAX_ITEMS):
+            for asset in assets:
+                room = footage - total
+                if room < MIN_SECONDS or len(items) >= MAX_ITEMS:
+                    break
+                photo = asset.media["mime"].startswith("image/")
+                start = offsets.get(asset.id, 0.0)
+                length = MAX_STILL_SECONDS if photo else float(asset.media.get("duration") or 0)
+                if photo and start:
+                    continue
+                end = min(start + clip_seconds[1], length, start + room)
+                if end - start < max(MIN_SECONDS, min(clip_seconds[0], room)):
+                    continue
+                items.append(EditItem(asset_id=asset.id, start=start, end=end))
+                offsets[asset.id], total = end, total + end - start
+        if items:
+            return RealEditPlan(layout="sequence", items=items, story="Offline fixture edit")
     chosen = assets[:3]
     share = footage / len(chosen)
     items = [
@@ -426,8 +526,9 @@ def fixture_plan(assets, sounds, video, footage):
     return RealEditPlan(layout="sequence", items=items, audio=audio, story="Offline fixture edit")
 
 
-def fit_plan(plan, assets, sounds, video, footage, *, portrait=True):
-    """Keep what the media allows: known IDs, the layout's photo count, clips inside their source and length."""
+def fit_plan(plan, assets, sounds, video, footage, *, portrait=True, clip_seconds=None):
+    """Keep what the media allows: known IDs, the layout's photo count, clips inside their source and length,
+    and, when the idea gives one, each clip's [shortest, longest] length."""
     by_id = {a.id: a for a in assets}
     items = [i for i in plan.items if i.asset_id in by_id]
     if not video:
@@ -442,7 +543,11 @@ def fit_plan(plan, assets, sounds, video, footage, *, portrait=True):
         if LAYOUTS[layout] > len(photos):
             layout = {1: "single", 2: "pair_stacked" if portrait else "pair_side", 3: "feature_three"}[len(photos)]
         chosen = [p.model_copy(update={"start": 0.0, "end": 0.0, "framing": "fill"}) for p in photos[: LAYOUTS[layout]]]
-        return RealEditPlan(layout=layout, items=chosen, keep_clip_sound=False, story=plan.story[:600])
+        return RealEditPlan(
+            layout=layout, items=chosen, keep_clip_sound=False, story=plan.story[:600], changes=plan.changes[:400]
+        )
+    shortest = max(MIN_SECONDS, clip_seconds[0]) if clip_seconds else MIN_SECONDS
+    longest = max(shortest, clip_seconds[1]) if clip_seconds else None
     fitted, total = [], 0.0
     for item in items[:MAX_ITEMS]:
         room = footage - total
@@ -450,11 +555,15 @@ def fit_plan(plan, assets, sounds, video, footage, *, portrait=True):
             break
         asset = by_id[item.asset_id]
         if asset.media["mime"].startswith("image/"):
-            start, end = 0.0, min(max(item.end - item.start, MIN_SECONDS), MAX_STILL_SECONDS, room)
+            still = min(MAX_STILL_SECONDS, longest or MAX_STILL_SECONDS)
+            start, end = 0.0, min(max(item.end - item.start, min(shortest, still)), still, room)
         else:
             length = float(asset.media.get("duration") or 0)
-            start = min(item.start, max(0.0, length - MIN_SECONDS))
-            end = min(max(item.end, start + MIN_SECONDS), length, start + room)
+            start = min(item.start, max(0.0, length - shortest))
+            end = max(item.end, start + shortest)
+            if longest:
+                end = min(end, start + longest)
+            end = min(end, length, start + room)
         if end - start < MIN_SECONDS - 0.01:
             continue
         fitted.append(item.model_copy(update={"start": round(start, 2), "end": round(end, 2)}))
@@ -474,7 +583,8 @@ def fit_plan(plan, assets, sounds, video, footage, *, portrait=True):
         if duration >= 0.5:
             cues.append(AudioCue(asset_id=sound.id, start=round(start, 2), at=round(at, 2), duration=round(duration, 2)))
     return RealEditPlan(
-        layout="sequence", items=fitted, audio=cues, keep_clip_sound=plan.keep_clip_sound, story=plan.story[:600]
+        layout="sequence", items=fitted, audio=cues, keep_clip_sound=plan.keep_clip_sound, story=plan.story[:600],
+        changes=plan.changes[:400],
     )
 
 
@@ -503,8 +613,14 @@ def _strict(schema):
     return schema
 
 
-def ask_planner(db, settings, request, assets, sounds, video, footage, size):
-    """The vision model's edit. `request` has the idea (prompt), campaign, product, kind and platform."""
+def ask_planner(
+    db, settings, request, assets, sounds, video, footage, size, *, clip_seconds=None, footage_only=False, revision=None
+):
+    """The vision model's edit. `request` has the idea (prompt), campaign, product, kind and platform.
+
+    `clip_seconds` is each clip's [shortest, longest] length; `footage_only` leaves photos out; `revision`
+    holds an admin's change request and the previous edit it changes.
+    """
     from .audio_review import observe_audio
     from .providers import OpenAI, Providers, parse_json
 
@@ -521,7 +637,8 @@ def ask_planner(db, settings, request, assets, sounds, video, footage, size):
             "transcript": [s["text"] for t in tracks for s in t["observation"]["segments"]][:20],
         })
     db.commit()
-    uses = recent_uses(db)
+    # A revision keeps the media the admin saw, so recently shown files aren't avoided.
+    uses = {} if revision else recent_uses(db)
     context = {
         "post": "video" if video else "photo",
         "platform": request["platform"],
@@ -533,7 +650,14 @@ def ask_planner(db, settings, request, assets, sounds, video, footage, size):
         "content_kind": request["kind"],
         "recently_shown": [a.id for a in assets if a.id in uses],
         "audio_bites": bites,
+        "clip_seconds": clip_seconds,
+        "footage_only": footage_only,
     }
+    if revision:
+        context["change_request"] = revision.get("request", "")
+        context["previous_edit"] = {
+            k: v for k, v in (revision.get("previous_edit") or {}).items() if k in RealEditPlan.model_fields
+        }
     content = [{"type": "input_text", "text": PLANNER_INSTRUCTIONS + " Input: " + json.dumps(context)}]
     for asset in assets:
         data = _read(settings, asset)
@@ -916,6 +1040,8 @@ def real_copy(db, settings, job):
             "media_job_id": job.id,
             "real_project": True,
             "standard_edit": edit,
+            **({"replaces": brief["replaces"]} if brief.get("replaces") else {}),
+            **({"change_request": brief["revision"].get("request", "")} if brief.get("revision") else {}),
             "creative_brief": {"prompt": brief["prompt"], "kind": brief["kind"], "concept": ""},
             "generated_audio": False,
             **(

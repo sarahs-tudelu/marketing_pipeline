@@ -1,8 +1,10 @@
 {% if clip_fix %}
-<section id="fix-clip"><h2>Regenerate part of the {{ clip_fix.noun }}</h2>
-  {% if clip_fix.pending %}{% set p = clip_fix.pending %}{% set part = p.brief.replaces.get('label') or 'clip ' ~ (p.brief.replaces.clip_index + 1) %}
-    {% if p.state == 'failed' or p.state == 'uncertain' %}<p class="error">Regenerating {{ part }} stopped: {{ p.error }}</p><p class="muted">Open In progress to generate it again or remove it from the queue.</p>
-    {% else %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>Regenerating {{ part }}…</strong><small>{% if p.brief.replaces.get('auto_attempt') %}Started automatically because the visual check found problems (attempt {{ p.brief.replaces.auto_attempt }} of {{ p.brief.replaces.auto_limit }}). {% endif %}Everything else is reused. A new post replaces this one when the {{ clip_fix.noun }} is ready.</small></span></div>{% endif %}
+<section id="fix-clip"><h2>{{ 'Changing the media' if clip_fix.pending else 'Regenerate part of the ' ~ clip_fix.noun }}</h2>
+  {% if clip_fix.pending %}{% set p = clip_fix.pending %}{% set asked = p.brief.replaces.get('request') %}{% set part = p.brief.replaces.get('label') or 'clip ' ~ (p.brief.replaces.clip_index + 1) %}
+    {% set doing = 'Editing your media again' if p.brief.get('revision') else 'Regenerating ' ~ part %}
+    {% if asked %}<div class="idea-quote"><b>Changes you asked for</b><br>{{ asked }}</div>{% endif %}
+    {% if p.state == 'failed' or p.state == 'uncertain' %}<p class="error">{{ doing }} stopped: {{ p.error }}</p><p class="muted">Open In progress to {{ 'try it again' if p.brief.get('revision') else 'generate it again' }} or remove it from the queue. Once it's removed, this post can be reviewed again.</p>
+    {% else %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>{{ doing }}{{ ' with your changes' if asked and not p.brief.get('revision') else '' }}…</strong><small>{% if p.brief.replaces.get('auto_attempt') %}Started automatically because the visual check found problems (attempt {{ p.brief.replaces.auto_attempt }} of {{ p.brief.replaces.auto_limit }}). {% endif %}{{ 'Nothing is generated; the editor changes the edit of the same media.' if p.brief.get('revision') else 'Everything else is reused.' }} A new post replaces this one when the {{ clip_fix.noun }} is ready.</small></span></div>{% endif %}
     <a class="button" href="/admin/media-queue">Open In progress</a>
   {% elif clip_fix.unavailable %}
     <p>{{ clip_fix.unavailable }}</p>

@@ -11,6 +11,8 @@
       {% elif a.media.mime.startswith('audio/') %}<audio src="{{ asset_url }}" controls preload="metadata" aria-label="Review {{ a.original_name }}"></audio>{% endif %}
       <figcaption>{{ loop.index ~ ' / ' ~ posting_assets|length ~ ' · ' if posting_assets|length > 1 else '' }}{{ a.original_name }} <a href="{{ asset_url }}" target="_blank" rel="noopener noreferrer">Open full media</a></figcaption>
     </figure>
+    {% set asked = a.tags.get('change_request') or (a.tags.get('replaces') or {}).get('request') %}
+    {% if asked %}{% set note = (a.tags.get('standard_edit') or {}).get('changes') %}<div class="idea-quote change-note"><b>Changes you asked for</b><br>{{ asked }}{% if note %}<br><b>What the editor changed</b><br>{{ note }}{% endif %}</div>{% endif %}
     {% if a.tags.get('video_sequence') %}
       {% for clip in a.tags.video_sequence %}{% set plan = clip.get('reference_plan') %}{% set reference_label = 'Clip ' ~ (clip.index + 1) ~ ' product reference' %}{% include 'reference_plan.html' %}{% endfor %}
     {% else %}{% set plan = a.tags.get('reference_plan') %}{% set reference_label = 'Product reference' %}{% include 'reference_plan.html' %}{% endif %}
@@ -36,8 +38,8 @@
 {% if post.status in ['held','awaiting_review'] and not (clip_fix and clip_fix.pending) %}
 <section><h2>Request caption changes</h2><form method="post" action="/forms/posts/{{ post.id }}/rewrite"><input type="hidden" name="csrf" value="{{ csrf }}"><label>What should change in the caption?<textarea name="revision_request" rows="3" maxlength="2000" required placeholder="Make it shorter, focus on the entrance canopy, and use a warmer opening."></textarea></label><button>Revise caption for review</button></form><p class="muted">The revised caption goes through the checks and returns here for your approval.</p></section>
 {% endif %}
+{% if media_changes and not media_changes.pending %}{% include 'post_changes.html' %}{% endif %}
 {% include 'post_clips.html' %}
-{% if post.status in ['held','awaiting_review'] and not clip_fix %}<section><h2>Change the media</h2><p>Start a new media plan using this post as a reference, then describe the changes you want.</p><a class="button" href="/admin/create?from_post={{ post.id }}">Create revised media</a></section>{% endif %}
 {% if post.status in ['held','draft','awaiting_review'] and not (clip_fix and clip_fix.pending) %}<section><details><summary>Advanced caption editing</summary><p>Use claim parts with supporting fact_ids, and copy parts with empty fact_ids for nonfactual hooks or invitations. Prices, offers and quotes must keep approved wording.</p><form method="post" action="/forms/posts/{{ post.id }}/edit"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Fact parts JSON<textarea name="parts" rows="8">{{ json.dumps(post.parts, indent=2) }}</textarea></label><button>Save &amp; recheck</button></form></details></section>{% endif %}
 <section><details><summary>Lifecycle</summary><ol class="timeline">{% for t in history %}<li><b>{{ t.to_status|replace('_',' ') }}</b><small>{{ t.created_at }} UTC · {{ t.actor }}</small><p>{{ t.reason }}</p></li>{% endfor %}</ol></details></section>
 <section><h2>Check history</h2>{% for c in checks %}<details><summary><span class="{{ 'pass' if c.passed else 'error' }}">{{ 'PASS' if c.passed else 'HOLD' }}</span> {{ c.name|replace('_',' ') }} <small>{{ c.created_at }}</small></summary><pre>{{ json.dumps(c.details,indent=2) }}</pre></details>{% else %}<p>No checks yet.</p>{% endfor %}</section>

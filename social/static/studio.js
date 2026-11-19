@@ -71,6 +71,8 @@
     "media-studio": ["Saving creative brief…", "Preparing your media queue or recurring campaign."],
     plan: ["Planning your idea…", "Saving any files you added, then reading your idea, tudelu.com and the approved facts. This can take up to a minute."],
     create: ["Saving your plan…", "Adding it to the generation queue."],
+    replan: ["Planning the edit again…", "The editor looks at your media again. This can take a minute."],
+    "change-media": ["Queuing your changes…", "The current media is reused; a new version comes back for your review."],
     "import-bucket-asset": ["Importing bucket asset…", "Preserving the original media and its provenance."],
     connect: ["Opening authorization…", "Preparing your account connection."],
     generate: ["Writing caption…", "Finding the right words. This can take a minute."],
@@ -105,7 +107,8 @@
       return;
     }
     form.querySelector(".session-error")?.remove();
-    const action = new URL(form.action).pathname.split("/").filter(Boolean).pop();
+    // A button can name its own progress label, such as Plan the edit again in the plan form.
+    const action = event.submitter?.dataset.busy || new URL(form.action).pathname.split("/").filter(Boolean).pop();
     const [label, detail] = labels[action] || ["Working…", "Please wait."];
     const buttons = relatedForms(form).flatMap((other) => [...other.querySelectorAll('button, input[type="submit"]')]);
     const states = buttons.map((button) => ({button, disabled: button.disabled}));

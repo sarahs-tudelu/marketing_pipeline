@@ -1,6 +1,7 @@
 """The asset library: filters and sorting, the library check, deleting and restoring files, media pickers,
 and the Google Drive and library-search fixes that keep real videos available to real project posts."""
 
+import json
 import re
 from datetime import timedelta
 
@@ -251,7 +252,8 @@ def test_library_picks_are_the_media_of_a_real_post(db, settings, facts, logo): 
         response = plan(client, facts, prompt="Our new deck", reference_ids=[first.id, second.id], upload_use="real")
         assert response.status_code == 200, response.text
         form = plan_form(response.text)
-        assert form["operation"] == ["real"] and set(form["real_media"]) <= {first.id, second.id}
+        planned = {i["asset_id"] for i in json.loads(form["real_plan"][0])["items"]}
+        assert form["operation"] == ["real"] and planned <= {first.id, second.id}
         assert form["reference_ids"] == [first.id, second.id] and form["upload_use"] == ["real"]
         # Without a choice of use, library picks guide AI media as they did before.
         ai = plan(client, facts, prompt="A deck at sunset", format="image", reference_ids=[first.id])

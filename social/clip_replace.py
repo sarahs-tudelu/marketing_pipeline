@@ -256,8 +256,10 @@ def clip_options(db, post):
         return None
     pending = replacement(db, post)
     job = source_job(db, post)
-    if job and job.brief.get("as_uploaded") and not pending:
-        return None  # The admin's own media; there is nothing generated to make again.
+    if job and (job.brief.get("as_uploaded") or job.brief.get("operation") == "real") and not pending:
+        # The admin's own media; there is nothing generated to make again. A real project edit is changed
+        # by describing the change (social/media_changes.py).
+        return None
     media = [a for i in post.asset_ids if (a := db.get(Asset, i))]
     if not job and not pending and not any(a.source in GENERATED for a in media):
         return None
@@ -276,7 +278,8 @@ def clip_options(db, post):
         "auto_attempts": auto_attempts(job),
         "auto_limit": int((job.brief.get("replaces") or {}).get("auto_limit") or 0) if job else 0,
         "live": bool(job and job.brief["execution_mode"] == "live"),
-        "noun": "image" if job and job.brief["operation"] == "image" else "video",
+        "noun": "image" if job and (job.brief["operation"] == "image" or job.brief.get("real_format") == "photo")
+        else "video",
         "reasons": vision.get("reasons", []),
         "parts": options,
         "unavailable": unavailable,
@@ -297,9 +300,10 @@ def _label(chosen, clips):
     return "clips " + ", ".join(numbers[:-1]) + " and " + numbers[-1]
 
 
-def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0):
+def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, request=""):
     """Queue one media job that makes the requested parts again, reusing the rest. Several clips can be
-    made again together. The held post is replaced when the new media is ready."""
+    made again together. The held post is replaced when the new media is ready. `request` is the admin's
+    description of the change, when the prompts were written from one (social/media_changes.py)."""
     lock_post(db, post)
     if post.status not in {"held", "awaiting_review"}:
         raise ValueError("Stop scheduled delivery before changing the media")
@@ -351,6 +355,7 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0):
             "count": len(chosen),
             "requested_by": actor,
             **({"auto_attempt": auto_attempt, "auto_limit": auto_limit} if auto_attempt else {}),
+            **({"request": request} if request else {}),
         },
     }
     sources = list(job.source_asset_ids)
@@ -415,7 +420,8 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0):
     post.human_review_required, post.human_approved_digest = True, ""
     post.approved_digest = ""
     if post.status == "awaiting_review":
-        transition(db, post, "held", "Media changes requested; waiting for replacement", actor)
+        reason = f"Media changes requested: {request[:300]}" if request else "Media changes requested; waiting for replacement"
+        transition(db, post, "held", reason, actor)
     db.commit()
     return created
 

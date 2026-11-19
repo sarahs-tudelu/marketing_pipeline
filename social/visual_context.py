@@ -33,6 +33,30 @@ def current_summary(asset, settings):
     return None
 
 
+SEEK_AFTER_SECONDS = 30  # Longer videos are sampled by seeking, not by decoding every frame.
+
+
+def _seek_samples(data, duration, preview, timestamps):
+    """Twelve frames across a long video, the last near its end, each found by seeking to the keyframe
+    before it, so a long or high-resolution video isn't decoded in full."""
+    times = [duration * index / 11 for index in range(11)] + [max(0.0, duration - 0.1)]
+    with av.open(io.BytesIO(data)) as video:
+        stream = video.streams.video[0]
+        for at in times:
+            video.seek(int(at * 1_000_000), backward=True, any_frame=False)
+            found = None
+            for picture in video.decode(stream):
+                found = picture
+                if picture.time is None or picture.time + 0.02 >= at:
+                    break
+            if found is None:
+                continue
+            when = round(float(found.time if found.time is not None else at), 3)
+            if not timestamps or when > timestamps[-1] + 0.001:
+                preview(found.to_image())
+                timestamps.append(when)
+
+
 def visual_inputs(asset, data):
     images, timestamps, limitations = [], [], []
 
@@ -57,6 +81,12 @@ def visual_inputs(asset, data):
         return images, "still_image", timestamps, limitations
     # Bound input cost while sampling the full timeline, including the final frame.
     duration = asset.media["duration"]
+    if duration > SEEK_AFTER_SECONDS:
+        _seek_samples(data, duration, preview, timestamps)
+        if not images:
+            raise ValueError("No video frames were available for the visual summary")
+        limitations.append("Sampled frames only; intervening action and audio were not analyzed.")
+        return images, "sampled_video_frames", timestamps, limitations
     interval = max(duration / 11, 0.001)
     next_time, last, last_time = 0, None, 0
     with av.open(io.BytesIO(data)) as video:

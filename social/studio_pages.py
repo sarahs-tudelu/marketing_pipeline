@@ -25,6 +25,7 @@ from .idea_plan import (
     work_summary,
 )
 from .library import KINDS, ORIGINS, SORTS, clock, is_copy, library_page, pickable, picker, products
+from .media_changes import options as change_options
 from .models import (
     Account,
     Alert,
@@ -146,6 +147,7 @@ def post_context(db, settings, post, *, editor):
         "post_revision": post_revision(db, post.id),
         "held": held_reason(db, post),
         "clip_fix": clip_options(db, post),
+        "media_changes": change_options(db, post),
         "finish_runway": post.status == "held" and needs_runway_music(db, post),
         "checks": db.scalars(
             select(CheckResult).where(CheckResult.post_id == post.id).order_by(CheckResult.id.desc())

@@ -195,6 +195,17 @@ pre{overflow:auto;padding:16px;font-family:var(--mono);font-size:12.5px;white-sp
 .clip-list label{margin:6px 0}
 .clip-length{padding-bottom:14px;font-size:12.5px;color:var(--muted)}
 .clip-length::before{content:"Clip " counter(clip) " · ";font-weight:600;color:var(--accent-text)}
+.real-media li{margin:6px 0 10px}
+.real-media .checkbox{margin:0}
+.real-media .tag{white-space:nowrap}
+.clip-trim{display:flex;flex-wrap:wrap;align-items:flex-end;gap:4px 12px;margin:4px 0 0 24px}
+.clip-trim label{margin:0;font-size:12.5px;font-weight:500;color:var(--muted)}
+.clip-trim input{width:7.5em;margin-top:3px;padding:6px 10px}
+.clip-trim small{padding-bottom:8px}
+.replan{margin:16px 0 0;padding:14px 16px;border:1px solid var(--divider);border-radius:var(--radius-md);background:var(--background)}
+.replan label{margin:0 0 10px}
+.replan small{display:block;margin-top:6px}
+.media-changes .idea-quote{margin-bottom:10px}
 .fix-clips{margin:12px 0 0;padding:0;list-style:none}
 .fix-clips summary{cursor:pointer;overflow-wrap:anywhere}
 .fix-clips form{margin-top:8px}

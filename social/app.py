@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import math
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,7 +27,9 @@ from .db import make_engine, schema_gaps, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
 from .idea_plan import (
+    END_CARD_SECONDS,
     MAX_CLIPS,
+    MIN_CLIP_SECONDS,
     IdeaPlan,
     Shot,
     default_title,
@@ -36,6 +39,7 @@ from .idea_plan import (
     uploaded_plan,
 )
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
+from .media_changes import request_changes
 from .media_studio import (
     CreativeBrief,
     check_real_media,
@@ -60,7 +64,7 @@ from .pipeline import bootstrap, delete_draft, draft, generate, rewrite_caption
 from .provenance import real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
-from .real_edit import plan_real_idea
+from .real_edit import plan_real_idea, room_for
 from .recovery import retry_step, task_failed
 from .retries import retry_post
 from .rights import owner_value, usage_rights
@@ -304,12 +308,16 @@ def create_app(settings=None):
             )
         return {"status": "ok"}
 
-    def page(request, db, view, post=None, *, error_message="", post_busy=False, status_code=200, **form_values):
+    def page(
+        request, db, view, post=None, *, error_message="", post_busy=False, status_code=200, post_values=None,
+        **form_values,
+    ):
         request.session.setdefault("csrf", secrets.token_urlsafe(32))
         request.session.setdefault("browser_nonce", secrets.token_urlsafe(32))
         context = page_context(request, db, settings, view, **form_values)
         if post is not None:
             context.update(post_context(db, settings, post, editor=request.state.editor))
+            context.update(post_values or {})  # What the admin typed, kept when the action failed.
             if not request.state.editor:
                 context["post_busy"] = post_busy or post.status == "publishing" or post_processing(engine, post.id)
         context.update(
@@ -674,19 +682,7 @@ def create_app(settings=None):
                     signals=signals,
                     allowed=(lambda a: crm_access.editor_asset(a, actor)) if request.state.editor else None,
                 )
-                plan = IdeaPlan(
-                    title=default_title(idea),
-                    operation="real",
-                    real_format=found["real_format"],
-                    duration=found["duration"],
-                    kind=kind,
-                    end_card=found["real_format"] == "video",
-                    notes=found["notes"],
-                    planner=found["planner"],
-                    real_edit=found["edit"],
-                    real_matches=found["matches"],
-                    real_sounds=found["sounds"],
-                )
+                plan = real_idea_plan(found, default_title(idea), kind)
                 return page(request, db, "plan", idea_form=values | {"prompt": idea}, plan=plan)
             if uploads and values["upload_use"] == "as_is":
                 videos = [a for a in uploads if a.media["mime"].startswith("video/")]
@@ -768,6 +764,137 @@ def create_app(settings=None):
             planner=str(form.get("planner", ""))[:100],
         )
 
+    def real_selection(form, plan):
+        """The real project media chosen on the plan page: (asset IDs, the planned edit with the admin's
+        trims, or {} when the edit must be planned again, the finished length in seconds, and the planned
+        edit with the admin's trims and left-out clips whatever else changed)."""
+        planned = plan.real_edit if isinstance(plan.real_edit, dict) else {}
+        # Sent back by the browser: anything that isn't an item is kept as it is, so the edit fails
+        # validation when it's queued and is planned again.
+        items = planned.get("items", []) if isinstance(planned.get("items"), list) else []
+        picks = [str(i) for i in form.getlist("real_media")]
+        listed = "clip_rows" in form  # A page from before clips could be trimmed sends real_media only.
+        ticked = {str(v) for v in form.getlist("real_clip")}
+
+        def seconds(name):
+            try:
+                value = float(str(form.get(name, "")))
+            except ValueError:
+                return None
+            return value if math.isfinite(value) and 0 <= value <= 3600 else None
+
+        def number(value):
+            try:
+                return float(value or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        kept, edited = [], False
+        for index, item in enumerate(items):
+            asset_id = item.get("asset_id") if isinstance(item, dict) else None
+            if (str(index) not in ticked) if listed else (asset_id not in picks):
+                edited = True
+                continue
+            if isinstance(item, dict):
+                item = dict(item)
+                for key in ("start", "end"):
+                    value = seconds(f"clip_{key}_{index}")
+                    # The page shows times to a tenth of a second, so smaller differences are rounding.
+                    if value is not None and abs(value - number(item.get(key))) > 0.06:
+                        item[key], edited = round(value, 2), True
+            kept.append(item)
+        planned_ids = {i.get("asset_id") for i in items if isinstance(i, dict)}
+        added = [i for i in picks if i not in planned_ids]
+        chosen = list(
+            dict.fromkeys([str(i["asset_id"]) for i in kept if isinstance(i, dict) and i.get("asset_id")] + picks)
+        )[:MAX_IDEA_PICKS]
+        same_shape = str(form.get("planned_format", "")) == plan.real_format
+        duration = plan.duration
+        length_kept = str(form.get("planned_duration", "")) == str(plan.duration)
+        if added and length_kept and plan.real_format == "video":
+            # The planned length fitted the planned clips; added files get room, up to the idea's length.
+            duration = room_for(settings, str(form.get("prompt", "")), plan_platforms(form), plan.duration)
+        if kept and not added and same_shape and edited:
+            # Clips trimmed or left out by hand: the edit is kept, and the video is as long as its clips.
+            if plan.real_format == "video":
+                footage = sum(
+                    max(0.0, number(i.get("end")) - number(i.get("start"))) for i in kept if isinstance(i, dict)
+                )
+                longest = min(profiles(settings)[p].max_duration for p in plan_platforms(form))
+                duration = int(max(END_CARD_SECONDS + MIN_CLIP_SECONDS, min(longest, math.ceil(footage) + END_CARD_SECONDS)))
+            return chosen, planned | {"items": kept}, duration, planned | {"items": kept}
+        unchanged = bool(kept) and not added and same_shape and length_kept
+        return chosen, (planned | {"items": kept}) if unchanged else {}, duration, planned | {"items": kept}
+
+    def plan_platforms(form):
+        return [p for p in form.getlist("platforms") if p in PLATFORMS] or ["instagram"]
+
+    def real_idea_plan(found, title, kind):
+        return IdeaPlan(
+            title=title,
+            operation="real",
+            real_format=found["real_format"],
+            duration=found["duration"],
+            kind=kind,
+            end_card=found["real_format"] == "video",
+            notes=found["notes"],
+            planner=found["planner"],
+            real_edit=found["edit"],
+            real_matches=found["matches"],
+            real_sounds=found["sounds"],
+        )
+
+    def check_real_picks(request, db, chosen):
+        if not chosen:
+            raise ValueError("Tick at least one photo or video to use")
+        for asset_id in chosen:
+            asset = db.get(Asset, asset_id)
+            if asset is None or asset.removed_at is not None:
+                raise ValueError("A chosen file is no longer in the asset library. Plan the idea again.")
+            if request.state.editor and not crm_access.editor_asset(asset, request.state.actor):
+                raise HTTPException(404, "Media not found")
+
+    async def replan_real(request, db, form, values, plan):
+        """Plan the real project edit again on the plan page with the media ticked there, the length and
+        format chosen there, and the admin's description of what to change."""
+        chosen, _, duration, trimmed = real_selection(form, plan)
+        check_real_picks(request, db, chosen)
+        change = " ".join(str(form.get("edit_request", "")).split())
+        if len(change) > 1000:
+            raise ValueError("Keep the changes under 1,000 characters")
+        planned_ids = {i.get("asset_id") for i in trimmed.get("items", []) if isinstance(i, dict)}
+        # Files ticked in the library list are added to the edit the admin sees, trims included; with no
+        # changes described and nothing added, the edit is planned afresh.
+        request_text = change or (
+            "Add the newly ticked files where they fit best, and keep the rest of the edit."
+            if set(chosen) - planned_ids else ""
+        )
+        actor = request.state.actor
+        idea = values["prompt"]
+        found = await run_in_threadpool(
+            plan_real_idea,
+            db,
+            settings,
+            idea=idea,
+            title=plan.title,
+            uploads=load_assets(db, chosen),
+            platforms=values["platforms"],
+            product=values["product"] or "company",
+            kind=plan.kind,
+            rights=values["rights"],
+            requested=plan.real_format,
+            signals=read_signals(idea) | {"seconds": duration},
+            allowed=(lambda a: crm_access.editor_asset(a, actor)) if request.state.editor else None,
+            revision={"request": request_text, "previous_edit": trimmed} if request_text and trimmed.get("items") else None,
+            replanning=True,
+        )
+        # The search's matches stay first in the library list.
+        found["matches"] = plan.real_matches
+        if change:
+            found["notes"].insert(0, f"Planned again with your changes: {change}")
+        result = real_idea_plan(found, plan.title, plan.kind)
+        return page(request, db, "plan", idea_form=values, plan=result)
+
     @app.post("/forms/ideas/create", dependencies=mutation)
     async def create_from_plan(request: Request, db: DB):
         form = await request.form()
@@ -778,6 +905,8 @@ def create_app(settings=None):
             return page(request, db, "create", idea_form=values)
         try:
             plan = plan_from_form(form)
+            if mode == "replan" and plan.operation == "real":
+                return await replan_real(request, db, form, values, plan)
             if mode not in {"once", "next"}:
                 raise ValueError("Choose Create now or Use for next automatic post")
             video = plan.operation in {"video", "video_edit"} or plan.real_format == "video"
@@ -794,22 +923,10 @@ def create_app(settings=None):
             sounds = [a.id for a in uploads if a.media["mime"].startswith("audio/")]
             pictures = [a.id for a in uploads if a.id not in sounds]
             if plan.operation == "real":
-                chosen = list(dict.fromkeys(str(i) for i in form.getlist("real_media")))[:12]
-                if not chosen:
-                    raise ValueError("Tick at least one photo or video to use")
-                for asset_id in chosen:
-                    asset = db.get(Asset, asset_id)
-                    if asset is None:
-                        raise ValueError("A chosen file is no longer in the asset library. Plan the idea again.")
-                    if request.state.editor and not crm_access.editor_asset(asset, request.state.actor):
-                        raise HTTPException(404, "Media not found")
-                planned = plan.real_edit
-                # The plan page's edit is used only for the media, format and length it was planned for.
-                unchanged = bool(planned) and (
-                    {i.get("asset_id") for i in planned.get("items", []) if isinstance(i, dict)} == set(chosen)
-                    and str(form.get("planned_format", "")) == plan.real_format
-                    and str(form.get("planned_duration", "")) == str(plan.duration)
-                )
+                # The plan page's edit is used, with any trims, for the media, format and length it was planned
+                # for; added files or another format or length plan it again when the job runs.
+                chosen, prepared, duration, _ = real_selection(form, plan)
+                check_real_picks(request, db, chosen)
                 brief = CreativeBrief(
                     campaign=plan.title,
                     prompt=values["prompt"],
@@ -822,13 +939,13 @@ def create_app(settings=None):
                     owner=values["owner"],
                     reference_ids=chosen,
                     audio_reference_ids=[s for s in plan.real_sounds if s in sounds] if video else [],
-                    duration=plan.duration if video else 5,
+                    duration=duration if video else 5,
                     website=False,
                     create_posts=True,
                     workflow={"once": "immediate", "next": "next"}[mode],
                     end_card_asset_id=logo_id if video else "",
                     real_format=plan.real_format,
-                    prepared_edit=planned if unchanged else {},
+                    prepared_edit=prepared,
                 )
                 await run_in_threadpool(queue_prompt, db, brief, request.state.prompt_account)
                 db.commit()
@@ -1139,6 +1256,32 @@ def create_app(settings=None):
         except ValueError as exc:
             db.rollback()
             return page(request, db, "post", post, error_message=str(exc), status_code=400)
+        return RedirectResponse("/admin/media-queue", status_code=303)
+
+    @app.post("/forms/posts/{post_id}/change-media", dependencies=mutation)
+    async def change_media(post_id: str, request: Request, db: DB):
+        post = db.get(Post, post_id)
+        if not post or post.status == "deleted":
+            raise HTTPException(404)
+        form = await request.form()
+        text = str(form.get("change_request", ""))
+        picks = list(dict.fromkeys(str(i) for i in form.getlist("real_media")))
+        try:
+            if post_processing(engine, post_id):
+                raise PostBusy("This post is being processed")
+            await run_in_threadpool(request_changes, db, settings, post, text, request.state.actor, picks)
+        except PostBusy:
+            db.rollback()
+            return page(request, db, "post", post, post_busy=True, status_code=202)
+        except PostConflict:
+            db.rollback()
+            return RedirectResponse(f"/posts/{post_id}", status_code=303)
+        except ValueError as exc:
+            db.rollback()
+            return page(
+                request, db, "post", post, error_message=str(exc), status_code=400,
+                post_values={"change_request": text[:2000], "change_picks": picks},
+            )
         return RedirectResponse("/admin/media-queue", status_code=303)
 
     @app.post("/forms/posts/{post_id}/{action}", dependencies=mutation)

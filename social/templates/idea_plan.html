@@ -57,16 +57,32 @@
     </div>
     {% set kinds = namespace(videos=0, photos=0) %}{% for item in planned %}{% set a = plan_assets.get(item.asset_id) %}{% if a %}{% if a.media.mime.startswith('video/') %}{% set kinds.videos = kinds.videos + 1 %}{% else %}{% set kinds.photos = kinds.photos + 1 %}{% endif %}{% endif %}{% endfor %}
     {% set video_plan = plan.real_format == 'video' %}
+    <input type="hidden" name="clip_rows" value="{{ planned|length }}">
     <fieldset><legend>{% if not video_plan %}Photos{% elif kinds.videos and kinds.photos %}Clips and photos, in viewing order{% elif kinds.videos %}Clips, in viewing order{% else %}Photos shown as stills, in viewing order{% endif %}</legend>
+      {% if video_plan %}<p class="muted">Change a clip's times to trim it yourself, or untick it to leave it out. The video is then as long as the clips you keep, plus the logo ending.</p>{% endif %}
       <ol class="plan-notes real-media">
-      {% for item in planned %}{% set a = plan_assets.get(item.asset_id) %}{% if a %}
-        <li><label class="checkbox"><input type="checkbox" name="real_media" value="{{ a.id }}" checked>{{ a.original_name }}{% if plan.real_format == 'video' %}<span class="tag">{{ '%.1f–%.1f s'|format(item.start, item.end) if a.media.mime.startswith('video/') else 'photo · %.1f s'|format(item.end - item.start) }}</span>{% endif %}{% if item.get('note') %} · {{ item.note }}{% endif %}</label></li>
+      {% for item in planned %}{% set a = plan_assets.get(item.asset_id) %}{% if a %}{% set n = loop.index0 %}{% set moving = a.media.mime.startswith('video/') %}
+        <li>
+          <label class="checkbox"><input type="checkbox" name="real_clip" value="{{ n }}" checked>{{ a.original_name }}{% if video_plan and not moving %}<span class="tag">photo</span>{% endif %}{% if item.get('note') %} · {{ item.note }}{% endif %}</label>
+          {% if video_plan %}<div class="clip-trim">
+            {% if moving %}<label>From (s)<input type="number" name="clip_start_{{ n }}" min="0" max="{{ a.media.get('duration', 0)|round(1) }}" step="0.1" value="{{ '%.1f'|format(item.start) }}" inputmode="decimal"></label>
+            <label>To (s)<input type="number" name="clip_end_{{ n }}" min="0" max="{{ a.media.get('duration', 0)|round(1) }}" step="0.1" value="{{ '%.1f'|format(item.end) }}" inputmode="decimal"></label>
+            <small class="muted">of {{ a.media.get('duration', 0)|round(1) }} s</small>
+            {% else %}<label>Seconds<input type="number" name="clip_end_{{ n }}" min="1.5" max="6" step="0.5" value="{{ '%.1f'|format(item.end - item.start) }}" inputmode="decimal"></label>
+            <small class="muted">shown as a still</small>{% endif %}
+          </div>{% endif %}
+        </li>
       {% endif %}{% endfor %}
       </ol>
     </fieldset>
     {% if video_plan and not kinds.videos %}<p class="banner" role="status">{% if real_picker.kinds.get('video') %}This video has no footage yet, so its photos are shown as stills. To use footage, tick videos under <b>Add media from the library</b> below.{% else %}This video has no footage: the library has no videos this post can use. The photos are shown as stills; upload videos, or switch Format to Photo or collage.{% endif %}</p>{% endif %}
     {% with p=real_picker, picker_name='real_media', picker_checked=[], picker_id='real-library', picker_title='Add media from the library', picker_open=video_plan and not kinds.videos and real_picker.kinds.get('video'), picker_intro="Every photo and video this post can use, with the search's matches first. Tick files to add them; up to 12 in all.", picker_empty="No other photos or videos in the library can be used for this post. Public posts leave out Not public files, and Pinterest uses only Google Drive imports." %}{% include "media_picker.html" %}{% endwith %}
-    <p class="muted">The editor chose these and planned their crops, colour{{ ' and trims' if video_plan else '' }}. Untick a file to leave it out, or tick files in the library list to add them; the edit is then planned again when the job runs. Changing the format or length does the same.</p>
+    <p class="muted">The editor chose these and planned their crops, colour{{ ' and trims' if video_plan else '' }}. Files you tick in the library list, or another format or length, are edited in when the job runs, or now with <b>Plan the edit again</b>.</p>
+    <div class="replan">
+      <label>Changes for the editor (optional)<textarea name="edit_request" rows="2" maxlength="1000" placeholder="{{ 'Only clips of the walls opening and closing, about 3 seconds each, ending on the closed wall' if video_plan else 'Use the photo with the open wall first, and brighten it a little' }}"></textarea></label>
+      <button name="mode" value="replan" formnovalidate data-busy="replan">Plan the edit again</button>
+      <small class="muted">The editor looks at the ticked media again and makes your changes. Nothing is rendered yet.</small>
+    </div>
     {% if plan.real_format == 'video' %}
       {% if plan.real_sounds %}<p>Sound: {% for s in plan.real_sounds %}{% set a = plan_assets.get(s) %}{{ a.original_name if a else 'your audio' }}{{ ', ' if not loop.last else '' }}{% endfor %}, placed where it fits over the clips' own sound.</p>
       {% else %}<p>Sound: the clips' own sound. Silent footage gets {{ music_tracks[0].original_name ~ ' from your asset library' if music_tracks else 'ambient music made by the app' }}, never AI.</p>{% endif %}

@@ -79,7 +79,25 @@ _REAL_NEGATED = re.compile(
 _EDITORIAL = re.compile(
     r"\b(editorial|inspiration|inspiring|behind the scenes|educational|how-to|tips?|non-?promotional)\b", re.I
 )
-_SECONDS = re.compile(r"(?<![\d.])(\d{1,3})\s*-?\s*(?:s|secs?|seconds?)\b", re.I)
+# A length in seconds, or a range such as "3-5 seconds", "3 to 5 secs" or "between 3 and 5 seconds".
+_SECONDS = re.compile(
+    r"(?<![\d.])(?:\bbetween\s+)?(\d{1,3}(?:\.\d+)?)\s*(?:s|secs?|seconds?)?\s*(?:-|–|—|\bto\b|\band\b)\s*"
+    r"(\d{1,3}(?:\.\d+)?)\s*-?\s*(?:s|secs?|seconds?)\b"
+    r"|(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*-?\s*(?:s|secs?|seconds?)\b",
+    re.I,
+)
+# Lengths that are per clip rather than the finished length: "3-5 second clips", "5-second shots",
+# "clips of about 4 seconds", "each clip 3 seconds", "4 seconds each" or "4 seconds per clip".
+_CLIP_NOUN = r"(?:clips?|shots?|cuts?|segments?|snippets?|scenes?)"
+_PER_CLIP_AFTER = re.compile(
+    rf"^\s*(?:-?\s*long\s+)?(?:video\s+)?{_CLIP_NOUN}\b|^\s*(?:long\s+)?(?:each|apiece|per\s+{_CLIP_NOUN})\b", re.I
+)
+_PER_CLIP_BEFORE = re.compile(
+    rf"\b{_CLIP_NOUN}\s+(?:(?:of|lasting|at|that\s+last|are|is|about|around|roughly|approximately|between|"
+    rf"under|up\s+to)\s+){{0,3}}$",
+    re.I,
+)
+MAX_CLIP_SECONDS = 30
 _MINUTES = re.compile(r"(?<![\d.])(\d{1,2})\s*-?\s*(?:mins?|minutes?)\b", re.I)
 _LEADING_VERB = re.compile(
     r"^(please\s+)?(create|make|generate|produce|build|design|show|film|shoot|render|give me|i want|we want|"
@@ -165,7 +183,9 @@ PLANNER_INSTRUCTIONS = (
     "clips, a reel, footage, music or a length in seconds; video_edit only when has_video_reference is true and "
     "the idea asks to edit that video; otherwise image. "
     "duration: the finished length in whole seconds (3-90) for video, including any end card. Use the length "
-    "stated in the idea; otherwise about 6 seconds per clip, or 10 for a single shot. "
+    "stated in the idea; otherwise about 6 seconds per clip, or 10 for a single shot. A length per clip "
+    "(explicit_signals.clip_seconds, from wording such as '3-5 second clips') is how long each clip lasts, not "
+    "the finished length: plan enough clips of that length. "
     "shots: for video, one entry per clip in viewing order, at most max_clips. Each clip lasts at least "
     "2 seconds. For an image, exactly one entry. setting is a short concrete place with time of day and mood, "
     "for example 'residential backyard in soft morning light'. system is a Tudelu system copied exactly as "
@@ -224,15 +244,23 @@ def _name_pattern(key):
 def read_signals(idea, catalog=()):
     """Deterministic readings of explicit requests in the idea."""
     text = " ".join(idea.split())
-    seconds = None
-    if match := _SECONDS.search(text):
-        seconds = int(match.group(1))
-    elif match := _MINUTES.search(text):
-        seconds = int(match.group(1)) * 60
-    elif re.search(r"\bhalf a minute\b", text, re.I):
-        seconds = 30
-    elif re.search(r"\b(a|one)[- ]minute\b", text, re.I):
-        seconds = 60
+    seconds = clip_seconds = None
+    for match in _SECONDS.finditer(text):
+        low, high = (float(match.group(1)), float(match.group(2))) if match.group(2) else (float(match.group(3)),) * 2
+        if _PER_CLIP_AFTER.search(text[match.end():]) or _PER_CLIP_BEFORE.search(text[: match.start()]):
+            if clip_seconds is None:
+                low, high = sorted((max(1.0, min(MAX_CLIP_SECONDS, low)), max(1.0, min(MAX_CLIP_SECONDS, high))))
+                clip_seconds = [low, high]
+        elif seconds is None:
+            # A range for the whole video, such as "a 15-30 second reel", is read as its longest length.
+            seconds = round(max(low, high))
+    if seconds is None:
+        if match := _MINUTES.search(text):
+            seconds = int(match.group(1)) * 60
+        elif re.search(r"\bhalf a minute\b", text, re.I):
+            seconds = 30
+        elif re.search(r"\b(a|one)[- ]minute\b", text, re.I):
+            seconds = 60
     sound, silent = "", False
     for clause in _clauses(text):
         if not (found := _SOUND.search(clause)):
@@ -257,11 +285,13 @@ def read_signals(idea, catalog=()):
             continue
         settings += [i for i in items if not any(p.fullmatch(i.casefold()) for p in patterns.values())]
     return {
-        "video": bool(_VIDEO.search(text)) or seconds is not None or bool(sound),
+        "video": bool(_VIDEO.search(text)) or seconds is not None or clip_seconds is not None or bool(sound),
         "image": bool(_IMAGE.search(text)),
         "edit": bool(_EDIT.search(text)),
         "seconds": None if seconds is None else max(3, min(90, seconds)),
         "seconds_requested": seconds,
+        # How long each clip lasts, [shortest, longest], when the idea says so; not the finished length.
+        "clip_seconds": clip_seconds,
         "soundtrack": sound[:400],
         "silent": silent,
         "vocals": bool(_VOCALS.search(text)),
@@ -349,8 +379,9 @@ def _rule_plan(idea, signals, catalog, product, has_video_reference):
         "video_edit" if has_video_reference and signals["edit"] else "video" if signals["video"] else "image"
     )
     end = operation != "image"
+    each = math.ceil(signals["clip_seconds"][1]) if signals.get("clip_seconds") else 6
     duration = signals["seconds"] or (
-        min(90, max(5, len(shots) * 6 + (END_CARD_SECONDS if end else 0))) if len(shots) > 1 else 10
+        min(90, max(5, len(shots) * each + (END_CARD_SECONDS if end else 0))) if len(shots) > 1 else 10
     )
     return IdeaPlan(
         title=default_title(idea),
@@ -670,7 +701,8 @@ def work_summary(plan, platforms, video_model="veo3.1"):
         return (
             f"Nothing is sent to Runway and nothing is AI-generated, so the post has no AI label. The app edits "
             f"your media with standard tools ({tools}); a vision model chose the media and the edit settings. "
-            "If you change the media, the format or the length, the edit is planned again when the job runs. "
+            "Clips you trim or leave out stay as you set them; added files, another format or another length are "
+            "edited in when the job runs. "
             "AI writes the caption, and the usual checks run."
         )
     if plan.as_uploaded:

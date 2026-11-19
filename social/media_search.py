@@ -9,6 +9,7 @@ the files that fit, best first, or says what the library lacks. Offline runs mat
 
 import json
 import re
+import time
 
 import httpx
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from .real_edit import _cleared, _product_rank, _strict, real_asset
 LIBRARY_LIMIT = 2000  # Newest real files considered.
 SEARCH_LIMIT = 150  # Descriptions the ranking model reads; up to half are videos.
 DESCRIBE_NOW = 6  # Undescribed files a search describes before ranking, newest first.
+DESCRIBE_NOW_SECONDS = 30  # A search starts no new description after this long; the worker does the rest.
 DESCRIBE_PER_TICK = 4  # Files the worker describes per interval.
 MATCH_LIMIT = 24
 
@@ -29,7 +31,9 @@ RANK_INSTRUCTIONS = (
     "can miss things, so also use its name, product and visible text. Return matches best first: only files "
     "whose content fits the idea (for 'installation process of partition walls': crews installing partition "
     "walls, panels, tracks and the finished wall), exact fits before near fits, at most 24, each with why: "
-    "one short phrase on what it shows that fits. post says what the post will be: for video, list every "
+    "one short phrase on what it shows that fits. When the idea names an action, such as walls opening and "
+    "closing, files whose description shows that action fit before files that only show the result. "
+    "post says what the post will be: for video, list every "
     "video that fits before photos that fit as well, since the post needs footage. Leave out files that don't "
     "fit, even if nothing else does. "
     "problem: empty, or when nothing fits, one plain sentence on what the library is missing for this idea. "
@@ -103,13 +107,14 @@ def video_gaps(db, *, product="company", live=False, public=True, drive_only=Fal
     return usable, phrases
 
 
-def describe(db, settings, assets, limit):
-    """Write missing descriptions for up to `limit` of the assets, in order. Returns how many were written."""
+def describe(db, settings, assets, limit, seconds=None):
+    """Write missing descriptions for up to `limit` of the assets, in order, starting none after `seconds`.
+    Returns how many were written."""
     from .visual_context import current_summary, ensure_visual_summary
 
-    written = 0
+    written, started = 0, time.monotonic()
     for asset in assets:
-        if written >= limit:
+        if written >= limit or (seconds is not None and time.monotonic() - started > seconds):
             break
         if current_summary(asset, settings):
             continue
@@ -231,7 +236,8 @@ def search(
     media = library_media(db, product=product, live=live, public=public, drive_only=drive_only, allowed=allowed)
     if settings.ai_mode == "live":
         first = sorted(media, key=lambda a: want == "video" and not a.media["mime"].startswith("video/"))
-        describe(db, settings, first, DESCRIBE_NOW)
+        # Large videos take a while to read, so a search describes what it can in a short time.
+        describe(db, settings, first, DESCRIBE_NOW, DESCRIBE_NOW_SECONDS)
     records = shortlist(idea, [record(a, settings) for a in media])
     if not records:
         return [], "There are no real photos or videos in the asset library that this post can use yet."

@@ -1057,16 +1057,17 @@ def _finish(db, settings, job):
         replaced = brief.get("replaces")
         held = db.get(Post, replaced["post_id"]) if replaced else None
         if held and held.status == "held":
-            transition(
-                db,
-                held,
-                "failed",
-                f"Replaced by post {post.id} after {replaced.get('label') or 'clip ' + str(replaced['clip_index'] + 1)} "
-                + ("were" if replaced.get("count", 1) > 1 else "was")
-                + " regenerated"
-                + (" automatically" if replaced.get("auto_attempt") else ""),
-                replaced.get("requested_by") or "admin",
-            )
+            if replaced.get("request"):
+                reason = f"Replaced by post {post.id} with the media changes requested: {replaced['request'][:300]}"
+            else:
+                reason = (
+                    f"Replaced by post {post.id} after "
+                    f"{replaced.get('label') or 'clip ' + str(replaced['clip_index'] + 1)} "
+                    + ("were" if replaced.get("count", 1) > 1 else "was")
+                    + " regenerated"
+                    + (" automatically" if replaced.get("auto_attempt") else "")
+                )
+            transition(db, held, "failed", reason, replaced.get("requested_by") or "admin")
     job.state, job.error = "complete", ""
     db.commit()
 

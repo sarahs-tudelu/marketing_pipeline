@@ -140,7 +140,7 @@ def test_an_installation_idea_becomes_a_real_post_from_library_footage(db, setti
         assert "partition-wall-install-concept.jpg" not in page
         form = plan_form(page)
         assert form["operation"] == ["real"] and form["real_format"] == ["video"]
-        assert form["real_media"] == [install.id, finished.id]
+        assert form["real_clip"] == ["0", "1"] and planned_ids(form) == [install.id, finished.id]
         response = client.post("/forms/ideas/create", data=form | {"mode": ["once"]})
         assert response.status_code == 200
     job = db.scalar(select(MediaJob))
@@ -154,14 +154,35 @@ def test_an_installation_idea_becomes_a_real_post_from_library_footage(db, setti
     assert result.source == "company" and result.tags["real_project"] and db.get(Post, job.post_id)
 
 
-def test_changing_the_chosen_media_plans_the_edit_again(db, settings, facts, logo):  # noqa: F811
+def planned_ids(form):
+    return [i["asset_id"] for i in json.loads(form["real_plan"][0])["items"]]
+
+
+def test_trimming_or_leaving_out_clips_keeps_the_edit_and_adding_files_plans_it_again(db, settings, facts, logo):  # noqa: F811
     install, finished, sunset, _ = library(db, settings)
     with TestClient(create_app(settings)) as client:
-        form = plan_form(plan(client, facts).text)
-        form["real_media"] = [install.id]
-        assert client.post("/forms/ideas/create", data=form | {"mode": ["once"]}).status_code == 200
-    job = db.scalar(select(MediaJob))
-    assert job.brief["reference_ids"] == [install.id] and job.brief["prepared_edit"] == {}
+        page = plan(client, facts).text
+        assert 'name="clip_start_0"' in page and 'name="clip_end_1"' in page and "Plan the edit again" in page
+        form = plan_form(page)
+        # The first clip trimmed by hand and the photo left out: that edit is kept, as long as its clip.
+        trimmed = form | {"real_clip": ["0"], "clip_start_0": ["0.5"], "clip_end_0": ["3.5"], "mode": ["once"]}
+        assert client.post("/forms/ideas/create", data=trimmed).status_code == 200
+        added = form | {"real_media": [sunset.id], "mode": ["once"]}
+        assert client.post("/forms/ideas/create", data=added).status_code == 200
+    jobs = {len(j.brief["reference_ids"]): j for j in db.scalars(select(MediaJob))}
+    kept, replanned = jobs[1], jobs[3]
+    assert kept.brief["reference_ids"] == [install.id] and kept.brief["duration"] == 6
+    assert [(i["asset_id"], i["start"], i["end"]) for i in kept.brief["prepared_edit"]["items"]] == [
+        (install.id, 0.5, 3.5)
+    ]
+    assert replanned.brief["reference_ids"] == [install.id, finished.id, sunset.id]
+    assert replanned.brief["prepared_edit"] == {}
+    for _ in range(3):
+        process_jobs(db, settings)
+    db.refresh(kept)
+    assert kept.state == "complete", kept.error
+    assert [(i["start"], i["end"]) for i in kept.brief["real_edit"]["items"]] == [(0.5, 3.5)]
+    assert db.get(Asset, kept.output_asset_id).media["duration"] == pytest.approx(6, abs=0.2)
 
 
 @pytest.mark.parametrize("items,kept", [
@@ -198,7 +219,7 @@ def test_pinterest_takes_real_project_ideas_from_drive_media_only(db, settings, 
     with TestClient(create_app(settings)) as client:
         assert "Real project only" in client.get("/admin/create").text
         page = plan(client, facts, prompt="Our finished partition wall projects", platforms=["pinterest"]).text
-        assert plan_form(page)["real_media"] == [drive.id] and "Google Drive is used" in page
+        assert planned_ids(plan_form(page)) == [drive.id] and "Google Drive is used" in page
         response = plan(client, facts, prompt="A pergola at sunset", platforms=["pinterest"])
         assert response.status_code == 400 and "Choose Real project" in response.text
 
@@ -215,7 +236,7 @@ def test_files_added_with_an_idea_can_be_edited_into_a_real_post(db, settings, f
                                files=[("files", ("one.jpg", first, "image/jpeg")), ("files", ("two.jpg", second, "image/jpeg"))])
     assert response.status_code == 200, response.text
     form = plan_form(response.text)
-    assert form["real_format"] == ["photo"] and len(form["real_media"]) == 1
+    assert form["real_format"] == ["photo"] and len(form["real_clip"]) == 1
     assert "Add media from the library" in response.text and "one.jpg" in response.text
 
 
