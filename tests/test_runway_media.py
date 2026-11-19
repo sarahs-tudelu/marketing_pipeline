@@ -315,7 +315,8 @@ def test_campaign_waits_for_live_and_kill_switch_stops_jobs(db, settings):
     assert job.state == "queued"
 
 
-def test_live_campaign_creates_one_batch_and_blocks_backlog(db, settings, house_logo, monkeypatch):
+@pytest.mark.parametrize("rights,interval", [("public", 24), ("not_public", 0.25), ("not_public", 900.5)])
+def test_live_campaign_creates_one_batch_and_blocks_backlog(db, settings, house_logo, monkeypatch, rights, interval):
     from types import SimpleNamespace
 
     from social.adapters import ADAPTERS
@@ -330,7 +331,7 @@ def test_live_campaign_creates_one_batch_and_blocks_backlog(db, settings, house_
             "facts": [{"id": "name", "product": "company", "text": "Test brand."}],
         },
     )
-    brief = brief_for(db, settings, operation="mixed", kind="mixed").model_copy(update={"facts_id": sheet.id})
+    brief = brief_for(db, settings, operation="mixed", kind="mixed", rights=rights, interval_hours=interval).model_copy(update={"facts_id": sheet.id})
     campaign = MediaCampaign(name="Live campaign", brief=brief.model_dump(), enabled=True)
     db.add(campaign)
     db.commit()
@@ -340,9 +341,13 @@ def test_live_campaign_creates_one_batch_and_blocks_backlog(db, settings, house_
         "instagram",
         SecretStr("mock"),
     )
+    before = now()
     replenish_campaigns(db, settings)
     assert campaign.sequence == 1
+    assert before + timedelta(hours=interval) <= campaign.next_run_at <= now() + timedelta(hours=interval)
     assert len(db.scalars(select(MediaJob)).all()) == 1
+    replenish_campaigns(db, settings)
+    assert campaign.sequence == 1 and not campaign.error  # Not due yet, even for fractional hours.
     campaign.next_run_at = now() - timedelta(hours=1)
     db.commit()
     replenish_campaigns(db, settings)
@@ -395,6 +400,42 @@ def test_media_studio_form_api_csrf_and_saved_paused_campaign(db, settings):
         assert not db.scalar(select(MediaCampaign)).enabled
         response = client.get("/api/media-jobs")
         assert response.json()[0]["state"] == "queued"
+
+
+@pytest.mark.parametrize("interval", [0.001, 0.25, 1, 12, 24.5, 900.5])
+def test_short_fractional_and_long_intervals_are_only_for_not_public_campaigns(db, settings, interval):
+    brief = brief_for(db, settings, rights="not_public", interval_hours=str(interval))
+    assert brief.interval_hours == interval
+    assert CreativeBrief.model_validate(brief.model_dump(), context={"stored": True}).interval_hours == interval
+    with pytest.raises(ValueError, match="Public campaigns require interval_hours"):
+        brief_for(db, settings, rights="public", interval_hours=interval)
+
+
+@pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf"), float("-inf"), 1e100])
+def test_not_public_campaigns_reject_unschedulable_intervals(db, settings, interval):
+    with pytest.raises(ValueError, match="interval_hours"):
+        brief_for(db, settings, rights="not_public", interval_hours=interval)
+
+
+@pytest.mark.parametrize("interval", ["0.25", "900.5"])
+def test_campaign_form_enforces_rights_for_intervals_and_preserves_invalid_input(db, settings, interval):
+    brief = brief_for(db, settings)
+    db.commit()
+    with TestClient(create_app(settings)) as client:
+        values = {
+            "csrf": client.get("/api/session").json()["csrf"], "mode": "recurring",
+            "campaign": "Interval test", "prompt": "Warm textures", "platforms": "instagram",
+            "facts_id": brief.facts_id, "rights": "public", "create_posts": "on", "interval_hours": interval,
+        }
+        rejected = client.post("/forms/media-studio", data=values)
+        assert rejected.status_code == 400 and "Public campaigns require interval_hours" in rejected.text
+        assert f'value="{interval}"' in rejected.text
+        assert db.scalar(select(MediaCampaign)) is None
+        response = client.post("/forms/media-studio", data=values | {"rights": "not_public"})
+        assert response.status_code == 200 and f"every {interval} hours" in response.text
+        saved = db.scalar(select(MediaCampaign))
+        assert saved.brief["interval_hours"] == float(interval) and saved.brief["rights"] == "not_public"
+        assert not saved.enabled
 
 
 def test_audio_reference_limit_is_total_across_both_inputs(db, settings):

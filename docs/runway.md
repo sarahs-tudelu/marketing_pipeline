@@ -20,6 +20,13 @@ New jobs use Nano Banana 2.1 for images and scene stills, and standard Veo 3.1 f
 
 `AI_MODE=live` permits paid generation. The checked-in defaults remain offline fixtures. Creating an idea queues a background job; run the worker to advance it. No API call is made by simply opening a page or saving a paused recurring campaign. `LIVE_PLATFORMS` and the existing account/fact checks separately govern publication.
 
+Recurring campaigns marked **Not public** accept any positive, finite interval in hours that fits the
+supported date range, including decimals: `0.25` is 15 minutes and `0.5` is 30 minutes. They do not have
+the 24–720-hour restriction. **Public** campaigns retain whole-hour intervals from 24 to 720. The form,
+API and campaign-file import use the same validation. The interval sets the next batch's eligibility;
+worker timing, automation/live-account requirements and waiting for the previous batch still apply.
+Not public is a usage-rights restriction, not a switch that changes a connected platform to dry-run mode.
+
 Before starting updated services, run `tudelu init` (or `alembic upgrade head`) using the intended deployment environment. Migration `9b61d8c4a201` adds `media_jobs` and `media_campaigns` without modifying existing posts. Migration `d3a7f1c58e42` adds the optional asset `owner` column; existing rights text is unchanged. The Droplet Compose migration service runs this upgrade during deployment. Rebuild/recreate both web and worker. This repository update does not deploy to the Droplet or enable live publication.
 
 ## Inputs and operations

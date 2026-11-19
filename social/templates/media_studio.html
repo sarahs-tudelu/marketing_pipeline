@@ -40,8 +40,9 @@
     </details>
     <div class="two">
       <label>Finished video duration (seconds)<input type="number" name="duration" min="5" max="90" value="{{ asset_form.get('duration', '10') }}"></label>
-      <label>Recurring interval (hours)<input type="number" name="interval_hours" min="24" max="720" value="{{ asset_form.get('interval_hours', '24') }}"></label>
+      <label>Recurring interval (hours)<input type="number" name="interval_hours" min="0" step="any" required aria-describedby="campaign-interval-help" value="{{ asset_form.get('interval_hours', '24') }}"></label>
     </div>
+    <p id="campaign-interval-help" class="muted">Not public: any positive number of hours, including decimals (0.25 = 15 minutes). Public: 24 to 720 whole hours. The next batch waits for the previous batch to finish.</p>
     <p class="muted">5 to 90 seconds, including the 3-second logo ending. Generated clips are at most {{ 8 if settings.runway_video_model == 'veo3.1' else 10 }} seconds; edit segments are at most 30 seconds. Each clip uses a separate Runway task and incurs its own generation cost.</p>
     {% with values=asset_form, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
     <label class="checkbox"><input type="checkbox" name="create_posts" {{ 'checked' if asset_form.get('create_posts', 'on') == 'on' else '' }}>Create posts after generation (uncheck for library-only audio/media)</label>
@@ -51,7 +52,7 @@
 </section>
 <section><h2>Recurring campaigns</h2>
   {% for c in media_campaigns %}<article class="card"><h3>{{ c.name }}</h3>
-    <p>{{ c.brief.prompt }}</p><p>{{ c.brief.platforms|join(', ') }} · {{ {'mixed': 'real projects and AI inspiration', 'real': 'real projects', 'image': 'AI images', 'video': 'AI videos', 'video_edit': 'AI re-renders'}.get(c.brief.operation, c.brief.operation) }} · {{ c.brief.kind|replace('_',' ') }} · every {{ c.brief.interval_hours }} hours</p>
+    <p>{{ c.brief.prompt }}</p><p>{{ c.brief.platforms|join(', ') }} · {{ {'mixed': 'real projects and AI inspiration', 'real': 'real projects', 'image': 'AI images', 'video': 'AI videos', 'video_edit': 'AI re-renders'}.get(c.brief.operation, c.brief.operation) }} · {{ c.brief.kind|replace('_',' ') }} · every {{ '%g'|format(c.brief.interval_hours) }} hours</p>
     <p>{{ 'Enabled' if c.enabled else 'Paused' }} · {{ c.sequence }} batches · next eligible {{ c.next_run_at }} UTC</p>
     {% if c.error %}<p class="error">{{ c.error }}</p>{% endif %}
     <form method="post" action="/forms/media-campaigns/{{ c.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if c.enabled else 'true' }}"><button>{{ 'Pause campaign' if c.enabled else 'Enable campaign' }}</button></form>

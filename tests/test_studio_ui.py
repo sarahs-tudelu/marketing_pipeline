@@ -79,6 +79,53 @@ def test_media_studio_custom_prompt_and_responsive_layout(db, settings, tmp_path
         asyncio.run(exercise(client))
 
 
+@pytest.mark.parametrize("javascript_enabled", [True, False])
+def test_recurring_interval_follows_usage_rights_in_browser(db, settings, javascript_enabled):
+    from sqlalchemy import select
+
+    from social.models import MediaCampaign
+
+    playwright = pytest.importorskip("playwright.async_api")
+
+    async def exercise(client):
+        async with playwright.async_playwright() as driver:
+            browser = await driver.chromium.launch(executable_path=os.environ["BROWSER_BINARY"], headless=True)
+            context = await browser.new_context(java_script_enabled=javascript_enabled)
+            page = await context.new_page()
+            page.set_default_timeout(5000)
+            await page.route("**/*", lambda route: serve_studio_request(route, client))
+            await page.goto("http://studio.test/admin/media-studio")
+            await page.locator('select[name="mode"]').select_option("recurring")
+            await page.get_by_label("Campaign name", exact=True).fill("Frequent internal test")
+            await page.get_by_label("Your prompt", exact=True).fill("Warm architectural textures")
+            rights = page.get_by_label("Usage rights", exact=True)
+            interval = page.get_by_label("Recurring interval (hours)", exact=True)
+            if javascript_enabled:
+                await rights.select_option("public")
+                for value in ("0.25", "24.5", "900.5"):
+                    await interval.fill(value)
+                    assert not await interval.evaluate("input => input.checkValidity()")
+                await interval.fill("24")
+                assert await interval.evaluate("input => input.checkValidity()")
+            await rights.select_option("not_public")
+            for value in ("0.25", "900.5"):
+                await interval.fill(value)
+                assert await interval.evaluate("input => input.checkValidity()")
+            if javascript_enabled:
+                await interval.fill("0")
+                assert not await interval.evaluate("input => input.checkValidity()")
+            await interval.fill("0.25")
+            await page.get_by_role("button", name="Queue idea / save campaign").click()
+            await playwright.expect(page.get_by_role("heading", name="Frequent internal test", exact=True)).to_be_visible()
+            await playwright.expect(page.get_by_text("every 0.25 hours", exact=False)).to_be_visible()
+            await browser.close()
+
+    with TestClient(create_app(settings), base_url="http://studio.test") as client:
+        asyncio.run(exercise(client))
+    saved = db.scalar(select(MediaCampaign))
+    assert saved.brief["rights"] == "not_public" and saved.brief["interval_hours"] == 0.25
+
+
 @pytest.mark.parametrize("platform", ["x", "linkedin", "tiktok"])
 @pytest.mark.parametrize("javascript_enabled", [True, False])
 def test_connect_opens_provider_authorization_with_same_origin_form_policy(

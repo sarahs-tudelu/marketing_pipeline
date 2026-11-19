@@ -153,3 +153,17 @@ def test_import_needs_approved_facts(db, settings, tmp_path):
         import_campaigns(db, settings, write(tmp_path, {"facts_version": "missing", "campaigns": []}))
     with pytest.raises(ValueError, match="needs a `campaigns:` list"):
         import_campaigns(db, settings, write(tmp_path, {"campaigns": {"name": "not a list"}}))
+
+
+def test_import_accepts_fractional_not_public_intervals_without_relaxing_public_limits(db, settings, facts, tmp_path):
+    path = write(tmp_path, {
+        "defaults": {"prompt": "Pergolas at dusk", "operation": "image", "platforms": ["instagram"],
+                     "interval_hours": 0.25},
+        "campaigns": [{"campaign": "Internal test", "rights": "not_public"},
+                      {"campaign": "Public test", "rights": "public"}],
+    })
+    results = import_campaigns(db, settings, path)["campaigns"]
+    assert results[0]["status"] == "created"
+    assert results[1]["status"] == "failed" and "interval_hours" in results[1]["reason"]
+    saved = db.scalar(select(MediaCampaign))
+    assert saved.name == "Internal test" and saved.brief["interval_hours"] == 0.25

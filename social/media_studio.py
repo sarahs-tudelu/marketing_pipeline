@@ -88,7 +88,7 @@ class CreativeBrief(BaseModel):
     duration: int = Field(default=5, ge=3, le=90)
     website: bool = True
     create_posts: bool = True
-    interval_hours: int = Field(default=24, ge=24, le=720)
+    interval_hours: float = Field(default=24, gt=0, allow_inf_nan=False)
     workflow: Literal["automatic", "immediate", "next"] = "automatic"
     # Clips in viewing order (setting and Tudelu system each), from the reviewed idea plan.
     shots: list[Shot] = Field(default_factory=list, max_length=MAX_CLIPS)
@@ -116,6 +116,17 @@ class CreativeBrief(BaseModel):
     @classmethod
     def owner_text(cls, value):
         return owner_value(value)
+
+    @field_validator("interval_hours")
+    @classmethod
+    def recurring_interval(cls, value, info: ValidationInfo):
+        if info.data.get("rights") != "not_public" and (not 24 <= value <= 720 or not value.is_integer()):
+            raise ValueError("Public campaigns require interval_hours to be a whole number from 24 to 720")
+        try:
+            now() + timedelta(hours=value)
+        except OverflowError:
+            raise ValueError("interval_hours is too large to schedule") from None
+        return value
 
     @model_validator(mode="after")
     def valid(self):

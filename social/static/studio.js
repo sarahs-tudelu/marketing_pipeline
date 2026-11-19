@@ -8,6 +8,24 @@
   let postEdited = false;
   postForms.forEach((form) => form.addEventListener("input", () => { postEdited = true; }));
 
+  const campaignForm = document.querySelector('form[action="/forms/media-studio"]');
+  if (campaignForm) {
+    const interval = campaignForm.elements.namedItem("interval_hours");
+    const rights = campaignForm.elements.namedItem("rights");
+    const updateInterval = () => {
+      const privateCampaign = rights.value === "not_public";
+      interval.min = privateCampaign ? "0" : "24";
+      interval.step = privateCampaign ? "any" : "1";
+      if (privateCampaign) interval.removeAttribute("max");
+      else interval.max = "720";
+      interval.setCustomValidity(privateCampaign && interval.value !== "" && interval.valueAsNumber <= 0
+        ? "Enter a recurring interval greater than zero." : "");
+    };
+    rights.addEventListener("change", updateInterval);
+    interval.addEventListener("input", updateInterval);
+    updateInterval();
+  }
+
   function relatedForms(form) {
     const match = new URL(form.action).pathname.match(/^\/forms\/posts\/([^/]+)\//);
     return match ? postForms.filter((other) => new URL(other.action).pathname.startsWith(`/forms/posts/${match[1]}/`)) : [form];
