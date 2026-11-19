@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     http_timeout_seconds: float = 30
     ai_timeout_seconds: float = 300
-    max_upload_bytes: int = 100_000_000
+    max_upload_bytes: int = 250_000_000
     analytics_enabled: bool = False
     post_availability_enabled: bool = True
     post_availability_interval_hours: int = Field(default=6, ge=1, le=168)

@@ -181,7 +181,7 @@ def test_drive_import_reports_why_files_failed_and_names_videos_without_extensio
     imported = db.get(Asset, db.get(DriveImport, "clip").asset_id)
     assert imported.original_name == "Install day 1.mov" and imported.media["mime"] == "video/quicktime"
     assert "HEIC photos aren't supported" in db.get(DriveImport, "heic").error
-    assert "over the import size limit of 100.0 MB" in db.get(DriveImport, "huge").error
+    assert "over the import size limit of 250.0 MB" in db.get(DriveImport, "huge").error
     with TestClient(create_app(settings)) as client:
         page = client.get("/admin/assets").text
         assert "1 video" in page and "Files that couldn't be imported (2)" in page

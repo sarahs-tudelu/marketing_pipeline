@@ -117,7 +117,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `SMTP_STARTTLS` | `true` | Related configuration in the group above. |
 | `HTTP_TIMEOUT_SECONDS` | `30` | Network/AI timeouts and maximum ingestion size (bytes). |
 | `AI_TIMEOUT_SECONDS` | `300` | Related configuration in the group above. |
-| `MAX_UPLOAD_BYTES` | `100000000` | Related configuration in the group above. |
+| `MAX_UPLOAD_BYTES` | `250000000` | Maximum original media size for uploads, Google Drive imports, bucket imports and Runway downloads (250 MB). Publishing renditions must still fit each platform's limits. |
 | `ANALYTICS_ENABLED` | `false` | Phase 2 read-only metrics. TikTok needs reconnect with video.list; Meta insights scopes required. |
 | `AUTO_ADVANCE` | `true` | Advance drafts through generation, gate and scheduling on worker ticks. |
 | `POSTGRES_PASSWORD` | (unset secret) | Compose-only PostgreSQL password; use a random alphanumeric value. |
