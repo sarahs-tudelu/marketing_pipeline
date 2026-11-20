@@ -358,8 +358,8 @@ def select_reference(settings, records, context):
                 "photo-based selection. If no candidate can ground the product family (including zero candidates), "
                 "and the admin's own idea or operator edits explicitly allow design-based generation without a "
                 "matching image, plan an AI concept from the selected Builder product profile. Return reference_id='', "
-                "problem='', the exact authorizing quote in design_permission, and the applicable product rule IDs "
-                "in design_rule_ids, including at least one rule from that product's rules list. Specify the "
+                "problem='', the exact authorizing quote in design_permission, and the applicable rule IDs from "
+                "design_rule_choices in design_rule_ids, including at least one from design_rule_choices.product. Specify the "
                 "supported geometry in physical_description and scene_requirements "
                 "and write complete prompts without image tags. Never describe an unobserved real project or claim "
                 "to have used a photo. For an unsupported configuration, absent permission, or a repair that needs "
@@ -483,6 +483,10 @@ def select_reference(settings, records, context):
     schema["required"] = list(schema["properties"])
     for field in schema["properties"].values():
         field.pop("default", None)
+    # A design plan can only cite rules that apply to this product.
+    choices = context.get("design_rule_choices") or {}
+    if rule_ids := [*choices.get("product", []), *choices.get("general", [])]:
+        schema["properties"]["design_rule_ids"]["items"] = {"type": "string", "enum": rule_ids}
     with httpx.Client(timeout=settings.ai_timeout_seconds) as client:
         result = OpenAI(settings, client).call(
             "responses",
@@ -598,6 +602,14 @@ def request_intent(job):
     }
 
 
+def design_rules(profile, guidance):
+    """Rules a design-based plan may cite: the product's Builder rules, then the Builder's global rules and
+    the owner's current corrections, which the planner also receives."""
+    general = {r.id: r.instruction for r in guidance.global_rules}
+    general |= {r["id"]: r["instruction"] for r in current_constraints()["rules"]}
+    return {r.id: r.instruction for r in profile.rules}, general
+
+
 def validate_design_choice(choice, intent, profile, guidance, *, repairing):
     """Confirm the planner cited authored permission and real rules for this specific product."""
     def plain(text):
@@ -608,14 +620,24 @@ def validate_design_choice(choice, intent, profile, guidance, *, repairing):
     authored.extend(e["after"] for e in intent["operator_edits"] if quote not in plain(e.get("before", "")))
     if repairing or not any(quote in plain(text) for text in authored):
         raise ValueError(f"Reference needed for {profile.name}: this shot requires a compatible product image.")
-    product_rules = {r.id for r in profile.rules}
-    cited = set(choice.design_rule_ids)
-    applicable = product_rules | {r.id for r in guidance.global_rules}
-    if cited.isdisjoint(product_rules) or not cited.issubset(applicable) or not choice.scene_requirements:
-        raise ValueError(f"The design plan for {profile.name} is missing supported construction details. Resume to replan.")
+    product_rules, general_rules = design_rules(profile, guidance)
+    applicable = product_rules | general_rules
+    cited = list(dict.fromkeys(choice.design_rule_ids))
+    if unknown := [i[:60] for i in cited if i not in applicable]:
+        raise ValueError(
+            f"The design plan for {profile.name} cited rules that don't apply to it ({', '.join(unknown)}). "
+            "Resume to replan."
+        )
+    if not any(i in product_rules for i in cited):
+        raise ValueError(
+            f"The design plan for {profile.name} cited none of its Builder rules ({', '.join(product_rules)}). "
+            "Resume to replan."
+        )
+    if not choice.scene_requirements:
+        raise ValueError(f"The design plan for {profile.name} listed no construction requirements. Resume to replan.")
     if re.search(r"@ref\d+\b", " ".join([choice.prompt, choice.scene_prompt, *choice.scene_requirements]), re.I):
         raise ValueError("The design plan refers to an image it did not select. Resume to replan this scene.")
-    return {r.id: r.instruction for r in [*profile.rules, *guidance.global_rules] if r.id in cited}
+    return {i: applicable[i] for i in cited}
 
 
 def prepare(db, settings, job):
@@ -683,8 +705,10 @@ def prepare(db, settings, job):
             # A held post's old scene whose permissions changed isn't shown; its findings still apply.
             basis = basis | {"scene_retry": {k: v for k, v in basis["scene_retry"].items() if k != "scene"}}
     intent = request_intent(job)
+    product_rules, general_rules = design_rules(profile, guidance)
     context = basis | {
         "request_intent": intent,
+        "design_rule_choices": {"product": list(product_rules), "general": list(general_rules)},
         "style_reference": {"role": "style only", "id": style["id"]} if style else None,
         "prior_scene_references": [
             {

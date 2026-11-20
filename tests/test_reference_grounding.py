@@ -112,16 +112,43 @@ def test_image_can_use_documented_design_with_an_empty_library(db, settings, ref
     assert plan["design_rules"]["canopy.frame"].startswith("Use modular prefinished aluminum")
 
 
-@pytest.mark.parametrize("idea,rules,error", [
-    ("Use actual photos only", ["canopy.frame"], "compatible product image"),
-    (DESIGN_PERMISSION, ["pergola.roof"], "construction details"),
-    (DESIGN_PERMISSION, ["canopy.frame", "invented.rule"], "construction details"),
+@pytest.mark.parametrize("idea,update,error", [
+    ("Use actual photos only", {}, "compatible product image"),
+    (DESIGN_PERMISSION, {"design_rule_ids": ["pergola.fixed_louvers", "canopy.frame"]},
+     r"rules that don't apply to it \(pergola.fixed_louvers\)"),
+    (DESIGN_PERMISSION, {"design_rule_ids": ["canopy.frame", "invented.rule"]}, r"don't apply to it \(invented.rule\)"),
+    (DESIGN_PERMISSION, {"design_rule_ids": ["builder.geometry", "canopy.hanger_rods_above"]},
+     r"cited none of its Builder rules \(canopy.frame, canopy.roof, canopy.supports\)"),
+    (DESIGN_PERMISSION, {"scene_requirements": []}, "listed no construction requirements"),
 ])
-def test_design_requires_authored_permission_and_matching_rules(db, settings, reference_job, photo, monkeypatch, idea, rules, error):
+def test_design_requires_authored_permission_and_matching_rules(
+    db, settings, reference_job, photo, monkeypatch, idea, update, error
+):
     reference_job.brief = reference_job.brief | {"prompt": idea, "depicted_system": "Canopies"}
-    monkeypatch.setattr(refs, "select_reference", lambda *args: canopy_design().model_copy(update={"design_rule_ids": rules}))
+    monkeypatch.setattr(refs, "select_reference", lambda *args: canopy_design().model_copy(update=update))
     with pytest.raises(ValueError, match=error):
         refs.prepare(db, settings, reference_job)
+
+
+def test_canopy_design_can_cite_the_owner_corrections_it_was_given(db, settings, reference_job, photo, monkeypatch):
+    # The planner receives the owner's corrections alongside the Builder rules, and the hanger-rod one
+    # is the canopy's own; citing it used to fail every canopy design plan.
+    reference_job.brief = reference_job.brief | {"prompt": DESIGN_PERMISSION, "depicted_system": "Canopies"}
+    db.commit()
+    rules = ["canopy.frame", "canopy.supports", "canopy.hanger_rods_above", "scope.product_brief", "builder.geometry"]
+    seen = []
+
+    def design(settings, records, context):
+        seen.append(context["design_rule_choices"])
+        return canopy_design().model_copy(update={"design_rule_ids": rules})
+
+    monkeypatch.setattr(refs, "select_reference", design)
+    assert refs.prepare(db, settings, reference_job) == []
+    assert seen[0]["product"] == ["canopy.frame", "canopy.roof", "canopy.supports"]
+    assert {"builder.geometry", "canopy.hanger_rods_above", "scope.product_brief"} <= set(seen[0]["general"])
+    plan = reference_job.brief["reference_plan"]
+    assert list(plan["design_rules"]) == rules
+    assert "entirely ABOVE the canopy roof" in plan["design_rules"]["canopy.hanger_rods_above"]
 
 
 def test_scene_keeps_exact_post_configuration_and_complete_setting():
@@ -340,6 +367,10 @@ def test_selector_receives_pixels_and_builder_rules(db, settings, reference_job,
     # The animation prompt describes the action, with doors opened before anyone walks through them.
     assert MOTION_GUIDANCE in content[0]["text"] and DOORWAY_GUIDANCE in content[0]["text"]
     assert "describing only the subsequent camera motion" not in content[0]["text"]
+    # A design plan can cite only this product's rules and the general ones, not another family's.
+    cited = seen[0]["text"]["format"]["schema"]["properties"]["design_rule_ids"]["items"]["enum"]
+    assert {"pergola.fixed_louvers", "builder.geometry", "canopy.hanger_rods_above"} <= set(cited)
+    assert "canopy.frame" not in cited
 
 
 def test_worker_sends_reference_and_records_ancestry(db, settings, reference_job, photo, monkeypatch):
