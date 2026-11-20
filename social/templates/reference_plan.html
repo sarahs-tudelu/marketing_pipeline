@@ -1,5 +1,7 @@
 {% if plan %}
 <details><summary>{{ reference_label|default('Product reference') }}</summary>
+  {% if plan.get('design_rules') %}<p>AI concept based on the Tudelu Builder design for {{ plan.system }}.</p>
+  <small>Builder {{ plan.builder_version }} · {{ plan.design_rules|join(', ') }}</small>{% endif %}
   {% for r in plan.references %}
   <p>{{ {'google_drive': 'Google Drive photo', 'asset_library': 'Company library reference', 'video_frame': 'Frame from uploaded video'}.get(r.origin, 'Tudelu website reference') }} · {{ r.original_name }}{% if r.origin == 'video_frame' %} · {{ '%g'|format(r.frame_seconds) }} s into <a href="/admin/assets/{{ r.video_asset_id }}/edit">the source video</a>{% endif %}</p>
   <a href="{{ media_base_url ~ '/' ~ (r.storage_key|urlencode) if r.asset_id else r.source_url }}" target="_blank" rel="noopener noreferrer">View source image</a>

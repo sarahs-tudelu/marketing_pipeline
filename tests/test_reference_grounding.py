@@ -72,6 +72,58 @@ def choice(record, prompt="The existing fixed pergola remains stationary; a slow
     )
 
 
+DESIGN_PERMISSION = "if real reference not available, generate based off designs"
+
+
+def canopy_design():
+    return refs.Selection(reference_id="", design_permission=DESIGN_PERMISSION,
+                          design_rule_ids=["canopy.frame", "canopy.roof", "canopy.supports"],
+                          physical_description="Straight aluminum fascia and solid panel roof with connected posts.",
+                          scene_requirements=["One solid roof on seated aluminum posts"],
+                          prompt="A visitor walks under the canopy as the camera advances.",
+                          scene_prompt="A hotel entrance with clear unmarked glazing at dusk.",
+                          reason="Builder canopy with a supported roof and post arrangement.", problem="")
+
+
+def test_image_can_use_documented_design_with_an_empty_library(db, settings, reference_job, photo, monkeypatch):
+    reference_job.brief = reference_job.brief | {"prompt": f"An architectural canopy ({DESIGN_PERMISSION})",
+                                                "depicted_system": "Canopies"}
+    db.commit()
+    def design(settings, records, context):
+        assert not records and context["system"] == "canopies"
+        return canopy_design()
+    monkeypatch.setattr(refs, "candidates", lambda *args: [])
+    monkeypatch.setattr(refs, "select_reference", design)
+    settings.ai_mode, settings.runway_api_key = "live", SecretStr("test")
+
+    class Provider:
+        def submit(self, endpoint, payload):
+            assert endpoint == "text_to_image" and "referenceImages" not in payload
+            assert "@ref" not in payload["promptText"] and "One solid roof" in payload["promptText"]
+            return "image-task"
+
+    process_jobs(db, settings, Provider())
+    assert reference_job.state == "running", reference_job.error
+    _save_output(db, settings, reference_job, storage(settings).read(photo.storage_key))
+    output = db.get(Asset, reference_job.source_asset_ids[-1])
+    assert output.source == "ai_generated" and output.tags["source_asset_ids"] == []
+    plan = output.tags["reference_plan"]
+    assert plan["references"] == [] and plan["design_permission"] == DESIGN_PERMISSION
+    assert plan["design_rules"]["canopy.frame"].startswith("Use modular prefinished aluminum")
+
+
+@pytest.mark.parametrize("idea,rules,error", [
+    ("Use actual photos only", ["canopy.frame"], "compatible product image"),
+    (DESIGN_PERMISSION, ["pergola.roof"], "construction details"),
+    (DESIGN_PERMISSION, ["canopy.frame", "invented.rule"], "construction details"),
+])
+def test_design_requires_authored_permission_and_matching_rules(db, settings, reference_job, photo, monkeypatch, idea, rules, error):
+    reference_job.brief = reference_job.brief | {"prompt": idea, "depicted_system": "Canopies"}
+    monkeypatch.setattr(refs, "select_reference", lambda *args: canopy_design().model_copy(update={"design_rule_ids": rules}))
+    with pytest.raises(ValueError, match=error):
+        refs.prepare(db, settings, reference_job)
+
+
 def test_scene_keeps_exact_post_configuration_and_complete_setting():
     guidance = VisualGuidance.model_validate(refs.reference_config("visual-guidance.builder.yaml"))
     profile = profile_for(guidance, "canopies")
@@ -203,6 +255,11 @@ def test_saved_reference_is_revalidated_before_generation(
 def test_restricted_and_conflicting_references_are_not_chosen(
     db, settings, reference_job, photo, monkeypatch
 ):
+    def no_photos(settings, records, context):
+        assert not records
+        return refs.Selection(reference_id="", physical_description="", prompt="", reason="",
+                              problem="No Public product reference.")
+    monkeypatch.setattr(refs, "select_reference", no_photos)
     photo.rights = "not_public"
     db.commit()
     with pytest.raises(ValueError, match="No Public product reference"):
@@ -406,7 +463,7 @@ def test_fixture_and_existing_video_edits_do_not_call_reference_selector(
         {"operation": "audio"},
     ):
         reference_job.brief = reference_job.brief | updates
-        assert refs.prepare(db, settings, reference_job) == []
+        assert refs.prepare(db, settings, reference_job) is None
 
 
 def test_website_bytes_are_bounded_cached_and_not_claimed_to_be_real(db, settings, sheet):
@@ -465,7 +522,9 @@ def test_final_visual_review_gets_reference_images_separately(
         prompt="test",
         rights="public",
         tags={"reference_plan": reference_job.brief["reference_plan"], "video_sequence": [
-            {"reference_plan": reference_job.brief["reference_plan"] | {"creative_changes": "Wood Look at a cafe"}}
+            {"reference_plan": reference_job.brief["reference_plan"] | {"creative_changes": "Wood Look at a cafe"}},
+            {"index": 2, "reference_plan": reference_job.brief["reference_plan"] | {
+                "references": [], "design_rules": {"pergola.fixed_louvers": "Fixed louvers stay stationary."}}},
         ]},
     )
     seen = []
@@ -504,5 +563,7 @@ def test_final_visual_review_gets_reference_images_separately(
     assert context["reference_inputs"][1]["image_number"] == 2
     assert context["reference_inputs"][1]["creative_changes"] == "Wood Look at a cafe"
     assert context["reference_inputs"][0]["role"] == "product_construction"
+    assert context["design_plans"][0]["rules"] == {"pergola.fixed_louvers": "Fixed louvers stay stationary."}
+    assert context["design_plans"][0]["shot"] == {"index": 2}
     assert context["reference_inputs"][0]["request_intent"]["admin_idea"] == reference_job.brief["prompt"]
     assert len([p for p in content if p["type"] == "input_image"]) == 2

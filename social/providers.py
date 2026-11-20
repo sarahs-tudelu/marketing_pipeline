@@ -462,7 +462,7 @@ class OpenAI:
             )
         # These are comparison inputs, not frames of the output under review. Keep their
         # numbering separate so an original logo/person is never attributed to a generated clip.
-        reference_inputs, reference_seen = [], {}
+        reference_inputs, reference_seen, design_plans = [], {}, []
         for asset in assets:
             plans = [(asset.tags.get("reference_plan"), {})]
             plans.extend((s.get("reference_plan"), {k: s[k] for k in ("index", "start", "duration") if k in s})
@@ -470,6 +470,10 @@ class OpenAI:
             for plan, interval in plans:
                 if not plan:
                     continue
+                if plan.get("design_rules"):
+                    design_plans.append({"output_asset_id": asset.id, "shot": interval, "system": plan["system"],
+                                         "builder_version": plan["builder_version"], "rules": plan["design_rules"],
+                                         "requested_scene": plan["scene_prompt"]})
                 records = [("product_construction", r) for r in plan.get("references", [])]
                 if plan.get("scene_reference"):
                     records.append(("generated_scene", plan["scene_reference"]))
@@ -539,6 +543,8 @@ class OpenAI:
                 "reference_inputs are comparison images, not output video frames. product_construction images "
                 "guide product identity and connections, not a locked background or finish. generated_scene "
                 "images show the intended starting scene, but remain AI output, not proof of product accuracy. "
+                "For design_plans, evaluate visible geometry against the cited Builder rules and owner constraints. "
+                "These are AI concepts generated without a product photograph. "
                 "Honor requested_scene and creative_changes when Builder-supported: different backgrounds, "
                 "architecture, configurations, colors and finishes are allowed. Do not reject those differences "
                 "merely because they differ from the original photo. Where request_intent is supplied, its "
@@ -611,7 +617,8 @@ class OpenAI:
                 "product_constraints_version, product_mismatches, request_conflict. "
                 + media_guidance
                 + "Context: "
-                + json.dumps(vision_context(context) | {"media_inputs": media_inputs, "reference_inputs": reference_inputs}, default=str),
+                + json.dumps(vision_context(context) | {"media_inputs": media_inputs, "reference_inputs": reference_inputs,
+                                                        "design_plans": design_plans}, default=str),
             }
         ]
         content.extend(

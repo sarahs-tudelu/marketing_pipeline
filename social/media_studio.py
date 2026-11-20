@@ -1551,7 +1551,7 @@ def process_jobs(db, settings, provider=None):
                     if brief.operation == "audio":
                         ids = list(dict.fromkeys(ids + brief.audio_reference_ids))[:3]
                     style_uri = None
-                    if grounded_references:
+                    if grounded_references is not None:
                         references = [
                             runway.reference(SimpleNamespace(**r))
                             for r in grounded_references

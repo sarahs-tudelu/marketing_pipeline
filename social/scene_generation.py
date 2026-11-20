@@ -74,6 +74,7 @@ def review_scene(settings, plan, guidance, scene):
     from .providers import OpenAI, parse_json
 
     context = {
+        "design_rules": plan.get("design_rules", {}),
         "earlier_defects": earlier_defects(plan),
         "request_intent": plan.get("request_intent"),
         "reference_description": plan.get("physical_description", ""),
@@ -89,7 +90,9 @@ def review_scene(settings, plan, guidance, scene):
         {
             "type": "input_text",
             "text": (
-                "Review the NEW GENERATED SCENE before animation. Product photos establish construction, not a locked "
+                "Review the NEW GENERATED SCENE before animation. A nonempty design_rules section identifies an authorized "
+                "Builder concept without a product photograph. Check its visible construction against those rules and "
+                "the current owner constraints. Product photos, when supplied, establish construction, not a locked "
                 "background, color or setting. Requested new architecture, Builder-supported configurations and finishes "
                 "are allowed. Read the builder rules through the owner's current instructions: " + SCOPE_REASONING
                 + " " + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " Pass a supported customization even when it "
@@ -186,7 +189,7 @@ def review_scene(settings, plan, guidance, scene):
 def generation_inputs(db, settings, job, product_references):
     """Return the next task's brief/inputs and a persisted phase for crash-safe recovery."""
     brief = segment_brief(job)
-    if job.stage != "visual" or brief["operation"] != "video" or not product_references:
+    if job.stage != "visual" or brief["operation"] != "video" or product_references is None:
         return brief, product_references, job.stage
     plan = current_plan(job)
     style = plan.get("style_reference")

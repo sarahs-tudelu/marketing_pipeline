@@ -70,9 +70,11 @@ class Selection(BaseModel):
     scene_prompt: str = Field(default="", max_length=2000)
     creative_changes: str = Field(default="", max_length=1600)
     scene_requirements: list[str] = Field(default_factory=list, max_length=12)
+    design_permission: str = Field(default="", max_length=1000)
+    design_rule_ids: list[str] = Field(default_factory=list, max_length=16)
 
 
-def compose_scene_prompt(prompt, requirements, profile):
+def compose_scene_prompt(prompt, requirements, profile, *, from_design=False):
     """Send the selected configuration and complete setting, without unrelated product options."""
     # A style scene is sent to Runway untagged, its documented way to style an output without copying
     # its content, so the prompt never names it.
@@ -80,7 +82,8 @@ def compose_scene_prompt(prompt, requirements, profile):
     if not requirements:
         return constrain_prompt(setting, profile, profile.product_id)
     details = " ".join(" ".join(item.split()).rstrip(". ") + "." for item in requirements if item.strip())
-    parts = ["A new design using @ref0 for product construction.", details, setting]
+    parts = [f"A Tudelu {profile.name} design." if from_design else "A new design using @ref0 for product construction.",
+             details, setting]
     # The complete Builder/owner rules remain in planning and independent review. Putting
     # an alternative support system in every canopy prompt was introducing unwanted rods.
     if re.search(r"\brods?\b", details + " " + prompt, re.I):
@@ -351,13 +354,21 @@ def select_reference(settings, records, context):
                 "rod orientation rule applies when rods are selected, not as an instruction to add them. "
                 "Prefer real Public company/Google Drive photos over website illustrations when equally suitable. "
                 "A website illustration is not proof of an installed project. Never choose a photo that contradicts "
-                "the rules, even if explicitly selected. Return empty reference_id and a precise problem if no "
-                "candidate can ground the product family. The approved shot controls the new scene: backgrounds, "
+                "the rules, even if explicitly selected. Use design_permission='' and design_rule_ids=[] for a "
+                "photo-based selection. If no candidate can ground the product family (including zero candidates), "
+                "and the admin's own idea or operator edits explicitly allow design-based generation without a "
+                "matching image, plan an AI concept from the selected Builder product profile. Return reference_id='', "
+                "problem='', the exact authorizing quote in design_permission, and the applicable product rule IDs "
+                "in design_rule_ids, including at least one rule from that product's rules list. Specify the "
+                "supported geometry in physical_description and scene_requirements "
+                "and write complete prompts without image tags. Never describe an unobserved real project or claim "
+                "to have used a photo. For an unsupported configuration, absent permission, or a repair that needs "
+                "photographic evidence, return a precise problem instead. The approved shot controls the new scene: backgrounds, "
                 "architecture, locations, composition and Builder-supported structures, colors and material finishes "
                 "may differ from the photo. Do not reject a request because the reference has a different setting "
                 "or finish. Keep aluminum construction and supported roof/connections; Wood Look is not timber. "
                 "For video the app FIRST generates a new scene image, checks it, THEN animates it. Return "
-                "scene_prompt describing the desired complete still scene using @ref0 for product construction, "
+                "scene_prompt describing the desired complete still scene using @ref0 only when a product image was selected, "
                 "not its original background or finish. " + STRUCTURE_SELECTION + " "
                 "Compose that still so nothing structural has to be invented "
                 "later: the whole structure (or a deliberate close detail) at eye level or slightly above, usually a "
@@ -381,7 +392,7 @@ def select_reference(settings, records, context):
                 "geometry. When video_check says a clip was frozen or that someone passed through a closed door "
                 "or glass, the earlier prompt gave the video model too little to do or an impossible path: write "
                 "concrete action and a real opening this time. For image generation prompt "
-                "describes the complete new image using @ref0. Respect visual_direction in both prompts. When "
+                "describes the complete new image, referencing @ref0 only for a photo-based selection. Respect visual_direction in both prompts. When "
                 "style_reference is present, the app sends it to Runway untagged so Runway takes only its lighting, "
                 "exposure, color treatment and lens character; never mention @ref1, and its product and setting "
                 "must not replace this shot's subject. Keep critical connections visible. "
@@ -431,8 +442,8 @@ def select_reference(settings, records, context):
                 "incorrectly. Return problem only when the shot needs something past a hard limit; otherwise "
                 "use the nearest supported option. People are allowed only when requested "
                 "or already present. No generated logos; the app adds the official end card. "
-                "Describe the reference's observed geometry in physical_description. Each prompt should be under 650 "
-                "characters, in positive sentences. Identify the selected reference by its exact supplied id. "
+                "For photo-based selections describe the observed geometry in physical_description and identify the "
+                "image by its exact supplied id. Each prompt should be under 650 characters, in positive sentences. "
                 "Return only the requested JSON. Context: " + json.dumps(context, default=str)
             ),
         }
@@ -587,15 +598,35 @@ def request_intent(job):
     }
 
 
+def validate_design_choice(choice, intent, profile, guidance, *, repairing):
+    """Confirm the planner cited authored permission and real rules for this specific product."""
+    def plain(text):
+        return " ".join(text.split()).casefold()
+
+    quote = plain(choice.design_permission)
+    authored = [intent["admin_idea"], intent["legacy_operator_prompt"]]
+    authored.extend(e["after"] for e in intent["operator_edits"] if quote not in plain(e.get("before", "")))
+    if repairing or not any(quote in plain(text) for text in authored):
+        raise ValueError(f"Reference needed for {profile.name}: this shot requires a compatible product image.")
+    product_rules = {r.id for r in profile.rules}
+    cited = set(choice.design_rule_ids)
+    applicable = product_rules | {r.id for r in guidance.global_rules}
+    if cited.isdisjoint(product_rules) or not cited.issubset(applicable) or not choice.scene_requirements:
+        raise ValueError(f"The design plan for {profile.name} is missing supported construction details. Resume to replan.")
+    if re.search(r"@ref\d+\b", " ".join([choice.prompt, choice.scene_prompt, *choice.scene_requirements]), re.I):
+        raise ValueError("The design plan refers to an image it did not select. Resume to replan this scene.")
+    return {r.id: r.instruction for r in [*profile.rules, *guidance.global_rules] if r.id in cited}
+
+
 def prepare(db, settings, job):
-    """Commit the reference choice and exact prompt before any paid generation submission."""
+    """Commit the product inputs before submission. None lets other operations use their own inputs."""
     if (
         job.stage != "visual"
         or job.brief["operation"] not in {"image", "video"}
         or job.brief.get("as_uploaded")
         or job.brief["execution_mode"] == "fixture"
     ):
-        return []
+        return None
     guidance = builder_guidance(db, job)
     segment = current_segment(job)
     target = segment or job.brief
@@ -639,12 +670,6 @@ def prepare(db, settings, job):
         records = [r for r in records if r.get("source") == "company" and r.get("asset_id")]
         if not records:
             raise ValueError("Choose a cleared Tudelu photo showing the affected construction before repairing this scene.")
-    if not records:
-        if job.brief.get("campaign_reference_ids"):
-            raise ValueError(f"No cleared reference remains in this campaign's selection for {profile.name}.")
-        raise ValueError(
-            f"No Public product reference is available for {profile.name}. Import a matching photo from Google Drive or upload one."
-        )
     style = style_reference(job)
     rejected = basis.get("scene_retry", {}).get("scene")
     if rejected and basis["scene_retry"].get("review", {}).get("passed") is False:
@@ -675,29 +700,29 @@ def prepare(db, settings, job):
         ],
     }
     choice = select_reference(settings, records, context)
-    if (
-        choice.problem.strip()
-        or not choice.reference_id
-        or not choice.prompt.strip()
-        or not choice.physical_description.strip()
-    ):
+    from_design = bool(choice.design_permission.strip()) and not choice.reference_id
+    if (choice.problem.strip() or not (choice.reference_id or from_design)
+            or not choice.prompt.strip() or not choice.physical_description.strip()):
         raise ValueError(
             f"Reference needed for {profile.name}: "
-            + (choice.problem or "Choose a clear matching product photo.")[:700]
+            + (choice.problem or "Choose a matching photo or allow a concept based on the approved designs.")[:700]
         )
     if job.brief["operation"] == "video" and not choice.scene_prompt.strip():
         raise ValueError("Scene planning did not return an image prompt. Resume to finish planning before generation.")
     if basis.get("scene_retry", {}).get("review", {}).get("passed") is False and not choice.scene_requirements:
         raise ValueError("Scene correction did not return explicit product requirements. Generate the scene again.")
-    record = next((r for r in records if r["id"] == choice.reference_id), None)
-    if record is None:
-        raise ValueError(
-            "Reference review selected an unknown image. Resume to choose from the available company references."
-        )
-    validate_record(db, settings, record, private=job.brief.get("rights") == "not_public")
+    if from_design:
+        rules = validate_design_choice(choice, intent, profile, guidance, repairing="failed_clip" in basis)
+        selected = []
+    else:
+        record = next((r for r in records if r["id"] == choice.reference_id), None)
+        if record is None:
+            raise ValueError("Reference review selected an unknown image. Resume to choose from the available company references.")
+        validate_record(db, settings, record, private=job.brief.get("rights") == "not_public")
+        selected = [record]
     still_prompt = choice.scene_prompt if job.brief["operation"] == "video" else choice.prompt
     scene_prompt = compose_scene_prompt(
-        still_prompt or choice.prompt, choice.scene_requirements, profile
+        still_prompt or choice.prompt, choice.scene_requirements, profile, from_design=from_design
     )
     prompt = (
         scene_prompt if job.brief["operation"] == "image"
@@ -709,7 +734,8 @@ def prepare(db, settings, job):
         "request_digest": request_digest,
         "source_prompt": source_prompt,
         "prompt": prompt,
-        "references": [record],
+        "references": selected,
+        **({"design_permission": choice.design_permission, "design_rules": rules} if from_design else {}),
         "physical_description": choice.physical_description,
         "reason": choice.reason,
         "system": profile.product_id,
@@ -755,4 +781,4 @@ def prepare(db, settings, job):
     )
     job.brief = job.brief | {"grounded_reference_ids": ids, "rendering_guidelines": policy()}
     db.commit()
-    return [record]
+    return selected

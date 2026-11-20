@@ -4,7 +4,7 @@ import json
 import pytest
 from PIL import Image
 from pydantic import SecretStr
-from test_reference_grounding import choice
+from test_reference_grounding import DESIGN_PERMISSION, canopy_design, choice
 from test_reference_grounding import photo as photo
 from test_reference_grounding import reference_job as reference_job
 from test_reference_grounding import sheet as sheet
@@ -71,6 +71,44 @@ class Provider:
     def download(self, task_id):
         endpoint = self.submitted[int(task_id.split("-")[1]) - 1][0]
         return self.still if endpoint == "text_to_image" else seed_media(duration=6)[1]
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_retry_canopy_from_design_omits_wrong_shortlist_and_checks_scene(db, settings, video_job, photo, monkeypatch, passed):
+    video_job.brief = video_job.brief | {
+        "prompt": f"Hotel canopy at dusk ({DESIGN_PERMISSION})", "depicted_system": "Canopies",
+        "campaign_reference_ids": [photo.id], "reference_ids": [photo.id],
+        "video_segments": [{"index": 0, "start": 0, "duration": 6, "seed": 123,
+                            "system": "Canopies", "prompt": "A slim canopy outside a hotel."}],
+    }
+    video_job.state, video_job.error = "failed", "Reference needed for Architectural Canopies"
+    assert retry_option(video_job)["label"] == "clip 1"
+    retry_step(db, video_job, retry_option(video_job)["prompt"])
+    def select_design(settings, records, context):
+        assert [r["asset_id"] for r in records] == [photo.id]
+        assert context["system"] == "canopies" and DESIGN_PERMISSION in context["admin_idea"]
+        return canopy_design()
+    def inspect(settings, plan, guidance, scene):
+        assert plan["references"] == [] and "canopy.supports" in plan["design_rules"]
+        return scenes.SceneCheck(passed=passed, reasons=[] if passed else ["Disconnected support"])
+    monkeypatch.setattr(refs, "select_reference", select_design)
+    monkeypatch.setattr(scenes, "review_scene", inspect)
+    provider = Provider(db, video_job, settings)
+    process_jobs(db, settings, provider)
+    assert video_job.state == "running", video_job.error
+    assert not provider.uploaded and "referenceImages" not in provider.submitted[0][1]
+    assert provider.submitted[0][0] == "text_to_image"
+    process_jobs(db, settings, provider)
+    scene = db.get(Asset, refs.current_plan(video_job)["scene_reference"]["asset_id"])
+    assert scene.source == "ai_generated" and scene.tags["source_asset_ids"] == []
+    monkeypatch.setattr(refs, "select_reference", lambda *args: pytest.fail("Expected the saved design plan"))
+    process_jobs(db, settings, provider)
+    assert refs.current_plan(video_job)["scene_check"]["passed"] is passed
+    if passed:
+        assert [a.asset_id for a in provider.uploaded] == [scene.id]
+        assert provider.submitted[1][0] == "image_to_video"
+    else:
+        assert video_job.state == "failed" and len(provider.submitted) == 1
 
 
 @pytest.mark.parametrize("legacy", [False, True])
