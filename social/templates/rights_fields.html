@@ -1,6 +1,7 @@
 <div class="two">
   <label>Usage rights<select name="rights" aria-label="Usage rights" required>
     <option value="">Choose…</option>
+    {% if editing_campaign and editing_campaign.brief.rights not in rights_choices %}<option value="{{ editing_campaign.brief.rights }}" {{ 'selected' if values.get('rights') == editing_campaign.brief.rights else '' }}>{{ editing_campaign.brief.rights }} (existing rights)</option>{% endif %}
     {% for value, label in rights_choices.items() %}<option value="{{ value }}" {{ 'selected' if values.get('rights') == value else '' }}>{{ label }}</option>{% endfor %}
   </select></label>
   <label>Owner (optional)<input name="owner" maxlength="200" value="{{ values.get('owner', '') }}" placeholder="{{ owner_hint|default('Who owns this media') }}"></label>

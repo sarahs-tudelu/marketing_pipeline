@@ -761,14 +761,20 @@ def activate_planned_jobs(db, settings):
 
 def replenish_campaigns(db, settings):
     from .automation import can_automate
+    from .campaigns import lock_campaign
 
     if not can_automate(db, settings) or settings.ai_mode != "live":
         return
-    for campaign in db.scalars(
-        select(MediaCampaign).where(MediaCampaign.enabled.is_(True), MediaCampaign.next_run_at <= now())
-    ).all():
+    due = db.scalars(select(MediaCampaign.id).where(
+        MediaCampaign.enabled.is_(True), MediaCampaign.next_run_at <= now()
+    )).all()
+    for campaign_id in due:
         if not can_automate(db, settings):
             return
+        campaign = lock_campaign(db, campaign_id)
+        if not campaign or not campaign.enabled or campaign.next_run_at > now():
+            db.commit()
+            continue
         brief = CreativeBrief.model_validate(campaign.brief, context={"stored": True})
         pending_idea = db.scalar(select(MediaJob.id).where(
             MediaJob.platform.in_(brief.platforms),
@@ -798,7 +804,9 @@ def replenish_campaigns(db, settings):
             db.commit()
             continue
         try:
-            jobs = queue_jobs(db, settings, brief, campaign=campaign, sequence=campaign.sequence)
+            # Roll back a partial batch on error while keeping the campaign locked until its status is saved.
+            with db.begin_nested():
+                jobs = queue_jobs(db, settings, brief, campaign=campaign, sequence=campaign.sequence)
             for job in jobs:
                 job.brief = job.brief | {k: campaign.brief[k] for k in ("prompted_by", "prompted_by_label") if k in campaign.brief}
             campaign.sequence += 1
@@ -806,7 +814,6 @@ def replenish_campaigns(db, settings):
             campaign.error = ""
             db.commit()
         except WebsiteContextError as exc:
-            db.rollback()
             campaign.error = str(exc)
             if exc.retryable:
                 campaign.next_run_at = now() + timedelta(seconds=max(300, exc.retry_after))
@@ -815,7 +822,6 @@ def replenish_campaigns(db, settings):
                 campaign.enabled = False
             db.commit()
         except ValueError as exc:
-            db.rollback()
             campaign.error = str(exc)
             campaign.enabled = False
             db.commit()

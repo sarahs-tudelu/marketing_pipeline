@@ -8,7 +8,7 @@
   let postEdited = false;
   postForms.forEach((form) => form.addEventListener("input", () => { postEdited = true; }));
 
-  const campaignForm = document.querySelector('form[action="/forms/media-studio"]');
+  const campaignForm = document.querySelector("form[data-creative-brief]");
   if (campaignForm) {
     const interval = campaignForm.elements.namedItem("interval_hours");
     const rights = campaignForm.elements.namedItem("rights");
@@ -87,6 +87,7 @@
     "save-media": ["Saving media details…", "Updating permissions and source information."],
     automation: ["Updating automation…", "Saving your automatic-post preference."],
     "media-studio": ["Saving creative brief…", "Preparing your media queue or recurring campaign."],
+    "save-campaign": ["Saving campaign…", "Updating the brief for future batches."],
     plan: ["Planning your idea…", "Saving any files you added, then reading your idea, tudelu.com and the approved facts. This can take up to a minute."],
     create: ["Saving your plan…", "Adding it to the generation queue."],
     replan: ["Planning the edit again…", "The editor looks at your media again. This can take a minute."],

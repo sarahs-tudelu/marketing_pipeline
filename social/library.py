@@ -12,7 +12,7 @@ import json
 import math
 from urllib.parse import urlencode
 
-from sqlalchemy import select
+from sqlalchemy import Text, cast, select
 
 from .db import now
 from .models import Asset, AssetEdit, DriveImport, MediaCampaign, MediaJob, Post
@@ -294,11 +294,16 @@ def used_by(asset_id, uses):
 
 def _drop_from_campaigns(db, asset_id):
     """Recurring campaigns stop using a deleted file. Returns the names of the ones that did."""
+    from .campaigns import lock_campaign
+
     changed = []
-    for campaign in db.scalars(select(MediaCampaign)):
-        brief = campaign.brief or {}
-        if asset_id not in json.dumps(brief, default=str):
+    affected = db.scalars(select(MediaCampaign.id).where(cast(MediaCampaign.brief, Text).contains(asset_id))
+                          .order_by(MediaCampaign.id)).all()
+    for campaign_id in affected:
+        campaign = lock_campaign(db, campaign_id)
+        if campaign is None:
             continue
+        brief = campaign.brief or {}
         updated = {
             key: [v for v in value if v != asset_id] if isinstance(value, list) else "" if value == asset_id else value
             for key, value in brief.items()

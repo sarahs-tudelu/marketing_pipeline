@@ -256,6 +256,7 @@ def page_context(
     bucket_form=None,
     drive_form=None,
     editing_asset=None,
+    editing_campaign=None,
     media_edit_values=None,
     idea_form=None,
     plan=None,
@@ -336,10 +337,16 @@ def page_context(
     elif view == "compose":
         context["compose_picker"] = picker([a for a in context["assets"] if pickable(a)])
     elif view == "media-studio":
-        context["media_campaigns"] = db.scalars(
-            select(MediaCampaign).order_by(MediaCampaign.created_at.desc())
-        ).all()
-        context["campaign_picker"] = picker([a for a in context["assets"] if pickable(a)])
+        context["editing_campaign"] = editing_campaign
+        if not editing_campaign:
+            context["media_campaigns"] = db.scalars(select(MediaCampaign).order_by(MediaCampaign.created_at.desc())).all()
+        selected = (asset_form or {}).get("reference_ids", [])
+        context["campaign_picker"] = picker([a for a in context["assets"] if pickable(a) or a.id in selected])
+        if editing_campaign:
+            available = {a.id for a in context["assets"]}
+            available_audio = {a.id for a in context["assets"] if a.media["mime"].startswith("audio/")}
+            context["missing_references"] = [i for i in selected if i not in available]
+            context["missing_audio"] = [i for i in (asset_form or {}).get("audio_reference_ids", []) if i not in available_audio]
     elif view == "assets":
         context.update(drive=drive_panel(db, settings), drive_form=drive_form)
     elif view == "upload":

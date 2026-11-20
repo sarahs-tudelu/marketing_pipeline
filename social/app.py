@@ -9,7 +9,7 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 import yaml
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -21,6 +21,7 @@ from starlette.datastructures import UploadFile
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import connections, crm_access
+from .campaigns import campaign_revision, lock_campaign, update_campaign, validate_campaign
 from .clip_replace import needs_runway_music, replace_part
 from .config import PLATFORMS, REAL_MEDIA_ONLY, get_settings, profiles
 from .db import make_engine, schema_gaps, sessions
@@ -42,12 +43,10 @@ from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, trans
 from .media_changes import request_changes
 from .media_studio import (
     CreativeBrief,
-    check_real_media,
     finish_video,
     platform_copy,
     queue_jobs,
     resume_job,
-    validate_sources,
     website_snapshot,
 )
 from .models import (
@@ -524,61 +523,65 @@ def create_app(settings=None):
 
     @app.post("/forms/media-studio", dependencies=mutation)
     async def submit_creative(request: Request, db: DB):
-        form = await request.form()
+        return await run_in_threadpool(save_creative, request, db, await request.form())
+
+    @app.get("/admin/media-campaigns/{campaign_id}/edit", response_class=HTMLResponse)
+    def edit_campaign(campaign_id: str, request: Request, db: DB):
+        campaign = db.get(MediaCampaign, campaign_id)
+        if not campaign:
+            raise HTTPException(404, "Campaign not found")
+        values = campaign.brief | {"campaign": campaign.name, "revision": campaign_revision(campaign),
+                                  "website": "on" if campaign.brief.get("website", True) else ""}
+        return page(request, db, "media-studio", editing_campaign=campaign, asset_form=values)
+
+    @app.post("/forms/media-campaigns/{campaign_id}/save", dependencies=mutation)
+    async def save_campaign(campaign_id: str, request: Request, db: DB):
+        return await run_in_threadpool(save_creative, request, db, await request.form(), campaign_id)
+
+    def save_creative(request, db, form, campaign_id=None):
+        campaign = lock_campaign(db, campaign_id) if campaign_id else None
+        if campaign_id and not campaign:
+            raise HTTPException(404, "Campaign not found")
+        stored = campaign.brief if campaign else {}
+        mode = "recurring" if campaign else str(form.get("mode", "once"))
+        lists = {key: form.getlist(key) for key in ("platforms", "reference_ids", "audio_reference_ids")}
         try:
-            mode = str(form.get("mode", "once"))
+            if campaign and form.get("revision") != campaign_revision(campaign):
+                raise PostConflict("This campaign was edited after you opened it. Reload its settings before saving.")
             if mode not in {"once", "next", "recurring"}:
                 raise ValueError("Choose Create now, Next automatic post, or Recurring campaign")
-            brief = CreativeBrief(
-                campaign=form.get("campaign", ""),
-                prompt=form.get("prompt", ""),
-                operation=form.get("operation", "image"),
-                platforms=form.getlist("platforms"),
-                facts_id=form.get("facts_id", ""),
-                product=form.get("product", "company"),
-                kind=form.get("kind", "promotional"),
-                rights=form.get("rights", ""),
-                owner=form.get("owner", ""),
-                reference_ids=form.getlist("reference_ids"),
-                audio_reference_ids=form.getlist("audio_reference_ids"),
-                audio_prompt=form.get("audio_prompt", ""),
-                duration=form.get("duration", "5"),
-                website=form.get("website") == "on",
-                create_posts=form.get("create_posts") == "on",
-                interval_hours=form.get("interval_hours", "24"),
-                workflow={"once": "immediate", "next": "next", "recurring": "automatic"}[mode],
-            )
-            if form.get("mode") == "recurring":
-                sources = validate_sources(db, brief)
-                if not brief.create_posts or brief.operation == "audio":
-                    raise ValueError("Recurring campaigns must create image/video posts")
-                check_real_media(db, settings, brief, sources)
-                db.add(MediaCampaign(name=brief.campaign, brief=brief.model_dump() | request.state.prompt_account, enabled=False))
+            values = {key: form.get(key, default) for key, default in {
+                "campaign": "", "prompt": "", "facts_id": "", "rights": "", "owner": "", "audio_prompt": "",
+                "product": "company", "operation": "image", "kind": "promotional", "duration": "5", "interval_hours": "24",
+            }.items()}
+            for key, selected in lists.items():
+                # Checkbox display order can differ from the campaign's saved reference order.
+                previous = stored.get(key, [])
+                values[key] = [i for i in previous if i in selected] + [i for i in selected if i not in previous]
+            values.update(website=form.get("website") == "on", create_posts=campaign is not None or form.get("create_posts") == "on",
+                          workflow={"once": "immediate", "next": "next", "recurring": "automatic"}[mode])
+            brief = CreativeBrief.model_validate(stored | values, context={"stored": values["rights"] == stored.get("rights")})
+            if mode == "recurring":
+                validate_campaign(db, settings, brief)
+                if campaign:
+                    update_campaign(db, campaign, brief)
+                else:
+                    db.add(MediaCampaign(name=brief.campaign, brief=brief.model_dump() | request.state.prompt_account, enabled=False))
             else:
-                await run_in_threadpool(queue_prompt, db, brief, request.state.prompt_account)
+                queue_prompt(db, brief, request.state.prompt_account)
             db.commit()
         except ValueError as exc:
             db.rollback()
             return page(
-                request,
-                db,
-                "media-studio",
-                error_message=str(exc),
-                asset_form={
-                    k: form.getlist(k)
-                    if k in {"platforms", "reference_ids", "audio_reference_ids"}
-                    else str(v)
-                    for k, v in form.items()
-                }
-                | {
-                    "website": str(form.get("website", "")),
-                    "create_posts": str(form.get("create_posts", "")),
-                    "platforms": form.getlist("platforms"),
-                },
-                status_code=400,
+                request, db, "media-studio", editing_campaign=campaign, error_message=friendly(exc),
+                asset_form=dict(form) | lists | {"website": form.get("website", ""), "create_posts": form.get("create_posts", "")},
+                status_code=409 if isinstance(exc, PostConflict) else 400,
             )
+        if campaign:
+            request.session["notice"] = f"Saved changes to {campaign.name}."
+            return RedirectResponse(f"/admin/media-studio#campaign-{campaign.id}", status_code=303)
         return RedirectResponse(
-            "/admin/media-studio" if form.get("mode") == "recurring" else "/admin/media-queue", status_code=303
+            "/admin/media-studio" if mode == "recurring" else "/admin/media-queue", status_code=303
         )
 
     def idea_values(form):
@@ -1044,12 +1047,11 @@ def create_app(settings=None):
         return RedirectResponse("/admin/create#my-posts" if request.state.editor else "/admin/media-queue", status_code=303)
 
     @app.post("/forms/media-campaigns/{campaign_id}", dependencies=mutation)
-    async def toggle_campaign(campaign_id: str, request: Request, db: DB):
-        campaign = db.get(MediaCampaign, campaign_id)
-        if not campaign:
+    def toggle_campaign(campaign_id: str, db: DB, enabled: Annotated[str, Form()] = ""):
+        changed = db.execute(update(MediaCampaign).where(MediaCampaign.id == campaign_id)
+                             .values(enabled=enabled == "true", error=""))
+        if not changed.rowcount:
             raise HTTPException(404)
-        campaign.enabled = (await request.form()).get("enabled") == "true"
-        campaign.error = ""
         db.commit()
         return RedirectResponse("/admin/media-studio", status_code=303)
 
