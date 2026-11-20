@@ -113,7 +113,7 @@ def test_image_can_use_documented_design_with_an_empty_library(db, settings, ref
 
 
 @pytest.mark.parametrize("idea,update,error", [
-    ("Use actual photos only", {}, "compatible product image"),
+    ("Use actual photos only", {}, "permission to use the designs isn't in the post's idea"),
     (DESIGN_PERMISSION, {"design_rule_ids": ["pergola.fixed_louvers", "canopy.frame"]},
      r"rules that don't apply to it \(pergola.fixed_louvers\)"),
     (DESIGN_PERMISSION, {"design_rule_ids": ["canopy.frame", "invented.rule"]}, r"don't apply to it \(invented.rule\)"),
@@ -128,6 +128,49 @@ def test_design_requires_authored_permission_and_matching_rules(
     monkeypatch.setattr(refs, "select_reference", lambda *args: canopy_design().model_copy(update=update))
     with pytest.raises(ValueError, match=error):
         refs.prepare(db, settings, reference_job)
+
+
+def test_design_permission_matches_the_words_not_the_punctuation():
+    idea = "Tudelü canopies at hotel entrances; if real references are unavailable, generate based on the designs"
+    for quote in ["If real references are unavailable, generate based on the designs.",
+                  "“if real references are unavailable,  generate based on the designs”"]:
+        assert refs.quoted_in(quote, idea)
+    assert refs.quoted_in("Tudelü canopies", idea)
+    assert not refs.quoted_in("generate based on designs", idea)
+    assert not refs.quoted_in("generate based on the designs", "regenerate based on the designs")
+    assert not refs.quoted_in(" . ", idea)
+
+
+DESIGNS = "If real references are unavailable, generate based on the designs"
+
+
+def test_permission_added_under_generate_again_allows_a_design(db, settings, reference_job, photo, monkeypatch):
+    from social.recovery import retry_step
+
+    generated = "A slim aluminum canopy over a hotel entrance at dusk."
+    reference_job.brief = reference_job.brief | {"prompt": "Canopies at hotel entrances", "depicted_system": "Canopies",
+                                                "generation_prompt": f"{generated} {DESIGNS}."}
+    reference_job.state = "failed"
+    db.commit()
+    monkeypatch.setattr(refs, "select_reference", lambda *args: canopy_design().model_copy(
+        update={"design_permission": f"“{DESIGNS}.”"}))
+    # Words the prompt writer produced aren't the admin's permission.
+    with pytest.raises(ValueError, match="isn't in the post's idea or an edited prompt"):
+        refs.prepare(db, settings, reference_job)
+
+    reference_job.brief = reference_job.brief | {"generation_prompt": generated}
+    db.commit()
+    retry_step(db, reference_job, generated)  # Unchanged: nothing new was authored.
+    assert "operator_edits" not in reference_job.brief
+    reference_job.state = "failed"
+    edited = f"{generated} {DESIGNS}."
+    retry_step(db, reference_job, edited)
+    assert reference_job.brief["operator_edits"] == [{"before": generated, "after": edited}]
+
+    assert refs.prepare(db, settings, reference_job) == []
+    plan = reference_job.brief["reference_plan"]
+    assert plan["design_permission"] == f"“{DESIGNS}.”"
+    assert plan["request_intent"]["operator_edits"] == [{"before": generated, "after": edited}]
 
 
 def test_canopy_design_can_cite_the_owner_corrections_it_was_given(db, settings, reference_job, photo, monkeypatch):

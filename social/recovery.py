@@ -399,6 +399,14 @@ def auto_retry(db, settings, job):
     return True
 
 
+def operator_edit(target, step, text):
+    """Record an admin's change to a prompt the planner reads. Only the admin's own words, such as permission
+    to generate from the designs, count as instructions; the generated text around them does not."""
+    if text == " ".join(step["prompt"].split()):
+        return {}
+    return {"operator_edits": [*target.get("operator_edits", []), {"before": step["prompt"], "after": text}]}
+
+
 def retry_step(db, job, prompt, *, automatic=False, audio_model=""):
     """Submit the failed step again with a new seed, and the edited prompt when one is given."""
     step = retry_option(job)
@@ -494,6 +502,7 @@ def retry_step(db, job, prompt, *, automatic=False, audio_model=""):
         failed["segment_index"] = step["index"]
         brief["video_segments"] = [
             s | {"prompt": text, "seed": (s["seed"] + 1) % 2**32} | ({"repair": repair} if repair else {})
+            | operator_edit(s, step, text)
             if s["index"] == step["index"] else s
             for s in brief["video_segments"]
         ]
@@ -501,6 +510,7 @@ def retry_step(db, job, prompt, *, automatic=False, audio_model=""):
             brief["generation_prompt"] = text
     elif step["kind"] == "visual":
         brief["generation_prompt"], brief["seed"] = text, (brief["seed"] + 1) % 2**32
+        brief |= operator_edit(brief, step, text)
     else:
         brief["audio_prompt"] = text
     brief["failed_tasks"] = [*brief.get("failed_tasks", []), failed]

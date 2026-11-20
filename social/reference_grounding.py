@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import re
+import unicodedata
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
@@ -590,7 +591,9 @@ def request_intent(job):
     """Keep authored instructions separate from prompts and diagnoses the models produced."""
     target = current_segment(job) or job.brief
     retry = target.get("scene_retry") or {}
-    edits = retry.get("operator_edits", [])
+    retry_edits = retry.get("operator_edits", [])
+    # Generate again on an image or clip records its edits on the job or clip; scene retries keep theirs.
+    edits = [*target.get("operator_edits", []), *retry_edits]
     return {
         # The approved plan already reconciled the idea with Tudelu's offerings (e.g. a panel roof
         # for a rainy pergola), so later steps follow it rather than re-reading the raw idea.
@@ -598,8 +601,18 @@ def request_intent(job):
         "admin_idea": job.brief["prompt"],
         "operator_edits": edits,
         # Older jobs did not save the pre-edit text. Do not guess away an explicit instruction.
-        "legacy_operator_prompt": retry.get("operator_prompt", "") if not edits else "",
+        "legacy_operator_prompt": retry.get("operator_prompt", "") if not retry_edits else "",
     }
+
+
+def _words(text):
+    return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", str(text)).casefold()))
+
+
+def quoted_in(quote, text):
+    """The quote's words appear together in the text, whatever the quote marks, punctuation or spacing."""
+    words = _words(quote)
+    return bool(words) and f" {words} " in f" {_words(text)} "
 
 
 def design_rules(profile, guidance):
@@ -612,14 +625,17 @@ def design_rules(profile, guidance):
 
 def validate_design_choice(choice, intent, profile, guidance, *, repairing):
     """Confirm the planner cited authored permission and real rules for this specific product."""
-    def plain(text):
-        return " ".join(text.split()).casefold()
-
-    quote = plain(choice.design_permission)
+    quote = choice.design_permission
     authored = [intent["admin_idea"], intent["legacy_operator_prompt"]]
-    authored.extend(e["after"] for e in intent["operator_edits"] if quote not in plain(e.get("before", "")))
-    if repairing or not any(quote in plain(text) for text in authored):
+    authored.extend(e["after"] for e in intent["operator_edits"] if not quoted_in(quote, e.get("before", "")))
+    if repairing:
         raise ValueError(f"Reference needed for {profile.name}: this shot requires a compatible product image.")
+    if not any(quoted_in(quote, text) for text in authored):
+        raise ValueError(
+            f"Reference needed for {profile.name}: no compatible product image, and the permission to use the designs "
+            "isn't in the post's idea or an edited prompt. Add \"if real references are unavailable, generate based "
+            "on the designs\" to the prompt under Generate again, or add a matching photo."
+        )
     product_rules, general_rules = design_rules(profile, guidance)
     applicable = product_rules | general_rules
     cited = list(dict.fromkeys(choice.design_rule_ids))
