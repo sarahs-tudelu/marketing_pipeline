@@ -378,11 +378,14 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         )
 
     def vision_review():
-        if not needed:
+        if not needed and not any(a.tags.get("repair_routes") for a in assets):
             return True, {"reason": "Company media; AI vision check not required"}
         # Measured from the pixels, not judged from the sampled frames the visual check sees.
         frozen = still_clips(db, settings, assets)
-        result = providers.vision(assets, context)
+        from .video_repair import library_records
+
+        library = library_records(db, settings, assets)
+        result = providers.vision(assets, context | {"repair_library": library})
         approved = {text for f in selected for text in [f.text, *f.variants]}
         product_reviewed = not result.product_mismatches and (
             not facts.visual_guidance or result.product_rules_version == facts.visual_guidance.version
@@ -390,6 +393,7 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         details = result.model_dump() | {
             "product_rules_checked": bool(product_reviewed), "review_scope": "media_only",
             "product_constraints": current_constraints(),
+            "repair_library_ids": [r["asset_id"] for r in library],
         }
         if result.request_conflict.strip():
             # Shown on the held post; automatic replacement stops because the shot itself must change.
@@ -405,10 +409,16 @@ def evaluate(db, settings, post, at=None, providers=None, url_client=None, live=
         if frozen:
             # The middle second of each frozen clip marks it for automatic replacement (clip_replace.flagged).
             details["still_clips"] = frozen
+            for clip in frozen:
+                details["video_defects"].append({
+                    "second": middle_second(clip), "kind": "motion", "component": "camera",
+                    "correction": "Use one gentle continuous camera push with natural movement in the scene.",
+                    "needs_operation": False, "clean_start": 0, "clean_end": 0,
+                })
             # First, so the post page's short list of reasons always shows it.
             details["reasons"] = [*map(still_reason, frozen), *details["reasons"]]
             details["problem_seconds"] = sorted({*details["problem_seconds"], *map(middle_second, frozen)})
-        return not frozen and result.passed and product_reviewed and not (
+        return not frozen and not result.video_defects and result.passed and product_reviewed and not (
             result.garbled_text or result.misused_logos or result.unexpected_people
             or result.request_conflict.strip()
         ) and all(c in approved for c in result.visible_claims), details
@@ -459,6 +469,13 @@ def run_gate(db, settings, post, *, human_actor=None, **kwargs):
             transition(db, post, "awaiting_review", "All checks passed; waiting for human review")
         else:
             transition(db, post, "approved", "Human approved this media and caption; all checks passed" if human_actor else "All checks passed", human_actor or "pipeline")
+    from .clip_replace import source_job
+
+    repair_job = source_job(db, post)
+    if repair_job and repair_job.brief.get("repair_routes"):
+        vision = next((c for c in results if c.name == "vision_review"), None)
+        if vision:
+            repair_job.brief = repair_job.brief | {"repair_verdict": vision.passed}
     db.commit()
     if "vision_review" in failures:
         from .clip_replace import auto_regenerate

@@ -24,7 +24,7 @@ from social.models import Asset, CheckResult, MediaJob, Post, Transition
 from social.recovery import retry_option
 
 
-def scene_reviews(monkeypatch, verdicts):
+def scene_reviews(monkeypatch, verdicts, components=("roof", "support", "trim")):
     """The scene review rejects or passes in turn, recording what it was told."""
     seen = []
 
@@ -32,7 +32,8 @@ def scene_reviews(monkeypatch, verdicts):
         seen.append(scenes.earlier_defects(plan))
         passed = verdicts[min(len(seen), len(verdicts)) - 1]
         return scenes.SceneCheck(
-            passed=passed, reasons=[] if passed else [f"Roof member floats ({len(seen)})."]
+            passed=passed, reasons=[] if passed else [f"Roof member floats ({len(seen)})."],
+            defect_components=[] if passed else [components[(len(seen)-1) % len(components)]],
         )
 
     monkeypatch.setattr(scenes, "review_scene", review)
@@ -117,6 +118,9 @@ def test_held_post_regenerates_flagged_clip_automatically_up_to_the_limit(
         _, job, post = held_video(db, settings, client, facts, logo)
     posts = [post]
     for attempt in (1, 2):
+        details["video_defects"] = [{"kind": "opening", "component": "text" if attempt == 1 else "finish",
+                                    "second": 15, "correction": "Use a plain fascia.", "needs_operation": False,
+                                    "clean_start": 0, "clean_end": 0}]
         current = posts[-1]
         transition(db, current, "generated", "Recheck")
         gate.run_gate(db, settings, current)
@@ -161,7 +165,7 @@ def test_held_post_regenerates_flagged_clip_automatically_up_to_the_limit(
     assert auto_regenerate(db, settings, last) is None
 
 
-def test_unplaced_problem_regenerates_every_clip(db, settings, facts, logo):  # noqa: F811
+def test_unplaced_problem_holds_without_spending(db, settings, facts, logo):  # noqa: F811
     with TestClient(create_app(settings)) as client:
         _, job, post = held_video(db, settings, client, facts, logo)
     db.add(
@@ -175,19 +179,9 @@ def test_unplaced_problem_regenerates_every_clip(db, settings, facts, logo):  # 
     )
     db.commit()
     redo = auto_regenerate(db, settings, post)
-    assert redo.brief["replaces"]["label"] == "all 4 clips" and redo.brief["replaces"]["count"] == 4
-    assert not any(s.get("output_asset_id") for s in redo.brief["video_segments"])
-    assert all(
-        s["scene_retry"]["review"]["reasons"] == ["A support post bends near the roof."]
-        for s in redo.brief["video_segments"]
-    )
-    with TestClient(create_app(settings)) as client:
-        queue = client.get("/admin/media-queue").text
-    assert "Regenerating all 4 clips of a" in queue and "The other clips" not in queue
-    run(db, settings, redo)
-    old = [s["output_asset_id"] for s in job.brief["video_segments"]]
-    new = [s["output_asset_id"] for s in redo.brief["video_segments"]]
-    assert len(set(new)) == 4 and not set(new) & set(old)
+    assert redo is None
+    assert "timestamped" in job.brief["repair_hold"]
+    assert len(db.scalars(select(MediaJob)).all()) == 1
 
 
 def test_auto_retries_off(db, settings, facts, logo):  # noqa: F811

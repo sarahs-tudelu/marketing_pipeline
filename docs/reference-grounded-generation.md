@@ -37,20 +37,14 @@ review/download failure still resumes the saved work without buying another scen
 Runway's terminal internal errors use **Generate the scene again** to submit a new
 task with a new seed, and other completed clips remain intact.
 
-**Automatic retries.** A scene the review rejects is corrected and made again without
-waiting for a person, exactly as **Generate corrected scene** would with the prompt
-unchanged, up to `MEDIA_AUTO_RETRIES` times per clip (default 3). Each attempt is
-recorded in the job's retry history. After the limit the job stops with the last
-rejection and says how many corrections were tried, and a person can still correct it.
-Likewise, when the final visual check holds a post made from generated media, the clips
-it flagged are regenerated automatically, with its findings, as one replacement job;
-every clip is regenerated when the check didn't say where the problem is. The
-replacement goes through captions and every check again, and this repeats up to
-`MEDIA_AUTO_RETRIES` replacements in a row. The held post's page shows the attempt
-number, then says when the app has stopped. A person's own regeneration starts a new
-run of attempts. Runway task failures (moderation, unusable references, internal
-errors) and ambiguous submissions are not retried automatically. Every attempt is a
-paid Runway task in live mode; set `MEDIA_AUTO_RETRIES=0` to turn them off.
+**Automatic video repairs.** The final visual review compares each affected shot with its starting image and product reference. It records the first affected second, the component, the requested correction, and any clean interval or matching library source. The held post shows the surrounding frames alongside its reference images. Recheck an older hold to get this diagnosis.
+
+- A construction defect in the opening image goes to the scene planner with the failed footage samples and a cleared company reference. The corrected image must pass review before animation.
+- A motion defect can use a clean portion of the take with the original soundtrack. A modest slowdown preserves the planned running time when product operation speed is immaterial. Otherwise the animation can restart from the approved image using the reviewer's motion correction.
+- A localized appearance edit uses the failed frame to generate a corrected keyframe. Once that frame passes visual review, Aleph receives it at the affected timestamp together with the saved clip.
+- A repeated defect goes to matching cleared library footage or a photo with a local camera move. A shot demonstrating product operation requires footage of that action. Ambiguity, an unlocated problem, or a missing match keeps the post available for human review.
+
+Each repaired render goes through caption generation and the full gate. Settings ? Usage reports Runway credits per repaired clip in a render that passes visual review. Local trims and library cuts spend zero Runway credits. All automatic repairs respect the configured replacement limit, with one targeted attempt per affected component in a shot. Pre-animation scene checks also stop on a recurring component. Set `MEDIA_AUTO_RETRIES=0` to disable automatic retries.
 
 Music/audio tasks have a separate bounded recovery for `THIRD_PARTY.RATE_LIMITED`:
 [delayed music retries](runway.md#recovery) keep completed clips and wait before

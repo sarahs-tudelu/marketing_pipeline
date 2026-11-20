@@ -291,7 +291,7 @@ def candidates(db, settings, job, profile):
     eligible.sort(key=rank)
     records = [asset_record(video_reference_frame(db, settings, job, a)) if a.media["mime"].startswith("video/")
                else asset_record(a) for a in eligible[:6]]
-    if pool:
+    if pool or (current_segment(job) or job.brief).get("repair", {}).get("route") == "scene":
         return records
     # Website and Drive references are both available to the visual selector, not just their captions.
     records += website_references(db, settings, job, profile.product_id)
@@ -451,6 +451,15 @@ def select_reference(settings, records, context):
                 *images,
             ]
         )
+    if clip := context.get("failed_clip"):
+        from .real_edit import _picture, video_frames
+        from .video_repair import evidence_times
+
+        times = evidence_times(context["scene_retry"]["failed_second"], clip["media"]["duration"])
+        frames = video_frames(read_reference(settings, clip), times)
+        for t, frame in zip(times, frames, strict=True):
+            content.extend([{"type": "input_text", "text": f"Failed clip at {t}s. Use a real reference clearly "
+                             "showing the affected connections, or request a better photo."}, _picture(frame)])
     rejected = context.get("scene_retry", {}).get("scene")
     if rejected and context["scene_retry"].get("review", {}).get("passed") is False:
         images, _, _, _ = visual_inputs(SimpleNamespace(media=rejected["media"]), read_reference(settings, rejected))
@@ -623,6 +632,13 @@ def prepare(db, settings, job):
             validate_record(db, settings, record, private=job.brief.get("rights") == "not_public")
         return saved["references"]
     records = candidates(db, settings, job, profile)
+    if target.get("repair", {}).get("route") == "scene":
+        from .video_repair import source_for_repair
+        failed_clip = source_for_repair(db, job, target["repair"])
+        basis["failed_clip"] = asset_record(failed_clip)
+        records = [r for r in records if r.get("source") == "company" and r.get("asset_id")]
+        if not records:
+            raise ValueError("Choose a cleared Tudelu photo showing the affected construction before repairing this scene.")
     if not records:
         if job.brief.get("campaign_reference_ids"):
             raise ValueError(f"No cleared reference remains in this campaign's selection for {profile.name}.")

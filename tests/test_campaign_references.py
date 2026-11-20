@@ -44,6 +44,7 @@ def test_mixed_campaign_finds_and_includes_original_in_ai_video(db, settings, ho
     db.commit()
     job = campaign_video(db, settings)
     assert job.brief["operation"] == "video" and job.brief["reference_ids"] == [pool.id]
+    assert job.brief["repair_library_scope"] == []  # A later repair can match footage outside the initial shortlist.
     assert restricted.id not in job.brief["campaign_reference_ids"] + job.brief["original_candidates"]
     for _ in range(5):
         process_jobs(db, settings)

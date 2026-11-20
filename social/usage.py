@@ -243,12 +243,16 @@ def record_runway_task(job, task):
             credits = job.brief.get("active_estimate")
         if credits is None:
             return
-        stage = "scene" if job.brief.get("active_generation") == "scene" else job.stage
+        phase = job.brief.get("active_generation")
+        stage = "scene" if phase in {"scene", "repair_keyframe"} else job.stage
+        from .video_segments import current_segment
+        segment = current_segment(job) if job.stage == "visual" else None
+        route = (job.brief.get("repair_routes") or {}).get(str(segment["index"])) if segment else None
         _add({
             "provider": "runway",
-            "purpose": runway_purpose(job.brief, stage),
+            "purpose": "video_rerender" if phase == "repair_edit" else runway_purpose(job.brief, stage),
             "model": str(job.brief.get("active_model", ""))[:120],
-            "units": {"credits": credits},
+            "units": {"credits": credits, **({"repair_route": route, "clip_index": segment["index"]} if route else {})},
             "cost_usd": round(float(credits) * credit_usd(), 6),
             "estimated": estimated,
             "request_id": job.task_id,
@@ -724,6 +728,7 @@ def dashboard(db, settings, days=30):
         return [{"label": label, "amount": amount, "share": amount / top if top else 0} for label, amount in pairs]
 
     return {
+        "repair_costs": repair_costs(db, since),
         "days": days,
         "periods": PERIODS,
         "since": since,
@@ -755,6 +760,51 @@ def dashboard(db, settings, days=30):
         "peak": peak,
         "prices": prices(),
     }
+
+
+def repair_costs(db, since):
+    """Cohort by repair job creation date, including unsuccessful spend and local edits."""
+    jobs = db.scalars(select(MediaJob).where(MediaJob.created_at >= since,
+                      MediaJob.brief["repair_routes"].as_string().is_not(None))).all()
+    jobs = [j for j in jobs if j.brief.get("repair_routes") and j.brief.get("execution_mode") == "live"]
+    if not jobs:
+        return []
+    records = db.scalars(select(UsageRecord).where(UsageRecord.media_job_id.in_([j.id for j in jobs]),
+                                                    UsageRecord.provider == "runway")).all()
+    billed = {r.request_id: r for r in records}
+    charged_routes = defaultdict(dict)
+    for record in records:
+        if route := record.units.get("repair_route"):
+            charged_routes[record.media_job_id][record.request_id] = route
+    rows = defaultdict(lambda: {"attempts": 0, "passed": 0, "credits": 0., "incomplete": False})
+    for job in jobs:
+        routes = job.brief["repair_routes"]
+        for route in routes.values():
+            row = rows[route]
+            row["attempts"] += 1
+            row["passed"] += job.brief.get("repair_verdict") is True
+        tasks = {h["task_id"]: routes.get(str(h.get("segment_index"))) for h in
+                 [*job.task_history, *job.brief.get("failed_tasks", [])] if h.get("task_id")}
+        tasks.update(charged_routes[job.id])
+        if (job.task_id or job.state in {"submitting", "uncertain"}) and job.stage == "visual":
+            from .video_segments import current_segment
+            segment = current_segment(job)
+            if segment:
+                # An ambiguous submission can have a charge even without a task ID.
+                tasks[job.task_id] = routes.get(str(segment["index"]))
+        for task, route in tasks.items():
+            if not route:
+                continue
+            record = billed.get(task)
+            if record and record.units.get("credits") is not None:
+                rows[route]["credits"] += record.units["credits"]
+            if not record or record.estimated or record.units.get("credits") is None:
+                rows[route]["incomplete"] = True
+    result = []
+    for route, row in sorted(rows.items()):
+        average = row["credits"] / row["passed"] if row["passed"] and not row["incomplete"] else None
+        result.append(row | {"route": route, "average": average})
+    return result
 
 
 def _sum_by(pairs):

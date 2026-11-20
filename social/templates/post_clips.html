@@ -1,7 +1,17 @@
 {% if clip_fix %}
 <section id="fix-clip"><h2>{{ 'Changing the media' if clip_fix.pending else 'Regenerate part of the ' ~ clip_fix.noun }}</h2>
+  {% if clip_fix.repair_hold %}<p class="error">{{ clip_fix.repair_hold }}</p>{% endif %}
+  {% for shot in clip_fix.evidence %}
+  <details><summary>Compare clip {{ shot.clip }} with its references</summary>
+    <div class="repair-evidence">
+      <figure><a href="/posts/{{ post.id }}/media/{{ shot.asset_id }}#t={{ shot.second }}" target="_blank" rel="noopener"><img loading="lazy" src="/posts/{{ post.id }}/repair-evidence/{{ shot.clip }}" alt="Flagged footage at {{ shot.times|join(', ') }} seconds"></a><figcaption>Play the render at {{ shot.second }} seconds</figcaption></figure>
+      {% for r in shot.references %}{% set url = (media_base_url ~ '/' ~ (r.storage_key|urlencode)) if r.asset_id else r.source_url %}<figure><a href="{{ url }}" target="_blank" rel="noopener"><img loading="lazy" src="{{ url }}" alt="Product construction reference"></a><figcaption>{{ r.original_name }}</figcaption></figure>{% endfor %}
+      {% if shot.scene %}{% set url = media_base_url ~ '/' ~ (shot.scene.storage_key|urlencode) %}<figure><a href="{{ url }}" target="_blank" rel="noopener"><img loading="lazy" src="{{ url }}" alt="Starting scene"></a><figcaption>Starting scene</figcaption></figure>{% endif %}
+    </div>
+  </details>{% endfor %}
   {% if clip_fix.pending %}{% set p = clip_fix.pending %}{% set asked = p.brief.replaces.get('request') %}{% set part = p.brief.replaces.get('label') or 'clip ' ~ (p.brief.replaces.clip_index + 1) %}
     {% set doing = 'Editing your media again' if p.brief.get('revision') else 'Regenerating ' ~ part %}
+    {% if p.brief.get('repair_routes') %}<p>{% for index, route in p.brief.repair_routes.items() %}Clip {{ index|int + 1 }} ? {{ repair_labels[route] }}{{ ' ? ' if not loop.last else '' }}{% endfor %}</p>{% endif %}
     {% if asked %}<div class="idea-quote"><b>Changes you asked for</b><br>{{ asked }}</div>{% endif %}
     {% if p.state == 'failed' or p.state == 'uncertain' %}<p class="error">{{ doing }} stopped: {{ p.error }}</p><p class="muted">Open In progress to {{ 'try it again' if p.brief.get('revision') else 'generate it again' }} or remove it from the queue. Once it's removed, this post can be reviewed again.</p>
     {% else %}<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span><strong>{{ doing }}{{ ' with your changes' if asked and not p.brief.get('revision') else '' }}…</strong><small>{% if p.brief.replaces.get('auto_attempt') %}Started automatically because the visual check found problems (attempt {{ p.brief.replaces.auto_attempt }} of {{ p.brief.replaces.auto_limit }}). {% endif %}{{ 'Nothing is generated; the editor changes the edit of the same media.' if p.brief.get('revision') else 'Everything else is reused.' }} A new post replaces this one when the {{ clip_fix.noun }} is ready.</small></span></div>{% endif %}
@@ -12,7 +22,7 @@
   {% else %}
     {% if clip_fix.auto_limit and clip_fix.auto_attempts >= clip_fix.auto_limit %}<p class="error">The app already regenerated this {{ clip_fix.auto_attempts }} time{{ 's' if clip_fix.auto_attempts > 1 else '' }} automatically and the visual check still found problems, so it stopped. Edit a prompt below and regenerate it yourself, or create the post again from the idea.</p>{% endif %}
     <p>Describe the changes in the prompt for the image, clip or music below. Everything else is reused, and the new {{ clip_fix.noun }} goes through the checks again as a new post. This post is marked replaced when the new one is ready. The replacement waits for your review before it can be scheduled.</p>
-    {% if clip_fix.parts|selectattr('scene')|list %}<p class="muted">Generated {{ 'clips are' if clip_fix.parts|selectattr('kind', 'eq', 'clip')|list else 'video is' }} animated from a scene image, and problems such as lettering or a wrong roof come from that scene, so you edit the scene. The planner also gets what the visual check found and the old scene image to correct, and the new scene is checked for the same problems before it's animated.</p>{% endif %}
+    {% if clip_fix.parts|selectattr('scene')|list %}<p class="muted">Generated {{ 'clips are' if clip_fix.parts|selectattr('kind', 'eq', 'clip')|list else 'video is' }} animated from a starting image. Use the form below to request a new scene. The planner receives the previous image and review findings, and the new scene is checked for the same problems before animation.</p>{% endif %}
     {% if clip_fix.reasons %}<div class="idea-quote"><b>What the visual check found</b>{% for r in clip_fix.reasons %}<br>{{ r }}{% endfor %}</div>
       {% if not clip_fix.parts|rejectattr('kind', 'eq', 'music')|selectattr('flagged')|list %}<p class="muted">The check didn't say which clip shows this. Open the clip whose setting matches what it found.</p>{% endif %}
     {% endif %}

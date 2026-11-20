@@ -510,6 +510,10 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         mime = REFERENCE_TYPES[operation]
         refs = [a.id for a in sources if a.id in brief.reference_ids and a.media["mime"].startswith(mime)]
         if discover:
+            if operation in {"video", "video_edit"}:
+                # Preserve the campaign's actual library scope for a later repair. Its generation
+                # shortlist can be mostly stills even when matching recorded footage exists.
+                values["repair_library_scope"] = list(brief.reference_ids)
             if operation == "video_edit":
                 refs = [a.id for a in campaign_references(edit_sources, scores, repeat)]
             else:
@@ -825,6 +829,10 @@ def _save_output(db, settings, job, data):
 
         save_scene(db, settings, job, data)
         return
+    if job.brief.get("active_generation") == "repair_keyframe":
+        from .video_repair import save_keyframe
+        save_keyframe(db, settings, job, data)
+        return
     brief = segment_brief(job)
     segment = current_segment(job) if job.stage == "visual" else None
     is_audio = job.stage == "audio" or brief["operation"] == "audio"
@@ -839,11 +847,20 @@ def _save_output(db, settings, job, data):
             else settings.runway_video_model
         )
     )
+    if job.brief.get("active_generation") == "repair_edit":
+        model = "aleph2"
+    if not is_audio and job.brief.get("active_generation") == "repair_edit" and segment:
+        from .video_repair import source_for_repair
+        source_for_repair(db, job, segment["repair"])
     reference_plan = current_plan(job) if not is_audio else None
     reference_ids = ([r["asset_id"] for r in reference_plan["references"] if r.get("asset_id")]
                      if reference_plan else brief["reference_ids"])
     if reference_plan and reference_plan.get("scene_reference"):
         reference_ids += [reference_plan["scene_reference"]["asset_id"]]
+    if segment and (repair := segment.get("repair")) and repair["route"] == "aleph":
+        reference_ids.append(repair["source_id"])
+        if repair.get("keyframe"):
+            reference_ids.append(repair["keyframe"]["asset_id"])
     refs = [db.get(Asset, i) for i in dict.fromkeys(reference_ids + brief["audio_reference_ids"])]
     expiries = [a.rights_expire_at for a in refs if a.rights_expire_at]
     prompt = brief["audio_prompt"] if job.stage == "audio" else brief["generation_prompt"]
@@ -1079,21 +1096,34 @@ def _finish(db, settings, job):
                 card = logo_card(logo_data, profile.video_width, profile.video_height, end_card["seconds"])
                 clips.append((card, 0, end_card["seconds"]))
                 data = video_sequence(clips, profile.video_width, profile.video_height, soundtrack,
-                                      require_full_duration=bool(brief.get("video_segments")))
+                                      require_full_duration=bool(brief.get("video_segments")),
+                                      playback_rates=[s.get("playback_rate", 1) for s in brief["video_segments"]] + [1]
+                                      if brief.get("video_segments") else None)
                 name = f"{job.platform}-{job.id}.mp4"
         # A multi-clip video records every clip's prompt, not only the first clip's.
         clip_prompts = [f"Clip {s['index'] + 1}: {s['prompt']}" for s in brief.get("video_segments", []) if s.get("prompt")]
         used_media = originals + inserts + ([logo] if logo else [])
         source_ids = brief["reference_ids"] + brief.get("grounded_reference_ids", []) + brief["audio_reference_ids"]
+        if brief.get("repair_routes"):
+            # The output clips carry their own ancestry. A discarded scene isn't an input to a library cut.
+            source_ids = []
         source_ids += [a.id for a in used_media]
+        source = "ai_edited" if inserts else first.source
+        generator = first.generator
+        prompt = " ".join(clip_prompts) if len(clip_prompts) > 1 or (inserts and clip_prompts) else first.prompt
+        if inserts:
+            ai_inputs = [a for a in used_media if requires_ai_review(a)]
+            source = "ai_edited" if ai_inputs else "company"
+            generator = first.generator or next((a.generator for a in ai_inputs if a.generator), None)
+            prompt = (prompt or brief["prompt"]) if ai_inputs else None
         result = ingest(
             db,
             settings,
             data,
             name,
-            source="ai_edited" if inserts else first.source,
-            generator=first.generator,
-            prompt=" ".join(clip_prompts) if len(clip_prompts) > 1 or (inserts and clip_prompts) else first.prompt,
+            source=source,
+            generator=generator,
+            prompt=prompt,
             rights=combined_rights(first.rights, used_media),
             owner=first.owner,
             rights_expire_at=min(
@@ -1106,7 +1136,11 @@ def _finish(db, settings, job):
                 "rendition": {"platform": job.platform, "original_asset_id": first.id},
                 "media_job_id": job.id,
                 **({"replaces": brief["replaces"]} if brief.get("replaces") else {}),
-                "generated_audio": any(a.media["mime"].startswith("audio/") for a in originals),
+                **({"repair_routes": brief["repair_routes"],
+                    "creative_brief": {k: brief.get(k, "") for k in ("prompt", "concept", "kind")},
+                    **({"asset_type": "ai_concept"} if source in {"ai_generated", "ai_edited"} else {})}
+                   if brief.get("repair_routes") else {}),
+                "generated_audio": any(a.media["mime"].startswith("audio/") and requires_ai_review(a) for a in originals),
                 **({"video_sequence": brief["video_segments"], "requested_duration": brief["duration"]}
                    if brief.get("video_segments") else {}),
                 **({"end_card": {
@@ -1496,34 +1530,39 @@ def process_jobs(db, settings, provider=None):
 
                 from .reference_grounding import prepare as prepare_references
                 from .scene_generation import generation_inputs
+                from .video_repair import repair_payload
 
-                grounded_references = prepare_references(db, settings, job)
-                generation_brief, grounded_references, phase = generation_inputs(db, settings, job, grounded_references)
-                ids = brief.audio_reference_ids if job.stage == "audio" else brief.reference_ids
-                segment = current_segment(job) if job.stage == "visual" else None
-                if job.stage == "audio" and job.brief.get("soundtrack_model") == "music":
-                    ids = []
-                if brief.operation == "audio":
-                    ids = list(dict.fromkeys(ids + brief.audio_reference_ids))[:3]
-                style_uri = None
-                if grounded_references:
-                    references = [
-                        runway.reference(SimpleNamespace(**r))
-                        for r in grounded_references
-                        if r.get("role") != "style"
-                    ]
-                    style_uri = next(
-                        (runway.reference(SimpleNamespace(**r)) for r in grounded_references if r.get("role") == "style"),
-                        None,
-                    )
-                elif job.stage == "visual" and brief.operation == "video_edit" and current_segment(job):
-                    # Never send the unsplit original to Runway for a segmented edit.
-                    references = [runway.reference(edit_reference(db, settings, job))]
+                targeted = repair_payload(db, settings, job, runway)
+                if targeted:
+                    endpoint, payload, phase = targeted
                 else:
-                    references = [runway.reference(db.get(Asset, i)) for i in ids]
-                endpoint, payload = payload_for(
-                    settings, generation_brief, job.platform, references, audio=job.stage == "audio", style=style_uri
-                )
+                    grounded_references = prepare_references(db, settings, job)
+                    generation_brief, grounded_references, phase = generation_inputs(db, settings, job, grounded_references)
+                    ids = brief.audio_reference_ids if job.stage == "audio" else brief.reference_ids
+                    segment = current_segment(job) if job.stage == "visual" else None
+                    if job.stage == "audio" and job.brief.get("soundtrack_model") == "music":
+                        ids = []
+                    if brief.operation == "audio":
+                        ids = list(dict.fromkeys(ids + brief.audio_reference_ids))[:3]
+                    style_uri = None
+                    if grounded_references:
+                        references = [
+                            runway.reference(SimpleNamespace(**r))
+                            for r in grounded_references
+                            if r.get("role") != "style"
+                        ]
+                        style_uri = next(
+                            (runway.reference(SimpleNamespace(**r)) for r in grounded_references if r.get("role") == "style"),
+                            None,
+                        )
+                    elif job.stage == "visual" and brief.operation == "video_edit" and current_segment(job):
+                        # Never send the unsplit original to Runway for a segmented edit.
+                        references = [runway.reference(edit_reference(db, settings, job))]
+                    else:
+                        references = [runway.reference(db.get(Asset, i)) for i in ids]
+                    endpoint, payload = payload_for(
+                        settings, generation_brief, job.platform, references, audio=job.stage == "audio", style=style_uri
+                    )
                 db.refresh(control)
                 db.refresh(account)
                 if control.killed or account.paused:

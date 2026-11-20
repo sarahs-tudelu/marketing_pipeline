@@ -168,7 +168,7 @@ def parts(db, job, vision, audio):
         h["segment_index"]: h["prompt"] for h in job.task_history if "segment_index" in h and h.get("prompt")
     }
     result = []
-    if segments and brief["operation"] == "video":
+    if segments and brief["operation"] in {"video", "video_edit"}:
         if all(s.get("output_asset_id") for s in segments):
             marked = flagged(vision, segments)
             for s in segments:
@@ -201,7 +201,7 @@ def parts(db, job, vision, audio):
                         "limit": PROMPT_LIMIT,
                     }
                 )
-    elif not segments and brief["operation"] in {"video", "image"} and brief.get("generation_prompt"):
+    elif not segments and brief["operation"] in {"video", "video_edit", "image"} and brief.get("generation_prompt"):
         noun = "image" if brief["operation"] == "image" else "video"
         plan = scene_plan(brief) if noun == "video" else {}
         base = plan.get("scene_prompt") or brief["generation_prompt"]
@@ -221,7 +221,7 @@ def parts(db, job, vision, audio):
             }
         )
     soundtrack = _soundtrack(db, job)
-    if brief["operation"] == "video" and (soundtrack or not brief.get("audio_prompt")):
+    if brief["operation"] in {"video", "video_edit"} and (soundtrack or not brief.get("audio_prompt")):
         from .video_rules import AMBIENT_STYLES, next_ambient_style
 
         # A video made before every video had sound gets calm ambient music from Runway.
@@ -237,6 +237,32 @@ def parts(db, job, vision, audio):
                 "limit": MUSIC_PROMPT_LIMIT,
             }
         )
+    return result
+
+
+def review_evidence(db, job, vision):
+    from .video_repair import evidence_times, shots
+
+    if job.brief.get("operation") not in {"video", "video_edit"}:
+        return []
+    output = db.get(Asset, job.output_asset_id)
+    if not output:
+        return []
+    result = []
+    times = [d["second"] for d in vision.get("video_defects", [])] or vision.get("problem_seconds", [])
+    if not times:
+        times = [float(a or b) for reason in vision.get("reasons", []) for a, b, _ in _RANGE.findall(reason)]
+        times += [float(t) for reason in vision.get("reasons", []) for t in _POINT.findall(reason)]
+        times += [int(m)*60 + int(s) for reason in vision.get("reasons", []) for m, s in _CLOCK.findall(reason)]
+    for shot in shots(db, job):
+        start, length = shot["start"], shot["duration"]
+        at = next((t for t in times if start <= t < start + length), None)
+        if at is None:
+            continue
+        plan = shot.get("reference_plan") or {}
+        result.append({"clip": shot["index"] + 1, "asset_id": output.id, "second": at,
+                       "times": [round(start + t, 2) for t in evidence_times(at - start, length)],
+                       "references": plan.get("references", []), "scene": plan.get("scene_reference")})
     return result
 
 
@@ -285,6 +311,8 @@ def clip_options(db, post):
         "reasons": vision.get("reasons", []),
         "parts": options,
         "unavailable": unavailable,
+        "repair_hold": job.brief.get("repair_hold", "") if job and vision else "",
+        "evidence": review_evidence(db, job, vision) if job and vision else [],
     }
 
 
@@ -302,7 +330,7 @@ def _label(chosen, clips):
     return "clips " + ", ".join(numbers[:-1]) + " and " + numbers[-1]
 
 
-def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, request=""):
+def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, request="", repairs=None):
     """Queue one media job that makes the requested parts again, reusing the rest. Several clips can be
     made again together. The held post is replaced when the new media is ready. `request` is the admin's
     description of the change, when the prompts were written from one (social/media_changes.py)."""
@@ -344,7 +372,7 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, re
     # The first run's retries and last step are its own history, not the replacement's.
     brief = {
         k: v for k, v in deepcopy(job.brief).items()
-        if k not in {"failed_tasks", "active_generation", "runway_retry_at"}
+        if k not in {"failed_tasks", "active_generation", "runway_retry_at", "repair_hold", "repair_routes", "repair_verdict"}
     } | {
         "workflow": "immediate",
         "create_posts": True,
@@ -370,7 +398,7 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, re
             plan = scene_plan(old)
             # A scene clip is planned again from the edited scene description, like Generate corrected
             # scene; the old plan's scene stays in the correction for the planner to diagnose.
-            dropped = {"output_asset_id", "scene_retry"} | ({"reference_plan"} if plan else set())
+            dropped = {"output_asset_id", "scene_retry", "repair", "source_start", "playback_rate"} | ({"reference_plan"} if plan else set())
             clip = {k: v for k, v in old.items() if k not in dropped} | {
                 "prompt": prompt,
                 # A different seed gives a different take even when the prompt is unchanged.
@@ -410,11 +438,18 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, re
             brief["ambient_style"] = style
         sources = [i for i in sources if i != soundtrack]
         stage = "audio"
+    state = "queued"
+    if repairs:
+        from .video_repair import apply_repairs
+
+        stage = apply_repairs(db, job, brief, sources, repairs)
+        if stage == "render":
+            stage, state = "visual", "rendering"
     created = MediaJob(
         batch_key=f"replace-{first['kind']}:{uid()}:{job.platform}",
         platform=job.platform,
         brief=brief,
-        state="queued",
+        state=state,
         stage=stage,
         source_asset_ids=sources,
     )
@@ -434,9 +469,7 @@ def auto_attempts(job):
 
 
 def auto_regenerate(db, settings, post):
-    """When the visual check holds generated media, make the clips it flagged again without waiting for a
-    person, up to MEDIA_AUTO_RETRIES replacements in a row. Every clip is made again when the check didn't
-    say where the problem is. Returns the queued job, or None when nothing was started."""
+    """Queue one evidence-based repair for each affected generated shot."""
     limit = settings.media_auto_retries
     if post.status != "held" or not limit:
         return None
@@ -449,19 +482,33 @@ def auto_regenerate(db, settings, post):
         return None
     attempt = auto_attempts(job) + 1
     if attempt > limit:
+        job.brief = job.brief | {"repair_hold": "The automatic repair limit was reached. Compare the footage with its references."}
+        db.commit()
         return None
     visual = [p for p in parts(db, job, vision, {}) if p["kind"] != "music"]
     segments = job.brief.get("video_segments") or []
     original_indices = {s["index"] for s in segments if s.get("original_asset_id")}
     if original_indices and original_indices.intersection(flagged(vision, segments)):
-        # A different AI take cannot correct a problem in the recorded original.
+        job.brief = job.brief | {"repair_hold": "The review flagged an original library shot. Inspect the footage before replacing it."}
+        db.commit()
         return None
-    chosen = [p for p in visual if p["flagged"]] or visual
+    repairs = {}
+    if job.brief.get("operation") in {"video", "video_edit"}:
+        from .video_repair import choose
+
+        repairs, hold = choose(db, job, vision, soundtrack=_soundtrack(db, job))
+        if hold:
+            job.brief = job.brief | {"repair_hold": hold}
+            db.commit()
+            return None
+        chosen = [p for p in visual if p.get("index", 0) in repairs]
+    else:
+        chosen = [p for p in visual if p["flagged"]] or visual
     if not chosen:
         return None
     try:
         return replace_parts(
-            db, post, [(p["key"], "") for p in chosen], "pipeline", auto_attempt=attempt, auto_limit=limit
+            db, post, [(p["key"], "") for p in chosen], "pipeline", auto_attempt=attempt, auto_limit=limit, repairs=repairs
         )
     except ValueError:
         db.rollback()

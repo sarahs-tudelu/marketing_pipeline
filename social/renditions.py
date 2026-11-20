@@ -87,7 +87,7 @@ def video_rendition(data, width, height, duration, soundtrack=None, *, start=0):
     return video_sequence([(data, start, duration)], width, height, soundtrack)
 
 
-def video_sequence(clips, width, height, soundtrack=None, *, require_full_duration=False, transforms=None):
+def video_sequence(clips, width, height, soundtrack=None, *, require_full_duration=False, transforms=None, playback_rates=None):
     """Join ordered source intervals, retaining their audio timing or replacing the soundtrack.
 
     `transforms` optionally gives each clip a function that turns a decoded frame into the output-sized
@@ -111,7 +111,10 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
         audio = target.add_stream("aac", rate=48000) if has_audio else None
         if audio:
             audio.layout = "stereo"
-        for (data, start, duration), transform in zip(clips, transforms, strict=True):
+        rates = playback_rates or [1] * len(clips)
+        for (data, start, duration), transform, speed in zip(clips, transforms, rates, strict=True):
+            if speed != 1 and (soundtrack is None or not .75 <= speed <= 1):
+                raise ValueError("A trimmed shot needs a separate soundtrack and a supported playback rate.")
             if start < 0 or not 0 < duration <= 90 or next_index + round(duration * 30) > 2700:
                 raise ValueError("Video intervals must fit the 90-second finished-video limit")
             clip_start = next_index
@@ -124,7 +127,7 @@ def video_sequence(clips, width, height, soundtrack=None, *, require_full_durati
                     stamp = float(frame.time) if frame.time is not None else index / fps
                     if origin is None:
                         origin = stamp
-                    end = clip_start + min(max_frames, round((stamp - origin + 1 / fps - start) * 30))
+                    end = clip_start + min(max_frames, round((stamp - origin + 1 / fps - start) * 30 / speed))
                     if end <= next_index:
                         continue
                     picture = frame.to_image()

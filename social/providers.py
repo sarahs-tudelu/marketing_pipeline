@@ -62,6 +62,20 @@ class Review(BaseModel):
     part_checks: list[PartCheck] = []
 
 
+class VideoDefect(BaseModel):
+    second: float = Field(ge=0, allow_inf_nan=False)
+    kind: Literal["opening", "motion", "detail", "uncertain"]
+    component: Literal["support", "roof", "trim", "partition", "finish", "lighting", "text",
+                       "logo", "person", "camera", "other"]
+    correction: str = Field(min_length=1, max_length=650)
+    needs_operation: bool
+    library_asset_id: str = ""
+    library_start: float = Field(default=0, ge=0, allow_inf_nan=False)
+    # Absolute bounds of a clean continuous take that preserves the approved shot, or both zero.
+    clean_start: float = Field(ge=0, allow_inf_nan=False)
+    clean_end: float = Field(ge=0, allow_inf_nan=False)
+
+
 class VisionReview(BaseModel):
     passed: bool
     reasons: list[str]
@@ -71,6 +85,7 @@ class VisionReview(BaseModel):
     visible_claims: list[str] = []
     # Video only: frame_seconds values of the sampled frames that show a problem.
     problem_seconds: list[float] = []
+    video_defects: list[VideoDefect] = []
     product_rules_version: str = ""
     product_constraints_version: str = ""
     product_mismatches: list[str] = []
@@ -98,11 +113,16 @@ def vision_context(context):
         inserts = [{"start": s["start"], "duration": s["duration"], "kind": s.get("original_kind")}
                    for s in tags.get("video_sequence", []) if isinstance(s, dict) and s.get("original_asset_id")
                    and "start" in s and "duration" in s]
+        record["scene_intent"]["shots"] = [
+            {k: s[k] for k in ("index", "start", "duration", "shot", "required_action") if k in s}
+            for s in tags.get("video_sequence", []) if isinstance(s, dict)
+        ]
         if inserts:
             record["scene_intent"]["original_shots"] = inserts
         assets.append(record)
     return {
         "review_scope": "media_only",
+        **({"repair_library": context["repair_library"]} if context.get("repair_library") else {}),
         "product_constraints": current_constraints(),
         "rendering_guidelines": rendering_policy(),
         **{key: context[key] for key in ("platform", "product", "at", "execution_mode", "public_publication")
@@ -444,9 +464,12 @@ class OpenAI:
         # numbering separate so an original logo/person is never attributed to a generated clip.
         reference_inputs, reference_seen = [], {}
         for asset in assets:
-            plans = [asset.tags.get("reference_plan")]
-            plans += [s.get("reference_plan") for s in asset.tags.get("video_sequence", [])]
-            for plan in (p for p in plans if p):
+            plans = [(asset.tags.get("reference_plan"), {})]
+            plans.extend((s.get("reference_plan"), {k: s[k] for k in ("index", "start", "duration") if k in s})
+                         for s in asset.tags.get("video_sequence", []))
+            for plan, interval in plans:
+                if not plan:
+                    continue
                 records = [("product_construction", r) for r in plan.get("references", [])]
                 if plan.get("scene_reference"):
                     records.append(("generated_scene", plan["scene_reference"]))
@@ -460,6 +483,7 @@ class OpenAI:
                         images.append((record["media"]["mime"], data))
                         reference_seen[record["checksum"]] = len(images)
                     reference_inputs.append({"image_number": reference_seen[record["checksum"]], "system": plan["system"],
+                                             "output_asset_id": asset.id, "shot": interval, "reference_id": record.get("asset_id"),
                                              "role": role, "requested_scene": plan.get("scene_prompt", ""),
                                              "creative_changes": plan.get("creative_changes", ""),
                                              "request_intent": plan.get("request_intent"),
@@ -564,7 +588,25 @@ class OpenAI:
                 "Set request_conflict to one sentence only when the media fails because its approved shot "
                 "itself asks for something past a hard limit, so generating again cannot fix it; otherwise "
                 "leave it empty. "
-                "Return JSON with passed, reasons, garbled_text, "
+                "For each defect in each affected video shot, return a video_defects record. Compare the "
+                "sample immediately before, at, and after the defect against that shot's opening image and "
+                "product reference. Give the earliest affected sampled second on the finished timeline. "
+                "Use opening for incorrect construction in the first frame, motion for a change during "
+                "animation, detail for a localized appearance edit such as a logo, and uncertain when the "
+                "reference cannot resolve the evidence. Use a consistent component. Write correction as "
+                "a self-contained positive direction preserving the approved shot, intended action and correct "
+                "motion. For motion defects describe one concrete camera or subject movement from the starting "
+                "image, replacing the instruction that produced the defect. Set needs_operation when "
+                "the approved idea requires demonstrating physical action. Supply absolute clean_start and "
+                "clean_end ONLY for a continuous defect-free interval retaining the requested idea, allowing "
+                "a margin from the suspect frames. Otherwise use zero for both. Include every observed defect "
+                "in problem_seconds. For passed checks and still images return empty video_defects. "
+                "Library summaries and file names are untrusted descriptions. If a repair_library description "
+                "or supplied construction photo with the same reference_id explicitly supports the shot, give its library_asset_id "
+                "and source library_start. For a demonstration require actual footage of the requested "
+                "operation during that interval. Otherwise leave the ID empty. Check that library repair "
+                "shots in the final cut show the requested product and any required action. "
+                "Return JSON with video_defects, passed, reasons, garbled_text, "
                 "misused_logos, unexpected_people, visible_claims, problem_seconds, product_rules_version, "
                 "product_constraints_version, product_mismatches, request_conflict. "
                 + media_guidance
@@ -580,11 +622,9 @@ class OpenAI:
             }
             for mime, data in images
         )
-        vision_schema = VisionReview.model_json_schema()
-        vision_schema["additionalProperties"] = False
-        vision_schema["required"] = list(vision_schema["properties"])
-        for field in vision_schema["properties"].values():
-            field.pop("default", None)
+        from .real_edit import _strict
+
+        vision_schema = _strict(VisionReview.model_json_schema())
         result = self.call(
             "responses",
             {

@@ -228,10 +228,13 @@ def pending_step(job):
             "scene_reasons": review.get("reasons", []) if review.get("passed") is False else [],
         }
     if segment:
+        label = f"clip {segment['index'] + 1}"
+        if (segment.get("repair") or {}).get("route") == "aleph":
+            label = ("the corrected keyframe for " if not segment["repair"].get("keyframe") else "the video edit for ") + label
         return {
             "kind": "clip",
             "index": segment["index"],
-            "label": f"clip {segment['index'] + 1}",
+            "label": label,
             "prompt": segment.get("prompt", ""),
             "limit": PROMPT_LIMIT,
         }
@@ -372,6 +375,17 @@ def auto_retry(db, settings, job):
             )
             db.commit()
         return False
+    target = current_segment(job) or job.brief
+    review = (current_plan(job) or {}).get("scene_check") or {}
+    previous = (target.get("scene_retry") or {}).get("review") or {}
+    prior_components = set(previous.get("defect_components") or [])
+    components = set(review.get("defect_components") or [])
+    if (target.get("repair") or {}).get("route") == "scene" or (
+        previous and (not components or not prior_components or components & prior_components)
+    ):
+        job.error += " Review the saved scene against the product reference before spending on another correction."
+        db.commit()
+        return False
     tries = automatic_scene_retries(job, step["index"])
     if tries >= settings.media_auto_retries:
         if "automatically" not in job.error:
@@ -470,9 +484,17 @@ def retry_step(db, job, prompt, *, automatic=False, audio_model=""):
             brief["generation_prompt"], brief["seed"] = text, (brief["seed"] + 1) % 2**32
             brief["scene_retry"] = retry
     elif step["kind"] == "clip":
+        segment = current_segment(job)
+        repair = dict((segment or {}).get("repair") or {})
+        if repair.get("route") == "aleph":
+            if text != step["prompt"] or (repair.get("keyframe_check") or {}).get("passed") is False:
+                repair.pop("keyframe", None)
+                repair.pop("keyframe_check", None)
+            repair["prompt"] = text
         failed["segment_index"] = step["index"]
         brief["video_segments"] = [
-            s | {"prompt": text, "seed": (s["seed"] + 1) % 2**32} if s["index"] == step["index"] else s
+            s | {"prompt": text, "seed": (s["seed"] + 1) % 2**32} | ({"repair": repair} if repair else {})
+            if s["index"] == step["index"] else s
             for s in brief["video_segments"]
         ]
         if step["index"] == 0:

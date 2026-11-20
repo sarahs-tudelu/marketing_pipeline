@@ -129,6 +129,8 @@ def create_app(settings=None):
     templates.env.filters["platform"] = lambda name: {"linkedin": "LinkedIn", "x": "X", "tiktok": "TikTok"}.get(
         name, str(name).title()
     )
+    from .video_repair import REPAIR_LABELS
+    templates.env.globals["repair_labels"] = REPAIR_LABELS
     templates.env.filters["money"] = money
     templates.env.filters["compact"] = compact
     templates.env.filters["percent"] = percent
@@ -417,6 +419,37 @@ def create_app(settings=None):
             return FileResponse(storage(settings).path(asset.storage_key), media_type=asset.media["mime"])
         from .media import public_media
         return public_media(asset.storage_key, request)
+
+    @app.get("/posts/{post_id}/repair-evidence/{clip}")
+    def repair_evidence(post_id: str, clip: int, request: Request, db: DB):
+        import io
+
+        from fastapi.responses import Response
+        from PIL import Image, ImageDraw
+
+        from .clip_replace import failed_vision, review_evidence, source_job
+        from .video_repair import evidence_frames
+
+        post = db.get(Post, post_id)
+        if not post or post.status == "deleted" or (request.state.editor and post.prompted_by != request.state.actor):
+            raise HTTPException(404)
+        job = source_job(db, post)
+        shot = next((s for s in review_evidence(db, job, failed_vision(db, post)) if s["clip"] == clip), None) if job else None
+        if not shot:
+            raise HTTPException(404)
+        times = shot["times"]
+        frames = evidence_frames(settings, db.get(Asset, shot["asset_id"]), times)
+        if len(frames) != len(times):
+            raise HTTPException(422, "Could not read the flagged frames")
+        sheet = Image.new("RGB", (320 * len(times), 270), "#222222")
+        draw = ImageDraw.Draw(sheet)
+        for i, (at, frame) in enumerate(zip(times, frames, strict=True)):
+            frame.thumbnail((320, 240))
+            sheet.paste(frame, (i*320+(320-frame.width)//2, 0))
+            draw.text((i*320+6, 248), f"{at:g} s", fill="white")
+        out = io.BytesIO()
+        sheet.save(out, "JPEG", quality=88)
+        return Response(out.getvalue(), media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
 
     @app.get("/api/session")
     def session(request: Request):

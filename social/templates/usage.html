@@ -20,6 +20,12 @@
   <form method="post" action="/forms/usage/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="days" value="{{ u.days }}"><button>Refresh billed costs</button></form>
 </div>
 
+{% if u.repair_costs %}
+<section><h2>Video repair costs</h2>
+<p>Runway visual-generation credits per repaired clip in a render that passed final visual review. Credits include failed attempts. An average appears once charges are known and a render passes.</p>
+<table><thead><tr><th>Repair</th><th>Clips attempted</th><th>Clips passed</th><th>Recorded credits</th><th>Credits per passed clip</th></tr></thead>
+<tbody>{% for r in u.repair_costs %}<tr><td>{{ repair_labels[r.route] }}</td><td>{{ r.attempts }}</td><td>{{ r.passed }}</td><td>{{ r.credits|round(2) }}{{ ' (partial or estimated)' if r.incomplete else '' }}</td><td>{{ r.average|round(2) if r.average is not none else 'Pending' }}</td></tr>{% endfor %}</tbody></table></section>
+{% endif %}
 <div class="metrics usage-tiles">
   <div>
     <span class="tile-label">AI spend</span><strong>{{ u.total|money }}</strong>
