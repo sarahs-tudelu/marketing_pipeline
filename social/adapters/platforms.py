@@ -573,7 +573,8 @@ class TikTok(BaseAdapter):
 
 
 class Pinterest(BaseAdapter):
-    """Pins on the configured board. The gate lets only real Google Drive photos and videos through."""
+    """Pins on the board for the product they show, else the default board. The gate lets only real
+    Google Drive photos and videos through."""
 
     platform = "pinterest"
     base = "https://api.pinterest.com/v5"
@@ -589,22 +590,29 @@ class Pinterest(BaseAdapter):
         )
 
     def validate_credentials(self):
+        from ..pinterest_boards import product_boards
+
         user = self.direct("GET", f"{self.base}/user_account")
-        board_id = self.s.pinterest_board_id
-        if not re.fullmatch(r"\d{1,40}", board_id):
+        default = self.s.pinterest_board_id
+        if not re.fullmatch(r"\d{1,40}", default):
             raise ValueError("PINTEREST_BOARD_ID must be the board's numeric ID")
-        board = self.direct("GET", f"{self.base}/boards/{board_id}")
-        owner = (board.get("owner") or {}).get("username")
-        if str(board.get("id")) != board_id or (owner and owner != user.get("username")):
-            raise ValueError("The configured Pinterest board doesn't belong to the connected account")
-        return {"user": user, "board": {k: board.get(k) for k in ("id", "name", "privacy")}}
+        boards = {}
+        for board_id in dict.fromkeys([default, *product_boards(self.s).values()]):
+            board = self.direct("GET", f"{self.base}/boards/{board_id}")
+            owner = (board.get("owner") or {}).get("username")
+            if str(board.get("id")) != board_id or (owner and owner != user.get("username")):
+                raise ValueError(f"The Pinterest board {board_id} doesn't belong to the connected account")
+            boards[board_id] = {k: board.get(k) for k in ("id", "name", "privacy")}
+        return {"user": user, "board": boards[default], "boards": list(boards.values())}
 
     def get_status(self, remote_id):
         return self.direct("GET", f"{self.base}/pins/{remote_id}")
 
     def _publish(self):
         from ..gate import URL_RE
+        from ..pinterest_boards import board_for
 
+        board_id = board_for(self.db, self.s, self.post)
         asset = self.assets()[0]
         if asset.media["mime"].startswith("video/"):
             media_source = self._video_source(asset)
@@ -614,7 +622,7 @@ class Pinterest(BaseAdapter):
                 public_url(url)
             media_source = {"source_type": "image_url", "url": url}
         body = {
-            "board_id": self.s.pinterest_board_id or "DRY_BOARD",
+            "board_id": board_id or "DRY_BOARD",
             "description": self.post.caption,
             "media_source": media_source,
         }

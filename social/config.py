@@ -80,7 +80,9 @@ class Settings(BaseSettings):
     tiktok_manual_assignee: str = "Tudelu social owner"
     pinterest_client_id: str = ""
     pinterest_client_secret: SecretStr = SecretStr("")
-    pinterest_board_id: str = ""  # Numeric ID of the board Pins are saved to.
+    pinterest_board_id: str = ""  # Numeric ID of the default board: Pins without one clear product go here.
+    # Product boards as product=board ID pairs, e.g. "pergolas=1234,carports=5678,drive_through=5678".
+    pinterest_product_boards: str = ""
     ai_mode: Literal["fixture", "live"] = "fixture"
     caption_provider: Literal["anthropic"] = "anthropic"
     review_provider: Literal["anthropic"] = "anthropic"
@@ -201,6 +203,14 @@ class Settings(BaseSettings):
             raise ValueError("Basic auth requires ADMIN_USERNAME and ADMIN_PASSWORD")
         if self.auth_mode == "proxy" and not self.proxy_auth_secret.get_secret_value():
             raise ValueError("Proxy authentication requires PROXY_AUTH_SECRET")
+        return self
+
+    @model_validator(mode="after")
+    def known_pinterest_products(self):
+        if self.pinterest_product_boards.strip():
+            from .pinterest_boards import product_boards
+
+            product_boards(self)
         return self
 
     def wants_live(self, platform: str, account=None) -> bool:
