@@ -224,6 +224,7 @@ def gather_sources(db, settings, job):
     campaign_ids = brief.get("campaign_reference_ids", [])
     cut_ids = brief.get("original_candidates", [])
     selected_ids = dict.fromkeys(brief["reference_ids"] + campaign_ids + cut_ids)
+    rejected = set(brief.get("rejected_original_ids", []))
     for asset_id in selected_ids:
         asset = db.get(Asset, asset_id)
         if asset and asset.removed_at is None and _usable(asset, at, fixture) and (
@@ -251,6 +252,7 @@ def gather_sources(db, settings, job):
         # The logo isn't scene material, and platform copies repeat their originals.
         if _usable(a, at, fixture)
         and a.id not in selected_ids
+        and a.id not in rejected
         and not a.tags.get("brand_logo")
         and "rendition" not in a.tags
     ]
@@ -337,6 +339,8 @@ def gather_sources(db, settings, job):
     }
     if campaign_ids:
         context["campaign_references"] = [a["asset_id"] for a in selected if a["asset_id"] in campaign_ids]
+    if brief.get("generated_after_no_match"):
+        context["media_intent"] = "Create AI design inspiration from the campaign idea and approved product guidance."
     if cut_ids and brief["duration"] >= 7:
         context["original_candidates"] = [a for a in selected if a["asset_id"] in cut_ids]
     provenance = {

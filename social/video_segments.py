@@ -71,7 +71,7 @@ def with_original_cuts(brief, cuts, candidates):
 
 def original_shots(db, brief):
     from .asset_edit import ancestry
-    from .real_edit import _cleared, real_asset
+    from .real_sources import _cleared, real_asset
 
     originals = []
     permissions = {"live": brief["execution_mode"] == "live", "public": brief["rights"] != "not_public"}

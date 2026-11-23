@@ -128,7 +128,8 @@ def request_changes(db, settings, post, text, actor, picks=()):
 
 
 def _revise_real(db, settings, post, job, text, actor, picks):
-    from .real_edit import real_asset, room_for
+    from .real_edit import room_for
+    from .real_sources import real_asset
 
     brief = job.brief
     public = brief.get("rights") != "not_public"

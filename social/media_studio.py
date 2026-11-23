@@ -24,12 +24,20 @@ from .pipeline import draft
 from .prompting import utf16_trim, write_prompt
 from .provenance import requires_ai_review
 from .provider_errors import ProviderError
-from .real_edit import RealEditPlan, real_choice
+from .real_edit import NoMatchingMedia, RealEditPlan
+from .real_sources import no_real_media, real_choice
 from .recovery import runway_failure
 from .renditions import fitted_size, image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, job_settings, payload_for, video_clip_limit
-from .shared_media import compatible_render, group_renders, runnable_jobs
+from .shared_media import (
+    VISUAL_DIRECTION,
+    SharedMediaUnavailable,
+    compatible_render,
+    group_renders,
+    independent_brief,
+    runnable_jobs,
+)
 from .storage import ingest, source_files, storage
 from .video_rules import (
     AMBIENT_STYLES,
@@ -408,6 +416,15 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
     sources = validate_sources(db, brief, live=live)
     if brief.as_uploaded:
         return _queue_uploaded(db, settings, brief, snapshot, live=live)
+    batch = f"{campaign.id}:{sequence}" if campaign else uid()
+    jobs = [
+        _add_job(db, brief, campaign, batch, platform, values)
+        for platform, values in _platform_briefs(db, settings, brief, sources, live, batch, campaign, sequence, snapshot)
+    ]
+    return group_renders(db, settings, jobs, profiles(settings))
+
+
+def _platform_briefs(db, settings, brief, sources, live, batch, campaign=None, sequence=0, snapshot=None):
     # Real project edits never call Runway; every other format may.
     generated = brief.operation != "real"
     if generated and settings.ai_mode == "live" and not settings.runway_api_key.get_secret_value():
@@ -425,25 +442,25 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
     snapshot = snapshot if snapshot is not None else (
         website_snapshot(settings) if brief.website and generated else {}
     )
-    batch = f"{campaign.id}:{sequence}" if campaign else uid()
     # One ambient style per batch, so each platform's version of the post sounds the same.
     style = next_ambient_style(db)
     campaign_media, scores = [], {}
-    discover = campaign and brief.operation in {"mixed", "real", "image", "video"}
+    discover = (campaign and brief.operation in {"mixed", "real", "image", "video"}) or (
+        brief.operation == "real" and not brief.reference_ids
+    )
     if discover:
         campaign_media = (
             [a for a in sources if a.id in brief.reference_ids] if brief.reference_ids else
             library_media(db, product=brief.product, public=brief.rights != "not_public",
                           live=live or settings.ai_mode == "live", limit=None)
         )
-        scores = campaign_scores(settings, brief.prompt, campaign_media)
+        scores = campaign_scores(settings, brief.product + " " + brief.prompt, campaign_media)
     footage = brief.duration - END_CARD_SECONDS
     best_score = max(scores.values(), default=0)
     edit_sources = [a for a in campaign_media if a.media["mime"].startswith("video/")
                     and a.media["duration"] >= footage and scores[a.id] == best_score]
     signals = campaign_video_signals(brief.prompt) if brief.operation == "mixed" else {}
     video_requested = signals.get("video")
-    result = []
     platform_profiles = profiles(settings)
     for platform in brief.platforms:
         profile = platform_profiles[platform]
@@ -475,7 +492,10 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
                 library=campaign_media if discover else None, scores=scores,
             )
             if (operation == "real" or drive_only) and not real:
-                raise ValueError(no_real_media(platform))
+                if not campaign and len(brief.platforms) == 1:
+                    raise ValueError(no_real_media(platform))
+                # The worker can search again after imports. Keep this destination independent of its siblings.
+                real = ("video" if video_requested or not profile.image_formats else brief.real_format or "photo", [], [])
         if operation == "mixed":
             options = ["image", "video"]
             if edit_sources and (not video_requested or signals["edit"]):
@@ -508,7 +528,12 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         if operation == "real":
             values = _real_values(db, settings, brief, values, real, platform, profile, batch, style, live=live)
             values["kind"] = content_kind
-            result.append(_add_job(db, brief, campaign, batch, platform, values))
+            values["real_library_scope"] = list(brief.reference_ids)
+            values["allow_generated_fallback"] = brief.operation == "mixed" and not drive_only
+            if values["allow_generated_fallback"]:
+                values["website_snapshot"] = snapshot
+                values["fallback_audio"] = {"audio_prompt": brief.audio_prompt, "audio_reference_ids": brief.audio_reference_ids}
+            yield platform, values
             continue
         mime = REFERENCE_TYPES[operation]
         refs = [a.id for a in sources if a.id in brief.reference_ids and a.media["mime"].startswith(mime)]
@@ -597,33 +622,21 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
             )
         if operation == "image":
             values.update(audio_prompt="", audio_reference_ids=[], end_card_asset_id="")
-        result.append(_add_job(db, brief, campaign, batch, platform, values))
-    return group_renders(db, settings, result, platform_profiles)
-
-
-def no_real_media(platform):
-    if platform in REAL_MEDIA_ONLY:
-        return (
-            f"{platform.title()} only posts real photos and videos imported from Google Drive, and none fit "
-            "this post. Import project photos or videos through Asset library → Automatic Google Drive imports, "
-            f"or untick {platform.title()}."
-        )
-    return (
-        f"{platform.title()}: no real photos or videos fit this post. Add photos or videos of completed "
-        "projects to the asset library, or choose them in the brief."
-    )
+        yield platform, values
 
 
 def check_real_media(db, settings, brief, sources):
-    """Before a campaign is saved: every platform that needs real media has some to start from."""
+    """Accept a recurring campaign when at least one destination can start producing media."""
     if brief.operation not in {"real", "mixed"}:
         return
     for platform in brief.platforms:
         drive_only = platform in REAL_MEDIA_ONLY
-        if brief.operation == "real" or drive_only:
-            profile = profiles(settings)[platform]
-            if not real_choice(db, brief, sources, profile, platform, 0, drive_only=drive_only):
-                raise ValueError(no_real_media(platform))
+        if brief.operation == "mixed" and not drive_only:
+            return
+        profile = profiles(settings)[platform]
+        if real_choice(db, brief, sources, profile, platform, 0, drive_only=drive_only):
+            return
+    raise ValueError(no_real_media(brief.platforms[0]))
 
 
 def _add_job(db, brief, campaign, batch, platform, values):
@@ -765,7 +778,7 @@ def activate_planned_jobs(db, settings):
 def replenish_campaigns(db, settings):
     from .automation import can_automate
     from .campaigns import lock_campaign
-    from .media_queue import campaign_wait_reason
+    from .media_queue import campaign_wait_reason, producing_platforms
 
     if not can_automate(db, settings) or settings.ai_mode != "live":
         return
@@ -780,10 +793,12 @@ def replenish_campaigns(db, settings):
             db.commit()
             continue
         brief = CreativeBrief.model_validate(campaign.brief, context={"stored": True})
-        if reason := campaign_wait_reason(db, campaign):
+        platforms = producing_platforms(db, campaign)
+        if reason := campaign_wait_reason(db, campaign, platforms):
             campaign.error = reason
             db.commit()
             continue
+        brief = brief.model_copy(update={"platforms": platforms})
         # Active recurring campaigns only spend when every selected publishing account is live/ready.
         from .adapters import ADAPTERS
 
@@ -1209,25 +1224,38 @@ def _complete_job(db, job, result):
     db.commit()
 
 
-def _reuse_render(db, settings, job, source):
+def _reuse_render(db, settings, job, source, *, live):
+    """Return False when this destination needs its own render."""
+    try:
+        if source and source.brief.get("generated_after_no_match") and not _allows_generated_fallback(db, job):
+            raise SharedMediaUnavailable("This platform requires a real project.")
+        match = compatible_render(db, job, source, profiles(settings)[job.platform], live=live)
+    except SharedMediaUnavailable:
+        job.brief = independent_brief(job)
+        return False
     claimed = db.execute(update(MediaJob).where(MediaJob.id == job.id, MediaJob.state == "queued")
                          .values(state="rendering"))
     if not claimed.rowcount:
         db.rollback()
-        return
-    if match := compatible_render(db, job, source, profiles(settings)[job.platform]):
+        return True
+    if match:
         renderer, asset = match
-        job.brief = job.brief | {"shared_render_from": renderer.id, "shared_render_platform": renderer.platform}
+        if renderer.brief.get("generated_after_no_match"):
+            job.brief = job.brief | {"operation": renderer.brief["operation"], "real_format": "",
+                                     "reference_ids": [], "generated_after_no_match": True}
+        job.brief = job.brief | {k: renderer.brief[k] for k in VISUAL_DIRECTION if k in renderer.brief} | {
+            "shared_render_from": renderer.id, "shared_render_platform": renderer.platform}
         _complete_job(db, job, asset)
-        return
+        return True
     # The completed file doesn't fit this destination. Assemble its local rendition from the
     # same original clips, edit decisions and music without sending another provider request.
     job.brief = {k: v for k, v in source.brief.items()
                  if k not in {"usage_checked", "failed_tasks", "active_generation", "active_model",
-                              "active_estimate", "runway_retry_at"}} | {"platforms": [job.platform]}
+                              "active_estimate", "runway_retry_at"}} | {"platforms": [job.platform], "rendition_of_job_id": source.id}
     job.source_asset_ids = list(source.source_asset_ids)
     db.commit()
     _finish(db, settings, job)
+    return True
 
 
 def fitted_copy(
@@ -1442,6 +1470,46 @@ def needs_prompt(job):
     )
 
 
+def _allows_generated_fallback(db, job):
+    brief = job.brief
+    if not job.campaign_id or job.platform in REAL_MEDIA_ONLY or brief.get("revision") or brief.get("prepared_edit"):
+        return False
+    if "allow_generated_fallback" in brief:
+        return brief["allow_generated_fallback"]
+    # Legacy campaign jobs predate the per-job format permission.
+    campaign = db.get(MediaCampaign, job.campaign_id)
+    return bool(campaign and campaign.brief.get("operation") == "mixed"
+                and all(brief.get(k) == campaign.brief.get(k) for k in ("prompt", "product", "facts_id")))
+
+
+def _generate_after_no_match(db, settings, job, brief, rejection, live):
+    # Use the ordinary image/video path, with fresh references and the same campaign and delivery rights.
+    video = brief.real_format == "video"
+    generated = CreativeBrief.model_validate(brief.model_dump() | {
+        "operation": "video" if video else "image", "real_format": "", "reference_ids": [],
+        "audio_reference_ids": [], "audio_prompt": "", "end_card_asset_id": brief.end_card_asset_id if video else "",
+    } | (job.brief.get("fallback_audio", {}) if video else {}), context={"stored": True})
+    sources = validate_sources(db, generated, live=live)
+    planning = settings.model_copy(update={"ai_mode": job.brief["execution_mode"]})
+    batch = job.batch_key.rsplit(":", 1)[0]
+    _, values = next(_platform_briefs(db, planning, generated, sources, live, batch,
+                                      snapshot=job.brief.get("website_snapshot")))
+    if video and "real_library_scope" in job.brief:
+        values["repair_library_scope"] = job.brief["real_library_scope"]
+    for key in ("prompted_by", "prompted_by_label"):
+        if key in job.brief:
+            values[key] = job.brief[key]
+    waiting = db.scalars(select(MediaJob).where(
+        MediaJob.campaign_id == job.campaign_id, MediaJob.brief["shared_render_from"].as_string() == job.id,
+        MediaJob.state.in_(["planned", "queued"])
+    ))
+    for peer in waiting:
+        if not _allows_generated_fallback(db, peer):
+            peer.brief = independent_brief(peer)
+    job.brief = values | {"generated_after_no_match": True, "rejected_original_ids": rejection.reviewed}
+    db.commit()
+
+
 def process_jobs(db, settings, provider=None):
     control = db.get(Control, 1)
     db.refresh(control)
@@ -1506,16 +1574,29 @@ def process_jobs(db, settings, provider=None):
                     {k: v for k, v in job.brief.items() if k in CreativeBrief.model_fields},
                     context={"stored": True},
                 )
-                validate_sources(db, brief, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
-                if source_id := job.brief.get("shared_render_from"):
-                    _reuse_render(db, settings, job, db.get(MediaJob, source_id))
+                live = settings.wants_live(job.platform, account)
+                # An automatic edit checks candidates individually. A shared real edit checks the
+                # originals it actually used. A rejected or deleted candidate cannot veto either.
+                searching = brief.operation == "real" and not any((
+                    brief.prepared_edit, job.brief.get("revision"), job.brief.get("real_edit"),
+                ))
+                validate_sources(db, brief.model_copy(update={"reference_ids": []}) if searching else brief, live=live)
+                if (source_id := job.brief.get("shared_render_from")) and _reuse_render(
+                    db, settings, job, db.get(MediaJob, source_id), live=live
+                ):
                     continue
                 if brief.as_uploaded or brief.operation == "real":
                     if brief.operation == "real" and "real_edit" not in job.brief:
                         from .real_edit import plan_edit
 
                         # The media and edit values are saved before rendering; a resume reuses them.
-                        plan_edit(db, settings, job)
+                        try:
+                            plan_edit(db, settings, job)
+                        except NoMatchingMedia as exc:
+                            if not _allows_generated_fallback(db, job):
+                                raise
+                            _generate_after_no_match(db, configured, job, brief, exc, live)
+                            continue
                     job.state = "rendering"
                     db.commit()
                     _finish(db, settings, job)
@@ -1623,6 +1704,11 @@ def process_jobs(db, settings, provider=None):
                         and 400 <= exc.upstream_status < 500
                     )
                     job.state = "uncertain" if job.state == "submitting" and not rejected else "failed"
+                    if isinstance(exc, NoMatchingMedia) and exc.reviewed:
+                        # A manual resume starts with unseen originals. Retried files go to the end.
+                        recent = set(exc.reviewed)
+                        older = [i for i in job.brief.get("reviewed_original_ids", []) if i not in recent]
+                        job.brief = job.brief | {"reviewed_original_ids": older + exc.reviewed}
                     job.error = (
                         str(exc)
                         if isinstance(exc, ValueError)

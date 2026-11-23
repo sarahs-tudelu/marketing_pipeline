@@ -91,10 +91,25 @@ def campaign_attempts(campaign_id):
     return MediaJob.id.in_(select(attempts.c.id))
 
 
-def batch_wait_reason(db, campaign_id):
+def producing_platforms(db, campaign):
+    """Keep a stopped media attempt for recovery while scheduling the other destinations."""
+    platforms = campaign.brief["platforms"]
+    if len(platforms) == 1:
+        return platforms
+    stopped = set(db.scalars(current_attempts(MediaJob.platform).where(
+        campaign_attempts(campaign.id), MediaJob.state.in_(["failed", "uncertain"])
+    )))
+    return [p for p in platforms if p not in stopped]
+
+
+def batch_wait_reason(db, campaign_id, platforms=None):
     query = current_attempts(MediaJob.platform, MediaJob.state, Post.status).where(
         campaign_attempts(campaign_id), unfinished()
     )
+    if platforms:
+        # Skip only stopped renderers on other destinations. Jobs still running under an older
+        # campaign configuration, and posts awaiting a delivery decision, keep their usual gates.
+        query = query.where(MediaJob.platform.in_(platforms) | MediaJob.state.not_in(["failed", "uncertain"]))
     campaign = db.get(MediaCampaign, campaign_id)
     if campaign and campaign.brief.get("rights") == "not_public":
         # Review and delivery of a simulation can continue independently of the next media batch.
@@ -111,14 +126,16 @@ def batch_wait_reason(db, campaign_id):
     return f"The {name} post in the previous batch is {post_status.replace('_', ' ')}."
 
 
-def campaign_wait_reason(db, campaign):
-    reason = batch_wait_reason(db, campaign.id)
+def campaign_wait_reason(db, campaign, platforms=None):
+    if platforms is None:
+        platforms = producing_platforms(db, campaign)
+    reason = batch_wait_reason(db, campaign.id, platforms)
     if reason:
         return reason
     idea = db.execute(
         current_attempts(MediaJob.platform, MediaJob.state)
         .where(
-            MediaJob.platform.in_(campaign.brief["platforms"]),
+            MediaJob.platform.in_(platforms),
             MediaJob.brief["workflow"].as_string().in_(["next", "immediate"]),
             MediaJob.state != "complete",
         )

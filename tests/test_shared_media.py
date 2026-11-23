@@ -125,8 +125,8 @@ def test_planned_real_posts_share_an_edit_and_revise_only_one_destination(db, se
     assert revised.brief["revision"]["previous_edit"]["items"] == first.brief["real_edit"]["items"]
 
 
-@pytest.mark.parametrize("action", ["resume", "cancel"])
-def test_failed_source_waits_without_blocking_other_jobs(db, settings, action):
+@pytest.mark.parametrize("stopped", ["failed", "uncertain", "cancelled"])
+def test_remaining_destinations_render_while_original_source_is_stopped(db, settings, stopped):
     settings.media_jobs_per_tick = 1
     jobs = queue_jobs(db, settings, brief_for(db, settings, platforms=["instagram", "linkedin", "facebook"]))
     # A paused account doesn't have to start the batch for eligible platforms.
@@ -138,15 +138,19 @@ def test_failed_source_waits_without_blocking_other_jobs(db, settings, action):
     failed = next(j for j in jobs if j.state == "failed")
     assert failed.platform == "linkedin"
     assert jobs[0].brief["shared_render_from"] == failed.id
-    finish(db, settings, [independent])
-    assert all(not j.post_id for j in jobs)
-    if action == "resume":
-        resume_job(failed)
-    else:
-        failed.state = "cancelled"
+    failed.state = stopped
+    db.commit()
+    finish(db, settings, [independent, jobs[0]])
+    assert failed.state == stopped and not failed.post_id
+    assert jobs[0].task_history and not jobs[0].brief.get("shared_render_from")
     db.get(Account, "facebook").paused = False
     db.commit()
-    remaining = [j for j in jobs if j.state != "cancelled"]
+    remaining = [j for j in jobs if j != failed]
     finish(db, settings, remaining)
     assert len({j.output_asset_id for j in remaining}) == 1
     assert len(db.scalars(select(MediaJob).where(MediaJob.state == "complete")).all()) == len(remaining) + 1
+    if stopped == "failed":
+        resume_job(failed)
+        db.commit()
+        finish(db, settings, [failed])
+        assert failed.post_id not in {j.post_id for j in remaining}

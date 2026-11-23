@@ -230,7 +230,7 @@ def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets,
     assert job.state == "running" and job.task_id == "task-123"
     process_jobs(db, settings, provider)
     assert job.state == "failed" and job.task_id == "task-123"
-    process_jobs(db, settings, provider)
+    # Recover the known task before another destination needs to take over the render.
     assert sibling.state == "queued" and not sibling.task_history
     resume_job(job)
     db.commit()

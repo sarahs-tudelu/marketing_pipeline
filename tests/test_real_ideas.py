@@ -211,6 +211,28 @@ def test_an_idea_with_no_matching_media_says_what_is_missing(db, settings, facts
     assert "choose Image or Video to make AI inspiration instead" in response.text
 
 
+def test_visual_editor_can_find_a_drive_photo_the_text_index_cannot_identify(db, settings, monkeypatch):
+    from social.real_edit import EditItem, RealEditPlan, plan_real_idea
+
+    pictures = [ingest(db, settings, jpeg((c, 80, 90)), f"DSC_{c}.jpg", rights="public",
+                       tags={"google_drive_file_id": str(c), "product_family": "Architectural Canopy"})
+                for c in (20, 40)]
+    db.commit()
+    settings.ai_mode = "live"
+    monkeypatch.setattr(media_search, "describe", lambda *args: 0)
+    monkeypatch.setattr(media_search, "model_rank", lambda *args: media_search.SearchResult(matches=[], problem="Unknown files"))
+
+    def choose(db, settings, request, group, *args, **kwargs):
+        assert {a.id for a in group} == {a.id for a in pictures}
+        return RealEditPlan(layout="single", items=[EditItem(asset_id=pictures[0].id)])
+
+    monkeypatch.setattr("social.real_edit.ask_planner", choose)
+    result = plan_real_idea(db, settings, idea="An installed entrance canopy", title="Entrance", uploads=[],
+                            platforms=["pinterest"], product="canopies", kind="promotional", rights="public", requested="photo")
+    assert [item["asset_id"] for item in result["matches"]] == [pictures[0].id]
+    assert result["edit"]["items"][0]["asset_id"] == pictures[0].id
+
+
 def test_pinterest_takes_real_project_ideas_from_drive_media_only(db, settings, facts):  # noqa: F811
     library(db, settings)
     drive = ingest(db, settings, jpeg((120, 140, 160), (1000, 1500)), "partition-wall-office.jpg", rights="public",

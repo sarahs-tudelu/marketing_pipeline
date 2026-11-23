@@ -114,12 +114,17 @@ def label(asset):
     return f"Photo · {name} · {media.get('width', 0)} × {media.get('height', 0)}"
 
 
+def drive_search_text(asset):
+    info = (asset.media or {}).get("drive_search") or {}
+    return " ".join(info[key] for key in ("folder_path", "name", "description") if info.get(key))
+
+
 def search_text(asset):
     """What a search box matches: the name, products, campaign and the description of what it shows."""
     tags = asset.tags or {}
     summary = (asset.media or {}).get("visual_summary")
     parts = [asset.original_name.replace("_", " ").replace("-", " "), " ".join(products(asset)),
-             str(tags.get("campaign", ""))]
+             str(tags.get("campaign", "")), drive_search_text(asset)]
     if isinstance(summary, dict):
         parts += [str(summary.get("summary", ""))[:600], " ".join(map(str, summary.get("visible_text", [])[:5]))]
     return " ".join(parts).casefold()

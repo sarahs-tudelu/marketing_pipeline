@@ -76,6 +76,19 @@ def test_two_private_campaigns_queue_at_their_interval_while_posts_wait(
         assert previous.simulation_only and previous.status == status and previous.scheduled_at == delivery_time
 
 
+def test_campaign_keeps_producing_without_repeating_stopped_platform(db, settings, campaign, monkeypatch):
+    campaign.enabled = True
+    campaign.brief = campaign.brief | {"platforms": ["instagram", "facebook"]}
+    stopped = job(db, campaign, state="failed")
+    monkeypatch.setitem(ADAPTERS, "facebook", lambda *args: SimpleNamespace(dry=False))
+    settings.ai_mode, settings.live_platforms, settings.runway_api_key = "live", "facebook", SecretStr("test")
+    replenish_campaigns(db, settings)
+    assert campaign.sequence == 1 and not campaign.error
+    jobs = db.scalars(select(MediaJob).where(MediaJob.campaign_id == campaign.id)).all()
+    assert [(j.platform, j.state) for j in jobs if j.id != stopped.id] == [("facebook", "queued")]
+    assert stopped.state == "failed"
+
+
 def test_simulated_post_only_releases_private_campaign_after_media_completes(db, campaign, post):
     post.simulation_only, post.status = True, "held"
     original = job(db, campaign, post=post)

@@ -325,6 +325,138 @@ def from_drive(db, settings, data, name):
     return ingest(db, settings, data, name, rights="public", tags=tags)
 
 
+@pytest.mark.parametrize("restricted", [True, False])
+def test_resume_searches_beyond_eight_graphics_within_original_scope(db, settings, monkeypatch, restricted):
+    from social.media_studio import resume_job
+
+    settings.ai_mode = "live"
+    bad = [from_drive(db, settings, jpeg((i, 60, 70), (50, 50)), f"entry-{i}.jpg") for i in range(8)]
+    good = from_drive(db, settings, jpeg((1, 2, 3)), "DSC0099.jpg")
+    good.tags = good.tags | {"product_family": "Canopy"}
+    good.media = good.media | {"drive_search": {"folder_path": "Completed canopies/Hotel"}}
+    private = from_drive(db, settings, jpeg((4, 5, 6)), "canopy.jpg")
+    private.rights = "not_public"
+    upload = ingest(db, settings, jpeg((7, 8, 9)), "canopy.jpg", rights="public")
+    brief = brief_for(db, settings, operation="real", real_format="photo", prompt="Installed entrance canopy",
+                      product="canopies", platforms=["pinterest"], reference_ids=[a.id for a in bad] if restricted else [])
+    campaign = MediaCampaign(name=brief.campaign, brief=brief.model_dump())
+    db.add(campaign)
+    db.flush()
+    [job] = queue_jobs(db, settings, brief, campaign=campaign)
+    # A failed job from before library scope was recorded.
+    job.brief = {k: v for k, v in job.brief.items() if k != "real_library_scope"} | {"reference_ids": [a.id for a in bad]}
+    job.state = "failed"
+    resume_job(job)
+    db.commit()
+    groups = []
+
+    def choose(db, settings, request, candidates, *args, **kwargs):
+        ids = [a.id for a in candidates]
+        groups.append(ids)
+        assert private.id not in ids and upload.id not in ids
+        items = [EditItem(asset_id=good.id)] if good.id in ids else []
+        return RealEditPlan(layout="single", items=items, problem="" if items else "Promotional graphics.")
+
+    monkeypatch.setattr("social.real_edit.ask_planner", choose)
+    if restricted:
+        with pytest.raises(ValueError, match="Reviewed 8 eligible files"):
+            plan_edit(db, settings, job)
+        assert groups == [[a.id for a in bad]]
+    else:
+        plan_edit(db, settings, job)
+        assert groups == [[a.id for a in bad], [good.id]]
+        assert job.source_asset_ids == job.brief["reference_ids"] == [good.id]
+
+
+@pytest.mark.parametrize("post_format", ["photo", "video"])
+def test_mixed_destinations_generate_from_prompt_after_real_editor_rejects_sources(db, settings, monkeypatch, house_logo, post_format):
+    from social.real_edit import NoMatchingMedia
+
+    graphic = from_drive(db, settings, jpeg((70, 80, 90)), "flyer.jpg")
+    brief = brief_for(db, settings, operation="mixed", real_format=post_format, rights="not_public",
+                      prompt="A hotel entrance canopy", platforms=["pinterest", "instagram", "facebook"])
+    campaign = MediaCampaign(name="Hotel entrance", brief=brief.model_dump())
+    db.add(campaign)
+    db.flush()
+    pin, instagram, facebook = queue_jobs(db, settings, brief, campaign=campaign)
+    db.commit()
+
+    def reject(*args):
+        raise NoMatchingMedia("The only candidate is a flyer.", [graphic.id])
+
+    monkeypatch.setattr("social.real_edit.plan_edit", reject)
+    for _ in range(8):
+        process_jobs(db, settings)
+        if instagram.post_id and facebook.post_id:
+            break
+    assert pin.state == "failed" and not pin.post_id
+    assert instagram.state == facebook.state == "complete"
+    assert instagram.output_asset_id == facebook.output_asset_id
+    origin = instagram if instagram.task_history else facebook
+    assert origin.brief["operation"] == ("image" if post_format == "photo" else "video")
+    assert origin.brief["rejected_original_ids"] == [graphic.id]
+    assert origin.brief["reference_ids"] == [] and origin.brief["prompt"] == brief.prompt
+    assert requires_ai_review(db.get(Asset, origin.output_asset_id))
+    assert db.get(Post, instagram.post_id).simulation_only and db.get(Post, facebook.post_id).simulation_only
+
+
+def test_editor_skips_a_missing_original_in_the_same_group(db, settings, monkeypatch):
+    from social.storage import storage
+
+    missing = from_drive(db, settings, jpeg((10, 20, 30)), "missing.jpg")
+    good = from_drive(db, settings, jpeg((40, 50, 60)), "hotel-canopy.jpg")
+    settings.ai_mode = "live"
+    [job] = queue_jobs(db, settings, brief_for(db, settings, operation="real", platforms=["pinterest"],
+                                               reference_ids=[missing.id, good.id], real_format="photo"))
+    db.commit()
+    storage(settings).delete(missing.storage_key)
+
+    def choose(self, endpoint, payload):
+        candidates = [json.loads(p["text"])["asset_id"] for p in payload["input"][0]["content"][1:]
+                      if p["type"] == "input_text"]
+        assert candidates == [good.id]
+        plan = RealEditPlan(layout="single", items=[EditItem(asset_id=missing.id), EditItem(asset_id=good.id)])
+        return {"status": "completed", "output": [{"type": "message", "content": [
+            {"type": "output_text", "text": plan.model_dump_json()}]}]}
+
+    monkeypatch.setattr(OpenAI, "call", choose)
+    assert plan_edit(db, settings, job).items[0].asset_id == good.id
+    assert job.source_asset_ids == [good.id]
+
+
+def test_resuming_an_exhausted_search_inspects_previously_unseen_files_first(db, settings, monkeypatch):
+    from social.media_studio import resume_job
+    from social.real_edit import MAX_SEARCH_BATCHES
+    from social.real_sources import PHOTO_CANDIDATES
+
+    limit = MAX_SEARCH_BATCHES * PHOTO_CANDIDATES
+    photos = [from_drive(db, settings, jpeg((i, 80, 90), (50, 50)), f"DSC_{i}.jpg") for i in range(limit + 1)]
+    brief = brief_for(db, settings, operation="real", real_format="photo", platforms=["pinterest"])
+    settings.ai_mode = "live"
+    [job] = queue_jobs(db, settings, brief)
+    db.commit()
+    seen = set()
+
+    def reject(db, settings, request, candidates, *args, **kwargs):
+        assert not seen.intersection(a.id for a in candidates)
+        seen.update(a.id for a in candidates)
+        return RealEditPlan(layout="single", items=[], problem="These are graphics.")
+
+    monkeypatch.setattr("social.real_edit.ask_planner", reject)
+    process_jobs(db, settings)
+    assert job.state == "failed" and len(seen) == limit and set(job.brief["reviewed_original_ids"]) == seen
+    [unseen] = {a.id for a in photos} - seen
+
+    def accept(db, settings, request, candidates, *args, **kwargs):
+        assert candidates[0].id == unseen
+        return RealEditPlan(layout="single", items=[EditItem(asset_id=unseen)])
+
+    monkeypatch.setattr("social.real_edit.ask_planner", accept)
+    resume_job(job)
+    db.commit()
+    assert plan_edit(db, settings, job).items[0].asset_id == unseen
+
+
 def test_pinterest_gets_a_real_drive_project_in_every_batch_of_a_varied_campaign(db, settings, house_logo):
     photo = from_drive(db, settings, jpeg((150, 110, 80), (1000, 1500)), "terrace.jpg")
     clip = from_drive(db, settings, footage(sound=False), "installation.mp4")
@@ -372,13 +504,22 @@ def test_a_real_pinterest_post_uses_drive_media_and_passes_the_drive_check(db, s
     assert checks["drive_media"].passed and checks["media"].passed and checks["video_finish"].passed
 
 
-def test_a_campaign_with_pinterest_needs_drive_media_before_it_is_saved(db, settings):
+def test_missing_drive_media_only_holds_the_pinterest_destination(db, settings):
     upload = ingest(db, settings, jpeg((80, 110, 150)), "phone-upload.jpg", rights="public")
     db.commit()
     brief = brief_for(db, settings, operation="mixed", kind="mixed", platforms=["instagram", "pinterest"],
                       reference_ids=[upload.id])
-    with pytest.raises(ValueError, match="only posts real photos and videos imported from Google Drive"):
-        check_real_media(db, settings, brief, validate_sources(db, brief))
+    check_real_media(db, settings, brief, validate_sources(db, brief))
+    campaign = MediaCampaign(name=brief.campaign, brief=brief.model_dump())
+    db.add(campaign)
+    db.flush()
+    instagram, pin = queue_jobs(db, settings, brief, campaign=campaign)
+    db.commit()
+    process_jobs(db, settings)
+    assert instagram.state == "complete" and instagram.post_id
+    assert pin.state == "failed" and "Google Drive" in pin.error
+    with pytest.raises(ValueError, match="Google Drive"):
+        check_real_media(db, settings, brief.model_copy(update={"platforms": ["pinterest"]}), [upload])
     # AI formats still can't select Pinterest.
     with pytest.raises(ValueError, match="Choose Real project or a varied campaign"):
         brief_for(db, settings, operation="video", platforms=["pinterest"])

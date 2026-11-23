@@ -10,14 +10,16 @@ the files that fit, best first, or says what the library lacks. Offline runs mat
 import json
 import re
 import time
-from itertools import groupby
+from itertools import groupby, islice
 
 import httpx
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from .library import drive_search_text
 from .models import Asset, Control
-from .real_edit import _cleared, _product_rank, _strict, real_asset
+from .real_edit import _strict
+from .real_sources import _cleared, _product_rank, real_asset
 
 LIBRARY_LIMIT = 2000  # Newest real files considered.
 SEARCH_LIMIT = 150  # Descriptions the ranking model reads; up to half are videos.
@@ -25,11 +27,13 @@ DESCRIBE_NOW = 6  # Undescribed files a search describes before ranking, newest 
 DESCRIBE_NOW_SECONDS = 30  # A search starts no new description after this long; the worker does the rest.
 DESCRIBE_PER_TICK = 4  # Files the worker describes per interval.
 MATCH_LIMIT = 24
+VISUAL_INSPECTION = "Check the original pixels"
 
 RANK_INSTRUCTIONS = (
     "Find the company's real photos and videos that show what this social media post idea asks for. Each "
     "record is one file in the company's library: its description was written from frames of the file and "
-    "can miss things, so also use its name, product and visible text. Return matches best first: only files "
+    "can miss things, so also use its name, Drive folder path and description, product and visible text. "
+    "Words printed on promotional graphics do not establish that the file is a project photograph. Return matches best first: only files "
     "whose content fits the idea (for 'installation process of partition walls': crews installing partition "
     "walls, panels, tracks and the finished wall), exact fits before near fits, at most 24, each with why: "
     "one short phrase on what it shows that fits. When the idea names an action, such as walls opening and "
@@ -42,6 +46,7 @@ RANK_INSTRUCTIONS = (
     "Return only JSON matching the schema."
 )
 _WORD = re.compile(r"[a-z0-9]+")
+_GRAPHIC = re.compile(r"\b(?:flyers?|brochures?|promotional graphics?|infographics?|social media templates?)\b", re.I)
 _STOP = {
     "the", "and", "for", "with", "our", "your", "from", "that", "this", "into", "show", "showing", "post",
     "video", "videos", "photo", "photos", "image", "images", "reel", "clip", "clips", "make", "create", "about",
@@ -64,19 +69,21 @@ def _company_files(db):
     # filtered out after loading rather than counted against a limit.
     return db.scalars(
         select(Asset).where(Asset.source == "company", Asset.removed_at.is_(None)).order_by(Asset.created_at.desc())
-    ).all()
+        .execution_options(yield_per=200)
+    )
 
 
 def library_media(db, *, product="company", live=False, public=True, drive_only=False, allowed=None, limit=LIBRARY_LIMIT):
     """Real company photos and videos a post may show, newest first."""
-    return [
+    eligible = (
         a
         for a in _company_files(db)
         if real_asset(a, live=live, public=public)
         and (not drive_only or (a.tags or {}).get("google_drive_file_id"))
         and (allowed is None or allowed(a))
         and _product_rank(a, product) is not None
-    ][:limit]
+    )
+    return list(islice(eligible, limit))
 
 
 def video_gaps(db, *, product="company", live=False, public=True, drive_only=False, allowed=None):
@@ -136,7 +143,7 @@ def describe_library(factory, settings):
         control = db.get(Control, 1)
         if control and control.killed:
             return
-        describe(db, settings, library_media(db, public=False), DESCRIBE_PER_TICK)
+        describe(db, settings, library_media(db, public=False, limit=None), DESCRIBE_PER_TICK)
         from .usage import flush
 
         flush(db)
@@ -152,8 +159,10 @@ def record(asset, settings):
         "asset_id": asset.id,
         "kind": "video" if video else "photo",
         "name": asset.original_name,
+        "drive": drive_search_text(asset),
         "seconds": round(asset.media.get("duration") or 0) if video else None,
         "product": tags.get("product_family") or tags.get("product") or "",
+        "asset_type": tags.get("asset_type") or "",
         "description": "" if summary.get("simulated") else summary.get("summary", "")[:700],
         "visible_text": summary.get("visible_text", [])[:5],
     }
@@ -164,17 +173,21 @@ def _words(text):
     return {w[:5] for w in _WORD.findall(text.casefold()) if len(w) >= 4 and w not in _STOP}
 
 
-def _overlap(idea, item):
-    text = " ".join([item["name"].replace("_", " ").replace("-", " "), str(item["product"]), item["description"],
-                     " ".join(item["visible_text"])])
-    return len(_words(idea) & _words(text))
+def _overlap(words, item):
+    # Subject evidence carries more weight than words printed on an advertisement.
+    subject = " ".join([item["name"], str(item["product"]), item.get("drive", ""), item["description"]])
+    score = 3 * len(words & _words(subject)) + len(words & _words(" ".join(item["visible_text"])))
+    if item.get("asset_type") in ("diagram", "product_render") or _GRAPHIC.search(subject.replace("_", " ").replace("-", " ")):
+        return score // 4 if score else -1
+    return score + int(bool(score) and item.get("asset_type") == "verified_installation")
 
 
 def campaign_scores(settings, idea, media):
     """Rank existing descriptions without a provider call or transaction commit in the scheduler."""
     # Descriptions based on the actual pixels can inform a fixture run too.
     observed = settings.model_copy(update={"ai_mode": "live"})
-    return {a.id: _overlap(idea, record(a, observed)) for a in media}
+    words = _words(idea)
+    return {a.id: _overlap(words, record(a, observed)) for a in media}
 
 
 def campaign_references(media, scores, turn):
@@ -203,7 +216,8 @@ def campaign_visuals(media, scores, turn):
 
 def word_rank(idea, records, want="any"):
     """Offline ranking: files sharing the idea's words, most shared first (videos first for a video)."""
-    scored = [(score, index, r) for index, r in enumerate(records) if (score := _overlap(idea, r))]
+    words = _words(idea)
+    scored = [(score, index, r) for index, r in enumerate(records) if (score := _overlap(words, r)) > 0]
     scored.sort(key=lambda s: (-s[0], want == "video" and s[2]["kind"] != "video", s[1]))
     matches = [Match(asset_id=r["asset_id"], why="Its name or description mentions the idea") for *_, r in scored]
     problem = "" if matches else "No file's name, tags or description mentions what the idea asks for."
@@ -250,7 +264,8 @@ def shortlist(idea, records):
     the places kept for videos so a library full of photos can't push its footage out."""
     if len(records) <= SEARCH_LIMIT:
         return records
-    ranked = sorted(records, key=lambda r: -_overlap(idea, r))
+    words = _words(idea)
+    ranked = sorted(records, key=lambda r: -_overlap(words, r))
     videos = [r for r in ranked if r["kind"] == "video"][: SEARCH_LIMIT // 2]
     photos = [r for r in ranked if r["kind"] != "video"][: SEARCH_LIMIT - len(videos)]
     kept = {r["asset_id"] for r in videos + photos}
@@ -258,16 +273,18 @@ def shortlist(idea, records):
 
 
 def search(
-    db, settings, idea, *, product="company", live=False, public=True, drive_only=False, allowed=None, want="any"
+    db, settings, idea, *, product="company", live=False, public=True, drive_only=False, allowed=None, want="any",
+    inspect_originals=False,
 ):
     """(matches, problem): the library files that fit the idea, best first, as (asset, why) pairs.
 
     `want` is "video", "photo" or "any": the post a video idea needs footage, so its videos are described
     and ranked first.
     """
-    media = library_media(db, product=product, live=live, public=public, drive_only=drive_only, allowed=allowed)
+    media = library_media(db, product=product, live=live, public=public, drive_only=drive_only, allowed=allowed, limit=None)
     if settings.ai_mode == "live":
-        first = sorted(media, key=lambda a: want == "video" and not a.media["mime"].startswith("video/"))
+        scores = campaign_scores(settings, idea, media)
+        first = sorted(media, key=lambda a: (-scores[a.id], want == "video" and not a.media["mime"].startswith("video/")))
         # Large videos take a while to read, so a search describes what it can in a short time.
         describe(db, settings, first, DESCRIBE_NOW, DESCRIBE_NOW_SECONDS)
     records = shortlist(idea, [record(a, settings) for a in media])
@@ -283,5 +300,11 @@ def search(
         if match.asset_id in by_id and match.asset_id not in seen:
             seen.add(match.asset_id)
             matches.append((by_id[match.asset_id], match.why.strip()[:200]))
+    matches = matches[:MATCH_LIMIT]
+    if inspect_originals and settings.ai_mode == "live":
+        # A camera filename and a missing description cannot rule a photo out. Leave room for the
+        # visual editor to inspect originals even when the text ranker found no matches.
+        extras = (a for a in first if a.id not in seen and (want != "photo" or a.media["mime"].startswith("image/")))
+        matches.extend((a, VISUAL_INSPECTION) for a in islice(extras, 30 - len(matches)))
     problem = "" if matches else (result.problem.strip()[:400] or "Nothing in the library fits this idea.")
-    return matches[:MATCH_LIMIT], problem
+    return matches, problem

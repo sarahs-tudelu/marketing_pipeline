@@ -24,7 +24,7 @@ from .storage import ingest
 API = "https://www.googleapis.com/drive/v3/files"
 SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 FOLDER_MIME = "application/vnd.google-apps.folder"
-FILE_FIELDS = "id,name,mimeType,size,md5Checksum,modifiedTime,version,parents,capabilities(canDownload)"
+FILE_FIELDS = "id,name,description,mimeType,size,md5Checksum,modifiedTime,version,parents,capabilities(canDownload)"
 ID = re.compile(r"[A-Za-z0-9_-]{1,200}\Z")
 
 
@@ -343,7 +343,7 @@ def import_again(db, file_id):
     db.commit()
 
 
-def import_file(db, settings, source, client, file, parent, drive_id):
+def import_file(db, settings, source, client, file, parent, drive_id, folder_path=""):
     record = db.get(DriveImport, file["id"])
     if record and record.status == "deleted":
         return  # Deleted from the library; the Drive panel's Import again brings it back.
@@ -370,8 +370,20 @@ def import_file(db, settings, source, client, file, parent, drive_id):
             sort_keys=True,
         ).encode()
     ).hexdigest()
+    previous = db.get(Asset, record.asset_id) if record and record.asset_id else None
+    search_info = {
+        "folder_path": folder_path,
+        "name": file["name"][:255],
+        "description": (file.get("description") or "")[:700],
+    }
     if record and record.fingerprint == fingerprint:
-        if record.status == "imported" or (record.retry_at and record.retry_at > now()):
+        if record.status == "imported" and previous:
+            # Backfill older imports and follow Drive renames without downloading unchanged bytes.
+            if previous.media.get("drive_search") != search_info:
+                previous.media = previous.media | {"drive_search": search_info}
+            record.name = import_name(file)[:255]
+            return
+        if record.retry_at and record.retry_at > now():
             return
     data = client.download(file, settings.max_upload_bytes)
     # Reuse this file's asset when only Drive's version/modified timestamp changed.
@@ -380,7 +392,6 @@ def import_file(db, settings, source, client, file, parent, drive_id):
     arguments = metadata.model_dump() | {"tags": tags}
     arguments["generator"] = arguments["generator"] or None
     arguments["prompt"] = arguments["prompt"] or None
-    previous = db.get(Asset, record.asset_id) if record and record.asset_id else None
     same = (
         previous
         and previous.checksum == checksum
@@ -390,6 +401,7 @@ def import_file(db, settings, source, client, file, parent, drive_id):
     if len(name) > 255:
         raise DriveError("Rename this file to 255 characters or fewer before importing")
     asset = previous if same else ingest(db, settings, data, name, **arguments)
+    asset.media = asset.media | {"drive_search": search_info}
     if same and previous.removed_at is not None:
         previous.removed_at, previous.removed_by = None, ""  # Imported again after it was deleted.
     if record is None:
@@ -418,6 +430,9 @@ def poll(db, settings, client_factory=DriveClient):
     try:
         with client_factory(settings) as client:
             state = deepcopy(source.scan_state)
+            if state and "paths" not in state and (state["pending"] or state["folders"]):
+                # An older in-flight scan stored only folder IDs. Relist once to recover their names.
+                state = {}
             if not state:
                 folder = client.folder(source.folder_id)
                 source.folder_name = folder["name"][:255]
@@ -428,6 +443,7 @@ def poll(db, settings, client_factory=DriveClient):
                     "token": None,
                     "drive_id": folder.get("driveId", ""),
                 }
+            paths = state.setdefault("paths", {source.folder_id: source.folder_name})
             if not state["pending"] and state["folders"]:
                 parent = state["folders"][0]
                 page = client.listing(parent, state["token"], state["drive_id"])
@@ -441,15 +457,17 @@ def poll(db, settings, client_factory=DriveClient):
                 if not state["pending"]:
                     break
                 file = state["pending"][0]
+                path = paths.get(state["parent"], source.folder_name)
                 if file.get("mimeType") == FOLDER_MIME:
                     if source.recursive and file["id"] not in state["seen"]:
                         state["folders"].append(file["id"])
                         state["seen"].append(file["id"])
+                        paths[file["id"]] = (path + "/" + file.get("name", ""))[-1000:]
                 elif file.get("mimeType", "").startswith(("image/", "video/", "audio/")):
                     try:
                         with db.begin_nested():
                             import_file(
-                                db, settings, source, client, file, state["parent"], state["drive_id"]
+                                db, settings, source, client, file, state["parent"], state["drive_id"], path
                             )
                     except DriveError as exc:
                         failed_file(db, source, file, str(exc))

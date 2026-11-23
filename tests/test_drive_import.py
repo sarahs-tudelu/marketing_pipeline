@@ -115,6 +115,29 @@ def test_changed_bytes_create_new_asset_and_keep_old_version(db, settings):
     assert len(db.scalars(select(Asset)).all()) == 2
 
 
+def test_drive_rescan_enriches_existing_original_without_downloading_it(db, settings):
+    from social.library import search_text
+    from social.media_search import search
+
+    configure(db, rights="public")
+    original = file_info("DSC0001")
+    drive = FakeDrive([original])
+    poll(db, settings, drive)
+    asset = db.get(Asset, db.get(DriveImport, "DSC0001").asset_id)
+    asset.tags = {"google_drive_file_id": "DSC0001", "product": "company", "asset_type": "photo"}
+    drive.files = [{"id": "sub", "name": "Completed Canopies", "mimeType": "application/vnd.google-apps.folder"}]
+    drive.pages["sub", None] = {"files": [original | {"description": "Hotel entrance installation"}]}
+    due(db)
+    poll(db, settings, drive)
+    poll(db, settings, drive)
+    assert db.get(DriveImport, "DSC0001").asset_id == asset.id
+    assert drive.downloads == ["DSC0001"]
+    assert asset.tags["asset_type"] == "photo"
+    assert "completed canopies" in search_text(asset) and "hotel entrance" in search_text(asset)
+    matches, _ = search(db, settings, "installed entrance canopy", product="canopies", drive_only=True)
+    assert [a.id for a, _ in matches] == [asset.id]
+
+
 def test_missing_drive_checksum_uses_content_and_metadata_to_avoid_duplicates(db, settings):
     configure(db, tags='{"product": "partitions"}')
     first = file_info("a", version="1", modifiedTime="2026-11-01T00:00:00Z")

@@ -1,7 +1,8 @@
 """Route a held shot using the visual review of its delivered pixels and its saved inputs."""
 
 from .models import Asset, MediaJob
-from .real_edit import real_asset, video_frames
+from .real_edit import video_frames
+from .real_sources import real_asset
 from .reference_grounding import asset_record, read_reference
 from .video_segments import current_segment
 
@@ -29,13 +30,16 @@ def library_records(db, settings, assets):
         if not brief.get("prompt") or not brief.get("rights"):
             # Older generation records can still be reviewed without offering a library substitution.
             continue
+        scope = set(brief.get("repair_library_scope", (brief.get("campaign_reference_ids") or []) +
+                             (brief.get("original_candidates") or [])))
+        rejected = set(brief.get("rejected_original_ids", []))
         media = library_media(
             db,
             product=brief.get("product", "company"),
             live=brief["execution_mode"] == "live",
             public=brief["rights"] != "not_public",
-            allowed=brief.get("repair_library_scope", (brief.get("campaign_reference_ids") or []) +
-                              (brief.get("original_candidates") or [])) or None,
+            allowed=lambda a: (not scope or a.id in scope) and a.id not in rejected,
+            limit=None,
         )
         scores = campaign_scores(settings, brief["prompt"], media)
         ranked = sorted(media, key=lambda a: -scores[a.id])

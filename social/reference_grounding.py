@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from .db import now
 from .facts import Facts
+from .library import drive_search_text
 from .models import Asset, FactSheet
 from .product_rules import (
     FRAMING_GUIDANCE,
@@ -272,8 +273,9 @@ def candidates(db, settings, job, profile):
         assets = [db.get(Asset, i) for i in selected if i not in known] + assets
     aliases = [normalize(n) for n in [profile.product_id, profile.name, *profile.aliases]]
     eligible = []
+    rejected = set(job.brief.get("rejected_original_ids", []))
     for asset in assets:
-        if not asset or asset.removed_at or asset.tags.get("rendition") or asset.tags.get("brand_logo"):
+        if not asset or asset.id in rejected or asset.removed_at or asset.tags.get("rendition") or asset.tags.get("brand_logo"):
             continue
         if asset.media["mime"].startswith("video/") and asset.id in (pool or selected):
             if source_cleared(asset, private):
@@ -286,6 +288,8 @@ def candidates(db, settings, job, profile):
             json.dumps(a.tags)
             + " "
             + a.original_name
+            + " "
+            + drive_search_text(a)
             + " "
             + str(a.media.get("visual_summary", {}).get("summary", ""))
         )
@@ -607,6 +611,7 @@ def request_intent(job):
         # for a rainy pergola), so later steps follow it rather than re-reading the raw idea.
         "approved_shot": approved_shot(job),
         "admin_idea": job.brief["prompt"],
+        **({"media_intent": "AI design inspiration from a varied campaign"} if job.brief.get("generated_after_no_match") else {}),
         "operator_edits": edits,
         # Older jobs did not save the pre-edit text. Do not guess away an explicit instruction.
         "legacy_operator_prompt": retry.get("operator_prompt", "") if not retry_edits else "",

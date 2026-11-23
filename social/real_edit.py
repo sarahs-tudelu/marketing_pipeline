@@ -16,28 +16,29 @@ import math
 import re
 import wave
 from fractions import Fraction
+from itertools import islice
 from typing import Literal
 
 import av
 import httpx
 import numpy as np
+from botocore.exceptions import ClientError
 from PIL import Image, ImageFilter, ImageOps
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
 
 from .db import now
 from .idea_plan import END_CARD_SECONDS
-from .models import Account, Asset, MediaJob
+from .library import drive_search_text
+from .models import Account, Asset
 from .provenance import requires_ai_review
+from .real_sources import candidate_batches, job_batches, no_real_media, real_asset, real_sound, recent_uses
 from .renditions import audio_samples, logo_card, media_input, video_sequence
 from .rights import combined_rights
-from .storage import ingest, source_files, storage
-from .video_rules import MUSIC_TAG, NO_LOGO, SILENCE_RMS, default_logo, seed_for
+from .storage import ingest, load_assets, source_files, storage
+from .video_rules import NO_LOGO, SILENCE_RMS, default_logo, seed_for
 
 VERSION = "real-edit-2026-11-19-v1"
-PHOTO_CANDIDATES = 8  # Photos the editor chooses from for a photo post.
-VIDEO_CANDIDATES = 6  # Videos (and up to four photos) it chooses from for a video.
-VIDEO_PHOTOS = 4
+MAX_SEARCH_BATCHES = 4
 FRAMES_PER_VIDEO = 6  # At least; longer videos get a frame about every 5 seconds, up to MAX_FRAMES.
 MAX_FRAMES = 20
 MAX_ITEMS = 8
@@ -91,6 +92,14 @@ class EditItem(BaseModel):
         self.start, self.end = max(0.0, self.start), max(0.0, self.end)
         self.note = " ".join(self.note.split())[:200]
         return self
+
+
+class NoMatchingMedia(ValueError):
+    """No eligible original fitted the requested edit."""
+
+    def __init__(self, reason, reviewed=()):
+        super().__init__(reason)
+        self.reviewed = list(reviewed)
 
 
 class AudioCue(BaseModel):
@@ -159,117 +168,6 @@ PLANNER_INSTRUCTIONS = (
 )
 
 
-def real_asset(asset, *, live=False, public=True):
-    """Company photos and videos a real-project post may show: real, cleared, not a logo, track or copy."""
-    tags = asset.tags or {}
-    return bool(
-        asset.media.get("mime", "").startswith(("image/", "video/"))
-        and _cleared(asset, live=live, public=public)
-        and not tags.get("brand_logo")
-        and not tags.get("rendition")
-        and not tags.get("edit_interval")
-    )
-
-
-def real_sound(asset, *, live=False, public=True):
-    """Recorded company audio that can be placed in a real-project video as it is."""
-    return bool(
-        asset.media.get("mime", "").startswith("audio/")
-        and _cleared(asset, live=live, public=public)
-        and not (asset.tags or {}).get(MUSIC_TAG)
-    )
-
-
-def _cleared(asset, *, live, public):
-    tags = asset.tags or {}
-    return (
-        not requires_ai_review(asset)
-        and bool((asset.rights or "").strip())
-        and not (public and asset.rights == "not_public")
-        and not (asset.rights_expire_at and asset.rights_expire_at <= now())
-        and not (live and asset.demo_only)
-        and not (tags.get("real_customer_content") and not (asset.customer_permission and asset.permission_reference))
-    )
-
-
-def _product_rank(asset, product):
-    """0 for the campaign's product (or any, for company-wide), 1 untagged, None for another product."""
-    if product == "company":
-        return 0
-    tags = asset.tags or {}
-    family = tags.get("product_family") or tags.get("product")
-    names = family if isinstance(family, list) else [family] if family else []
-    if not names:
-        return 1
-    return 0 if product in names else None
-
-
-def recent_uses(db):
-    """Asset ID → how many real-project jobs ago it was last shown (0 is the newest)."""
-    uses = {}
-    jobs = db.scalars(select(MediaJob).order_by(MediaJob.created_at.desc()).limit(80)).all()
-    for rank, job in enumerate(j for j in jobs if (j.brief or {}).get("operation") == "real"):
-        for item in (job.brief.get("real_edit") or {}).get("items", []):
-            uses.setdefault(item["asset_id"], rank)
-    return uses
-
-
-def real_choice(db, brief, sources, profile, platform, turn, *, live=False, drive_only=False, keep_order=False,
-                library=None, scores=None):
-    """The real-project post for a platform: (format, media IDs, audio IDs), or None when nothing fits.
-
-    The real photos and videos picked for the brief are used; with none picked, the library's. Media not
-    shown recently comes first. Formats alternate between video and photo by turn; TikTok gets video.
-    `drive_only` (Pinterest) keeps only media imported from Google Drive, audio included. `keep_order` keeps
-    the brief's order of the media it picked; a brief's `real_format` is used when the platform allows it.
-    """
-    public = brief.rights != "not_public"
-
-    def fits(asset, check):
-        return check(asset, live=live, public=public) and (
-            not drive_only or bool((asset.tags or {}).get("google_drive_file_id"))
-        )
-
-    media = [a for a in sources if a.id in brief.reference_ids and fits(a, real_asset)]
-    picked = bool(media)
-    if not media and library is not None and not brief.reference_ids:
-        media = [a for a in library if fits(a, real_asset)]
-    elif not media and not brief.reference_ids:
-        # Every original: platform copies of posts are company files too, and would crowd them out of a limit.
-        media = [
-            a
-            for a in db.scalars(
-                select(Asset)
-                .where(Asset.source == "company", Asset.removed_at.is_(None))
-                .order_by(Asset.created_at.desc())
-            ).all()
-            if fits(a, real_asset) and _product_rank(a, brief.product) is not None
-        ]
-    uses = recent_uses(db)
-    if not (picked and keep_order):
-        media.sort(key=lambda a: (-(scores or {}).get(a.id, 0), _product_rank(a, brief.product) or 0,
-                                  a.id in uses, -uses.get(a.id, 0)))
-    photos = [a for a in media if a.media["mime"].startswith("image/")]
-    videos = [a for a in media if a.media["mime"].startswith("video/")]
-    photo_posts = bool(photos and profile.image_formats)
-    formats = (["video"] if videos or (photos and (not photo_posts or brief.real_format == "video")) else [])
-    formats += ["photo"] if photo_posts else []
-    if not formats:
-        return None
-    chosen = brief.real_format if brief.real_format in formats else formats[turn % len(formats)]
-    if chosen == "photo":
-        ids = [a.id for a in photos[:PHOTO_CANDIDATES]]
-    else:
-        ids = [a.id for a in videos[:VIDEO_CANDIDATES]]
-        ids += [a.id for a in photos[: (VIDEO_CANDIDATES if videos else PHOTO_CANDIDATES)]]
-        if scores:
-            ids.sort(key=lambda asset_id: -scores.get(asset_id, 0))
-    sounds = []
-    if chosen == "video":
-        sounds = [a.id for a in sources if a.id in brief.audio_reference_ids and fits(a, real_sound)]
-    return chosen, ids, sounds[:3]
-
-
 # Ideas about a process (an installation, a build, a walk-through) are shown as video.
 _SEQUENCE = re.compile(
     r"\b(process|steps?|install\w*|progress|timeline|time-?lapse|walk-?through|tour|before and after|how)\b", re.I
@@ -281,6 +179,22 @@ _FOOTAGE = re.compile(r"\b(clips?|footage)\b", re.I)
 def _span(clip_seconds):
     low, high = (f"{s:g}" for s in clip_seconds)
     return low if low == high else f"{low}–{high}"
+
+
+def visual_plan(db, settings, request, batches, sounds, video, footage, size, **options):
+    reviewed = []
+    last_error = None
+    for group in islice(batches, MAX_SEARCH_BATCHES):
+        reviewed.extend(a.id for a in group)
+        try:
+            plan = ask_planner(db, settings, request, group, sounds, video, footage, size, **options)
+            return fit_plan(plan, group, sounds, video, footage, portrait=size[1] > size[0],
+                            clip_seconds=options.get("clip_seconds"))
+        except NoMatchingMedia as exc:
+            last_error = exc
+    if last_error:
+        raise NoMatchingMedia(f"Reviewed {len(reviewed)} eligible files. {last_error}", reviewed) from last_error
+    raise NoMatchingMedia(no_real_media(request["platform"]))
 
 
 def plan_real_idea(
@@ -295,7 +209,7 @@ def plan_real_idea(
     planned again; `revision` then holds the admin's change request and the edit it changes.
     """
     from .config import REAL_MEDIA_ONLY, profiles
-    from .media_search import search, video_gaps
+    from .media_search import VISUAL_INSPECTION, search, video_gaps
 
     signals = signals or {}
     public = rights != "not_public"
@@ -330,20 +244,17 @@ def plan_real_idea(
     if pictures:
         found = [(a, "Chosen on the plan page" if replanning else "Added with your idea") for a in pictures]
     else:
-        found, problem = search(db, settings, idea, want=want, **library)
+        found, problem = search(db, settings, idea, want=want, inspect_originals=True, **library)
         if not found:
             raise ValueError(
                 f"No real photos or videos in the library show this idea. {problem} Upload some (new files are "
                 "searched automatically), or choose Image or Video to make AI inspiration instead."
             )
-        notes.append(
-            f"Found {len(found)} matching file{'s' if len(found) != 1 else ''} in the library; the best are "
-            "below, and you can add or remove any."
-        )
     videos = [a for a, _ in found if a.media["mime"].startswith("video/")]
     photos = [a for a, _ in found if a.media["mime"].startswith("image/")]
     photo_ok = bool(photos) and all(profiles(settings)[p].image_formats for p in platforms)
-    chosen = want if want != "any" else "video" if videos else "photo"
+    ranked = [a for a, why in found if why != VISUAL_INSPECTION] or [found[0][0]]
+    chosen = want if want != "any" else "video" if any(a.media["mime"].startswith("video/") for a in ranked) else "photo"
     if chosen == "photo" and not photo_ok:
         chosen = "video"
         notes.append("A platform you chose takes only video, so the photos become a video.")
@@ -356,33 +267,31 @@ def plan_real_idea(
     # the idea are all used.
     footage_only = video and bool(videos) and not pictures and bool(_FOOTAGE.search(idea))
     if video:
-        candidates = videos[:VIDEO_CANDIDATES] + (
-            [] if footage_only else photos[: (VIDEO_PHOTOS if videos else PHOTO_CANDIDATES)]
-        )
         longest = min(profiles(settings)[p].max_duration for p in platforms)
         duration = int(max(END_CARD_SECONDS + 2, min(signals.get("seconds") or DEFAULT_SECONDS, longest)))
         if clips:
             notes.append(f"Each clip lasts {_span(clips)} seconds, as written in your idea.")
     else:
-        candidates, duration = photos[:PHOTO_CANDIDATES], 5
+        duration = 5
+    batches = candidate_batches([] if footage_only else photos, videos, video)
+    sounds = sounds if video else []
     footage = duration - END_CARD_SECONDS if video else 0
     profile = profiles(settings)[platforms[0]]
     size = (profile.video_width, profile.video_height) if video else (profile.image_width, profile.image_height)
     if settings.ai_mode == "live":
         request = {"prompt": idea, "campaign": title, "product": product, "kind": kind, "platform": platforms[0]}
-        plan = ask_planner(
-            db, settings, request, candidates, sounds if video else [], video, footage, size,
+        plan = visual_plan(
+            db, settings, request, islice(batches, 1) if revision else batches, sounds, video, footage, size,
             clip_seconds=clips, footage_only=footage_only, revision=revision,
         )
         planner = settings.openai_vision_model
-    elif revision:
-        plan, planner = fixture_revision(revision, candidates, [], video, footage), "fixture/" + VERSION
     else:
-        plan = fixture_plan(candidates, sounds if video else [], video, footage, clip_seconds=clips)
+        candidates = next(batches, [])
+        plan = fixture_revision(revision, candidates, [], video, footage) if revision else fixture_plan(
+            candidates, sounds, video, footage, clip_seconds=clips
+        )
+        plan = fit_plan(plan, candidates, sounds, video, footage, portrait=size[1] > size[0], clip_seconds=clips)
         planner = "fixture/" + VERSION
-    plan = fit_plan(
-        plan, candidates, sounds if video else [], video, footage, portrait=size[1] > size[0], clip_seconds=clips
-    )
     if video:
         used = sum(i.end - i.start for i in plan.items)
         if used < footage - 1:
@@ -390,6 +299,11 @@ def plan_real_idea(
             notes.append(f"The matching footage fills {math.ceil(used)} seconds, so the video is {duration} seconds long.")
     if plan.changes:
         notes.insert(0, "What the editor changed: " + plan.changes)
+    if not pictures:
+        inspected = {item.asset_id for item in plan.items}
+        found = [(a, "Chosen by the visual editor" if why == VISUAL_INSPECTION else why) for a, why in found
+                 if why != VISUAL_INSPECTION or a.id in inspected]
+        notes.append(f"Found {len(found)} matching file{'s' if len(found) != 1 else ''} in the library.")
     return {
         "real_format": chosen,
         "duration": duration,
@@ -434,14 +348,16 @@ def _no_footage(db, pictures, library, video_gaps):
 
 def plan_edit(db, settings, job):
     """Choose the media and edit values for a real-project post, saved before anything is rendered."""
-    from .config import profiles
+    from .config import REAL_MEDIA_ONLY, profiles
+    from .provenance import real_drive_media_error
 
     brief = job.brief
     profile = profiles(settings)[job.platform]
     video = brief["real_format"] == "video"
-    assets = [db.get(Asset, i) for i in brief["reference_ids"]]
-    sounds = [db.get(Asset, i) for i in brief["audio_reference_ids"]] if video else []
-    if not assets or any(a is None for a in assets + sounds):
+    assets = load_assets(db, brief["reference_ids"])
+    sounds = load_assets(db, brief["audio_reference_ids"]) if video else []
+    fixed = brief.get("prepared_edit") or brief.get("revision")
+    if any(a is None for a in sounds) or (fixed and (not assets or any(a is None for a in assets))):
         raise ValueError("Media chosen for this real project post is missing from the asset library")
     footage = brief["duration"] - END_CARD_SECONDS if video else 0
     size = (profile.video_width, profile.video_height) if video else (profile.image_width, profile.image_height)
@@ -449,28 +365,38 @@ def plan_edit(db, settings, job):
     revision = brief.get("revision") or {}
     # A revision keeps the clips as the admin reviewed them unless the request itself gives clip lengths.
     clips = clip_lengths(revision.get("request", "") if revision else brief["prompt"]) if video else None
+    batches = iter([assets]) if fixed else job_batches(db, settings, job, assets, video)
     if prepared:
         # Planned on the idea's plan page and kept by the admin, trims included; checked against the media
         # again below, without the idea's clip lengths, so the admin's own trims stay.
         plan = RealEditPlan.model_validate({k: v for k, v in prepared.items() if k in RealEditPlan.model_fields})
         planner, clips = prepared.get("planner", ""), None
     elif brief["execution_mode"] == "fixture":
+        assets = next(batches, [])
+        if not assets:
+            raise NoMatchingMedia(no_real_media(job.platform))
         plan = fixture_revision(revision, assets, sounds, video, footage) if revision else fixture_plan(
             assets, sounds, video, footage, clip_seconds=clips
         )
         planner = "fixture/" + VERSION
     else:
         request = {k: brief[k] for k in ("prompt", "campaign", "product", "kind")} | {"platform": job.platform}
-        plan = ask_planner(
-            db, settings, request, assets, sounds, video, footage, size, clip_seconds=clips, revision=revision
+        plan = visual_plan(
+            db, settings, request, batches, sounds, video, footage, size, clip_seconds=clips, revision=revision
         )
         planner = settings.openai_vision_model
-    plan = fit_plan(plan, assets, sounds, video, footage, portrait=size[1] > size[0], clip_seconds=clips)
+    if prepared or brief["execution_mode"] == "fixture":
+        plan = fit_plan(plan, assets, sounds, video, footage, portrait=size[1] > size[0], clip_seconds=clips)
+    selected = list(dict.fromkeys(i.asset_id for i in plan.items))
+    originals = list(dict.fromkeys(selected + [cue.asset_id for cue in plan.audio]))
+    if job.platform in REAL_MEDIA_ONLY and (error := real_drive_media_error(db, load_assets(db, originals))):
+        raise ValueError(error)
     job.brief = job.brief | {
+        "reference_ids": brief["reference_ids"] if set(selected) <= set(brief["reference_ids"]) else selected,
         "real_edit": plan.model_dump() | {"planner": planner, "version": VERSION, "planned_at": now().isoformat()}
     }
     # Saved, so a resumed job renders this edit instead of planning another.
-    job.source_asset_ids = list(dict.fromkeys([i.asset_id for i in plan.items] + [c.asset_id for c in plan.audio]))
+    job.source_asset_ids = originals
     db.commit()
     return plan
 
@@ -545,7 +471,7 @@ def fit_plan(plan, assets, sounds, video, footage, *, portrait=True, clip_second
                 unique.setdefault(item.asset_id, item)
         photos = list(unique.values())
         if not photos:
-            raise ValueError(_nothing(plan))
+            raise NoMatchingMedia(_nothing(plan))
         layout = plan.layout if plan.layout in LAYOUTS else "single"
         if LAYOUTS[layout] > len(photos):
             layout = {1: "single", 2: "pair_stacked" if portrait else "pair_side", 3: "feature_three"}[len(photos)]
@@ -576,7 +502,7 @@ def fit_plan(plan, assets, sounds, video, footage, *, portrait=True, clip_second
         fitted.append(item.model_copy(update={"start": round(start, 2), "end": round(end, 2)}))
         total += round(end, 2) - round(start, 2)
     if not fitted:
-        raise ValueError(_nothing(plan, video=True))
+        raise NoMatchingMedia(_nothing(plan, video=True))
     by_sound = {s.id: s for s in sounds}
     cues = []
     for cue in plan.audio[:3]:
@@ -618,6 +544,34 @@ def _strict(schema):
         for value in schema:
             _strict(value)
     return schema
+
+
+def _candidate_preview(settings, asset):
+    data = _read(settings, asset)
+    photo = asset.media["mime"].startswith("image/")
+    times = [] if photo else sample_times(float(asset.media.get("duration") or 0))
+    if photo:
+        picture = _open(data)
+        width, height = picture.size
+        pictures = [_reduce(picture, 768)]
+    else:
+        pictures = video_frames(data, times)
+        width, height = asset.media.get("width"), asset.media.get("height")
+    if not pictures:
+        raise NoMatchingMedia("No frames could be read from this candidate.")
+    record = {
+        "asset_id": asset.id,
+        "name": asset.original_name,
+        "drive": drive_search_text(asset),
+        "kind": "photo" if photo else "video",
+        "width": width,
+        "height": height,
+        "duration": None if photo else asset.media.get("duration"),
+        "has_sound": bool(asset.media.get("audio_codecs")),
+        "frame_times": times,
+        "summary": (asset.media.get("visual_summary") or {}).get("summary", ""),
+    }
+    return [{"type": "input_text", "text": json.dumps(record)}, *(_picture(p) for p in pictures)]
 
 
 def ask_planner(
@@ -666,31 +620,16 @@ def ask_planner(
             k: v for k, v in (revision.get("previous_edit") or {}).items() if k in RealEditPlan.model_fields
         }
     content = [{"type": "input_text", "text": PLANNER_INSTRUCTIONS + " Input: " + json.dumps(context)}]
+    shown = set()
     for asset in assets:
-        data = _read(settings, asset)
-        photo = asset.media["mime"].startswith("image/")
-        times = [] if photo else sample_times(float(asset.media.get("duration") or 0))
-        if photo:
-            picture = _open(data)
-            width, height = picture.size  # Keep the EXIF-corrected orientation in the planner record.
-            pictures = [_reduce(picture, 768)]
-            del picture
-        else:
-            pictures = video_frames(data, times)
-            width, height = asset.media.get("width"), asset.media.get("height")
-        record = {
-            "asset_id": asset.id,
-            "kind": "photo" if photo else "video",
-            "width": width,
-            "height": height,
-            "duration": None if photo else asset.media.get("duration"),
-            "has_sound": bool(asset.media.get("audio_codecs")),
-            "frame_times": times,
-            "summary": (asset.media.get("visual_summary") or {}).get("summary", ""),
-        }
-        content.append({"type": "input_text", "text": json.dumps(record)})
-        content.extend(_picture(p) for p in pictures)
-        del pictures, data  # Do not retain the last full source during the provider call.
+        try:
+            content.extend(_candidate_preview(settings, asset))
+            shown.add(asset.id)
+        except (FileNotFoundError, Image.UnidentifiedImageError, av.InvalidDataError, NoMatchingMedia):
+            if revision:
+                raise
+    if not shown:
+        raise NoMatchingMedia("The candidate media files could not be read.")
     with httpx.Client(timeout=settings.ai_timeout_seconds) as client:
         result = OpenAI(settings, client).call(
             "responses",
@@ -718,7 +657,9 @@ def ask_planner(
         for p in o.get("content", [])
         if p.get("type") == "output_text"
     )
-    return RealEditPlan.model_validate(parse_json(answer))
+    plan = RealEditPlan.model_validate(parse_json(answer))
+    plan.items = [item for item in plan.items if item.asset_id in shown]
+    return plan
 
 
 def sample_times(duration):
@@ -759,9 +700,14 @@ def _picture(image):
 
 
 def _read(settings, asset):
-    data = storage(settings).read(asset.storage_key)
+    try:
+        data = storage(settings).read(asset.storage_key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+            raise FileNotFoundError(asset.original_name) from exc
+        raise
     if hashlib.sha256(data).hexdigest() != asset.checksum:
-        raise ValueError(f"{asset.original_name} changed in storage; upload it again")
+        raise NoMatchingMedia(f"{asset.original_name} changed in storage; upload it again")
     return data
 
 
