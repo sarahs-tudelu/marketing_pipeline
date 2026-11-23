@@ -1,5 +1,6 @@
 import asyncio
 import os
+from html import unescape
 from types import SimpleNamespace
 
 import pytest
@@ -39,7 +40,7 @@ def ids(client, campaign_id=""):
 
 
 @pytest.mark.parametrize("status", ["draft", "generated", "held", "awaiting_review", "approved", "scheduled"])
-def test_delete_completed_draft_from_queue(db, settings, campaign, post, assets, status):
+def test_delete_completed_draft_from_its_current_list(db, settings, campaign, post, assets, status):
     post.status = status
     if status == "scheduled":
         post.scheduled_at = post.next_attempt_at = now()
@@ -51,14 +52,22 @@ def test_delete_completed_draft_from_queue(db, settings, campaign, post, assets,
     with TestClient(create_app(settings)) as client:
         url = f"/forms/posts/{post.id}/delete{scope}"
         page = client.get("/admin/media-queue" + scope)
-        assert url in page.text and "Delete draft" in page.text
-        data = {"return_to": "/admin/media-queue"}
+        if status in {"approved", "scheduled"}:
+            query = f"?source=published-posts&campaign_id={campaign.id}"
+            assert post.id not in page.text
+            assert f"/posts/{post.id}{query}" in unescape(client.get("/admin/published-posts" + scope).text)
+            url = f"/forms/posts/{post.id}/delete{query}"
+            page = client.get(f"/posts/{post.id}{query}")
+            destination, data = "/admin/published-posts" + scope, {}
+        else:
+            destination, data = "/admin/media-queue" + scope, {"return_to": "/admin/media-queue"}
+        assert url in unescape(page.text) and "Delete draft" in page.text
         assert client.post(url, data=data).status_code == 403
         data["csrf"] = client.get("/api/session").json()["csrf"]
         for _ in range(2):
             response = client.post(url, data=data, follow_redirects=False)
             assert (
-                response.status_code == 303 and response.headers["location"] == "/admin/media-queue" + scope
+                response.status_code == 303 and response.headers["location"] == destination
             )
         assert ids(client, campaign.id) == [sibling_job.id]
     db.refresh(post)
@@ -167,7 +176,7 @@ def test_cancelling_retry_restores_held_draft_and_closing_failure_releases_campa
 
 
 def test_old_blocker_is_visible_ahead_of_completed_library_jobs(db, settings, campaign, post):
-    post.status = "scheduled"
+    post.status = "held"
     blocker = job(db, campaign, post=post)
     db.add_all(
         [
@@ -179,10 +188,10 @@ def test_old_blocker_is_visible_ahead_of_completed_library_jobs(db, settings, ca
     with TestClient(create_app(settings)) as client:
         assert ids(client)[0] == blocker.id
         assert ids(client, campaign.id) == [blocker.id]
-        assert '<span class="count">1</span>' in client.get("/admin/media-queue").text
+        assert client.get("/admin/media-queue").context["active_jobs"] == 1
 
 
-def test_hide_completed_library_and_published_cards_keeps_outputs(db, settings, campaign, post, assets):
+def test_hiding_library_work_keeps_media_and_published_history(db, settings, campaign, post, assets):
     post.status = "published"
     published = job(db, campaign, post=post)
     library = job(db, campaign)
@@ -190,7 +199,8 @@ def test_hide_completed_library_and_published_cards_keeps_outputs(db, settings, 
     db.commit()
     with TestClient(create_app(settings)) as client:
         page = client.get("/admin/media-queue").text
-        assert "Delete draft" not in page and page.count("Hide from In progress") == 2
+        assert "Delete draft" not in page and page.count("Hide from In progress") == 1
+        assert post.id not in page and post.id in client.get("/admin/published-posts").text
         for row in (library, published):
             url = f"/forms/media-jobs/{row.id}/dismiss"
             assert client.post(url).status_code == 403
@@ -225,6 +235,9 @@ def test_campaign_queue_polls_for_replacement_and_deletes_it_in_browser(db, sett
             await page.goto("http://studio.test/admin/media-studio")
             await page.get_by_role("link", name="View unfinished campaign work").click()
             await playwright.expect(page.locator(f"#job-{original.id}")).to_be_visible()
+            await page.get_by_role("link", name="Review media & caption").click()
+            await page.get_by_role("link", name="Back to In progress").click()
+            await playwright.expect(page).to_have_url(f"http://studio.test/admin/media-queue?campaign_id={campaign.id}")
             post.status = "failed"
             revised = draft(db, "instagram", campaign.name, [assets[0].id], post.facts_id)
             redo = job(db, campaign, post=revised, replaces=original)

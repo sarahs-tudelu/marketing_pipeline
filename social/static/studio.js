@@ -184,6 +184,39 @@
     }
   });
 
+  // When available, use the actual preceding Studio page, including its filters.
+  const back = document.querySelector("[data-history-back]");
+  const navigation = window.navigation;
+  if (back && navigation?.currentEntry) {
+    const previous = navigation.entries()[navigation.currentEntry.index - 1];
+    if (previous?.url) {
+      const url = new URL(previous.url);
+      if (url.origin === location.origin && (url.pathname === "/" || /^\/(admin|posts)\//.test(url.pathname))) {
+        back.href = url.href;
+        const label = back.querySelector("[data-back-label]");
+        if (label) label.textContent = "Back to previous page";
+        back.addEventListener("click", (event) => {
+          if (!event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+            event.preventDefault();
+            history.back();
+          }
+        });
+      }
+    }
+  }
+
+  const slideshow = document.querySelector(".review-slides");
+  if (slideshow) document.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        event.target.closest("input, textarea, select, video, audio, [contenteditable=true]")) return;
+    const label = {ArrowLeft: "Previous post", ArrowRight: "Next post"}[event.key];
+    const link = label && slideshow.querySelector(`a[aria-label="${label}"]`);
+    if (link) {
+      event.preventDefault();
+      link.click();
+    }
+  });
+
   // On phones the menu and the idea steps are rows that scroll sideways; show the current one,
   // again once the brand font has loaded and widened the items.
   const showCurrent = () => [[document.querySelector("nav"), 'a[aria-current="page"]'], [document.querySelector(".steps"), "li.current"]]
@@ -276,18 +309,21 @@
       if (document.hidden || pending.size || polling || queue.contains(document.activeElement)) return;
       polling = true;
       try {
-        const response = await fetch("/api/media-jobs" + queue.dataset.scope, {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
-        if (!response.ok) return;
-        const jobs = await response.json();
-        const current = [...queue.querySelectorAll("[data-job-id]")].map((card) => [
-          card.dataset.jobId, card.dataset.jobState, card.dataset.jobStage, card.dataset.jobError, card.dataset.jobOutput, card.dataset.jobPost, card.dataset.jobPostStatus, Number(card.querySelector("[data-completed-clips]")?.dataset.completedClips || 0), card.dataset.jobPhase || "", card.dataset.jobTask || "", Number(card.dataset.jobRetries || 0), Number(card.dataset.jobScenes || 0), card.dataset.jobSource || "", card.dataset.jobDeletable === "1",
-        ]);
-        const updated = jobs.map((job) => [job.id, job.state, job.stage, job.error, job.asset_id || "", job.post_id || "", job.post_status || "", job.completed_clips || 0, job.generation_phase || "", job.task_id || "", job.retry_count || 0, job.saved_scenes || 0, job.shared_render_from || "", Boolean(job.can_delete_draft)]);
-        if (JSON.stringify(current) === JSON.stringify(updated)) return;
+        const params = new URLSearchParams(queue.dataset.scope);
+        params.set("queue_revision", "true");
+        const response = await fetch("/api/media-jobs?" + params, {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
+        if (!response.ok || (await response.json()).revision === queue.dataset.revision) return;
         const html = await fetch("/admin/media-queue" + queue.dataset.scope, {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
         if (!html.ok) return;
         const replacement = new DOMParser().parseFromString(await html.text(), "text/html").getElementById("media-queue");
-        if (replacement && !pending.size && !queue.contains(document.activeElement)) queue.replaceWith(replacement);
+        if (replacement && !pending.size && !queue.contains(document.activeElement)) {
+          queue.replaceWith(replacement);
+          const count = document.querySelector("[data-queue-count]");
+          if (count) {
+            count.textContent = replacement.dataset.count;
+            count.hidden = replacement.dataset.count === "0";
+          }
+        }
       } catch { /* Keep the last known state and the manual refresh link available. */ }
       finally { polling = false; }
     };

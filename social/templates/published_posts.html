@@ -1,0 +1,22 @@
+{% set scope = queue_campaign.id if queue_campaign else none %}
+{% if queue_campaign %}<p>Posts for <b>{{ queue_campaign.name }}</b>. <a href="/admin/published-posts">Show all campaigns</a></p>{% endif %}
+{% for mode, title in [('unscheduled', 'Approved · awaiting scheduling'), ('real', 'Real posts'), ('simulated', 'Simulated posts')] %}
+{% set groups = published_groups[mode] %}
+{% if groups or mode != 'unscheduled' %}
+<section aria-labelledby="delivery-{{ mode }}">
+  <h2 id="delivery-{{ mode }}">{{ title }}</h2>
+  {% if mode == 'unscheduled' %}<p class="muted">Delivery mode is set when a post is scheduled.</p>{% endif %}
+  {% for platform, posts in groups.items() %}
+  <details class="platform-posts" id="{{ mode }}-{{ platform }}">
+    <summary>{{ platform|platform }} <span class="muted">({{ posts|length }})</span></summary>
+    <ul>{% for p in posts %}
+    <li><div><a href="/posts/{{ p.id }}{{ source_query('published-posts', scope) }}">{{ p.campaign }}</a>
+        {% if p.published_at %}<small>{{ 'Simulated' if p.dry_run else 'Published' }} {{ p.published_at }} UTC</small>
+        {% elif p.scheduled_at %}<small>Scheduled {{ p.scheduled_at }} UTC</small>{% endif %}</div>
+      <span class="status {{ p.status }}">{{ {'published': 'Simulation complete' if p.dry_run else 'Published', 'awaiting_manual': 'Awaiting TikTok completion', 'publishing': 'Delivery in progress'}.get(p.status, p.status|capitalize) }}</span>
+      {% if mode == 'real' and p.status == 'published' and p.live_url %}<a href="{{ p.live_url }}" target="_blank" rel="noopener noreferrer">View live post ↗</a>{% endif %}
+    </li>{% endfor %}</ul>
+  </details>
+  {% else %}<p class="muted">No {{ title|lower }} yet.</p>{% endfor %}
+</section>{% endif %}
+{% endfor %}

@@ -51,7 +51,7 @@ def test_crm_editor_workflow_and_isolation(db, settings, assets, monkeypatch):
         assert "Prompted by Alice" in c.get(detail).text
         assert [p["id"] for p in c.get("/api/posts").json()] == [post.id]
         assert c.post("/forms/posts/" + post.id + "/approve", data=form).status_code == 403
-        for url in ("/admin/assets", "/admin/connections", "/api/media-jobs", "/admin/media-queue"):
+        for url in ("/admin/assets", "/admin/connections", "/api/media-jobs", "/admin/media-queue", "/admin/published-posts"):
             assert c.get(url).status_code == 403
         form["csrf"] = switch("bob")
         assert "Alice canopy" not in c.get("/admin/create").text

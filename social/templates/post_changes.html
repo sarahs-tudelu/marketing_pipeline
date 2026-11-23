@@ -7,7 +7,7 @@
   {% else %}
   <p>Describe what to change. Only the parts your change needs are made again{{ ' with Runway' if mc.live else ' (simulated)' }}, and everything else is reused. The new version goes through the checks and comes back here for your review.</p>
   {% endif %}
-  <form method="post" action="/forms/posts/{{ post.id }}/change-media" data-confirm="{{ 'Edit this post again with your changes? Nothing is generated.' if mc.kind == 'real' else ('Make the parts your change needs again? This makes new ' ~ ('Runway' if mc.live else 'simulated') ~ ' media; everything else is reused.') }}">
+  <form method="post" action="/forms/posts/{{ post.id }}/change-media{{ post_query }}" data-confirm="{{ 'Edit this post again with your changes? Nothing is generated.' if mc.kind == 'real' else ('Make the parts your change needs again? This makes new ' ~ ('Runway' if mc.live else 'simulated') ~ ' media; everything else is reused.') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>What should change in the media?<textarea name="change_request" rows="3" maxlength="1000" required placeholder="{{ 'Use only the clips of the wall opening and closing, about 3 seconds each, and end on the closed wall' if mc.kind == 'real' and mc.video else ('Use the photo of the open wall instead, and brighten it a little' if mc.kind == 'real' else 'Make the pergola black, and use warmer evening light in the second clip') }}">{{ change_request or '' }}</textarea></label>
     {% if mc.kind == 'real' %}

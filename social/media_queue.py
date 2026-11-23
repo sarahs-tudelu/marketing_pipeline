@@ -1,5 +1,8 @@
 """Current media attempts shown in Studio and used to gate recurring campaign batches."""
 
+import hashlib
+import json
+
 from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import load_only
 
@@ -7,7 +10,10 @@ from .db import now
 from .human_review import UNPUBLISHED_STATES, delivery_reported, possible_delivery_requests
 from .idea_plan import _platform_names
 from .lifecycle import PostConflict
-from .models import MediaJob, Post
+from .models import MediaJob, Post, PostRetry
+
+DELIVERY_STATES = {"approved", "scheduled", "publishing", "awaiting_manual", "published"}
+ATTENTION_STATES = {"held", "failed", "uncertain"}
 
 
 def dismiss_completed(db, job, post_id):
@@ -28,9 +34,12 @@ def dismiss_completed(db, job, post_id):
         raise PostConflict("This job or its post has changed. Review its current status before removing it.")
 
 
-def current_attempts(*columns):
+def replaced_posts():
     original = MediaJob.brief[("replaces", "post_id")].as_string()
-    replaced = select(original).where(MediaJob.state != "cancelled", original.is_not(None)).correlate(None)
+    return select(original).where(MediaJob.state != "cancelled", original.is_not(None)).correlate(None)
+
+
+def current_attempts(*columns):
     return (
         select(*columns)
         .select_from(MediaJob)
@@ -39,7 +48,7 @@ def current_attempts(*columns):
             MediaJob.dismissed_at.is_(None),
             MediaJob.state != "cancelled",
             Post.status.is_(None) | (Post.status != "deleted"),
-            MediaJob.post_id.is_(None) | MediaJob.post_id.not_in(replaced),
+            MediaJob.post_id.is_(None) | MediaJob.post_id.not_in(replaced_posts()),
         )
     )
 
@@ -49,8 +58,22 @@ def unfinished():
     return (MediaJob.state != "complete") | Post.status.not_in(["published", "awaiting_manual", "deleted"])
 
 
-def unfinished_job_count(db):
-    return db.scalar(current_attempts(func.count(MediaJob.id)).where(unfinished()))
+def standalone_posts():
+    return (
+        Post.id.not_in(select(MediaJob.post_id).where(MediaJob.post_id.is_not(None)))
+        & Post.id.not_in(replaced_posts())
+        & ~select(PostRetry.original_post_id).where(PostRetry.original_post_id == Post.id).exists()
+    )
+
+
+def in_progress_count(db):
+    jobs = current_attempts(func.count(MediaJob.id)).where(
+        unfinished(), Post.status.is_(None) | Post.status.not_in(DELIVERY_STATES)
+    )
+    posts = select(func.count(Post.id)).where(
+        standalone_posts(), Post.status.not_in(DELIVERY_STATES | {"deleted"})
+    )
+    return db.scalar(select(jobs.scalar_subquery() + posts.scalar_subquery()))
 
 
 def campaign_attempts(campaign_id):
@@ -105,15 +128,30 @@ def campaign_wait_reason(db, campaign):
     return ""
 
 
-def recent_media_jobs(db, campaign_id=None):
-    query = current_attempts(MediaJob, Post, Post.id.in_(possible_delivery_requests())).options(
-        load_only(Post.status, Post.remote_id, Post.published_at, Post.live_url, Post.error)
+def recent_media_jobs(db, campaign_id=None, *, include_review=True):
+    excluded = DELIVERY_STATES if include_review else DELIVERY_STATES | {"awaiting_review"}
+    query = (
+        current_attempts(MediaJob, Post, Post.id.in_(possible_delivery_requests()))
+        .options(load_only(Post.status, Post.remote_id, Post.published_at, Post.live_url, Post.error))
+        .where(Post.status.is_(None) | Post.status.not_in(excluded))
     )
     if campaign_id:
         query = query.where(campaign_attempts(campaign_id), unfinished()).order_by(MediaJob.created_at)
     else:
         query = query.order_by(case((unfinished(), 0), else_=1), MediaJob.created_at.desc())
-    query = query.order_by(MediaJob.id).limit(100)
+        if not include_review:
+            library_history = (
+                select(MediaJob.id)
+                .where(
+                    MediaJob.state == "complete", MediaJob.post_id.is_(None), MediaJob.dismissed_at.is_(None)
+                )
+                .order_by(MediaJob.created_at.desc(), MediaJob.id)
+                .limit(100)
+            )
+            query = query.where(unfinished() | MediaJob.id.in_(library_history))
+    query = query.order_by(MediaJob.id)
+    if include_review:
+        query = query.limit(100)
     return [
         (
             job,
@@ -128,3 +166,87 @@ def recent_media_jobs(db, campaign_id=None):
         )
         for job, post, delivery_request in db.execute(query)
     ]
+
+
+def queue_posts(*columns, campaign_id=None, review_only=False):
+    """Every reviewable post, plus drafts without media jobs that need their own card."""
+    current = current_attempts(MediaJob.post_id)
+    if campaign_id:
+        current = current.where(campaign_attempts(campaign_id))
+    visible = (Post.status == "awaiting_review") & Post.id.in_(current)
+    if not campaign_id:
+        states = (
+            Post.status == "awaiting_review"
+            if review_only
+            else Post.status.not_in(DELIVERY_STATES | {"deleted"})
+        )
+        visible |= standalone_posts() & states
+    return select(*columns).where(visible).order_by(Post.created_at, Post.id)
+
+
+def job_progress(job, post_status, can_delete):
+    return {
+        "id": job.id,
+        "platform": job.platform,
+        "state": job.state,
+        "stage": job.stage,
+        "generation_phase": job.brief.get("active_generation", ""),
+        "shared_render_from": job.brief.get("shared_render_from", ""),
+        "task_id": job.task_id,
+        "retry_count": len(job.brief.get("failed_tasks", [])),
+        "saved_scenes": sum(h.get("stage") == "scene" for h in job.task_history),
+        "error": job.error,
+        "asset_id": job.output_asset_id,
+        "post_id": job.post_id,
+        "post_status": post_status,
+        "can_delete_draft": can_delete,
+        "completed_clips": sum(bool(s.get("output_asset_id")) for s in job.brief.get("video_segments", [])),
+    }
+
+
+def queue_contents(db, campaign_id=None):
+    jobs = recent_media_jobs(db, campaign_id, include_review=False)
+    post_query = queue_posts(
+        Post.id,
+        Post.campaign,
+        Post.platform,
+        Post.status,
+        Post.remote_id,
+        Post.published_at,
+        Post.live_url,
+        Post.error,
+        Post.id.in_(possible_delivery_requests()).label("delivery_request"),
+        campaign_id=campaign_id,
+    )
+    sections = {name: {"jobs": [], "posts": []} for name in ("review", "attention", "generation")}
+    for job, status, can_delete in jobs:
+        section = "attention" if job.state in ATTENTION_STATES or status in ATTENTION_STATES else "generation"
+        sections[section]["jobs"].append((job, status, can_delete))
+    post_updates = []
+    for post in db.execute(post_query):
+        section = (
+            "review"
+            if post.status == "awaiting_review"
+            else "attention"
+            if post.status in ATTENTION_STATES
+            else "generation"
+        )
+        can_delete = post.status in UNPUBLISHED_STATES and not (
+            delivery_reported(post) or post.delivery_request
+        )
+        sections[section]["posts"].append((post, can_delete))
+        post_updates.append((post.id, post.status, post.campaign, post.platform, post.error, can_delete))
+    waiting = 0
+    if campaign_id:
+        waiting = db.scalar(
+            current_attempts(func.count(MediaJob.id)).where(
+                campaign_attempts(campaign_id), Post.status.in_(DELIVERY_STATES), unfinished()
+            )
+        )
+    snapshot = [[job_progress(*row) for row in jobs], post_updates, waiting]
+    return {
+        "queue_sections": sections,
+        "visible_ids": {job.id for job, _, _ in jobs},
+        "queue_revision": hashlib.sha256(json.dumps(snapshot).encode()).hexdigest(),
+        "waiting_delivery": waiting,
+    }

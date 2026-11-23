@@ -6,7 +6,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 
 import yaml
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -41,7 +41,7 @@ from .idea_plan import (
 )
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
 from .media_changes import request_changes
-from .media_queue import dismiss_completed, recent_media_jobs
+from .media_queue import DELIVERY_STATES, dismiss_completed, job_progress, queue_contents, recent_media_jobs
 from .media_studio import (
     CreativeBrief,
     finish_video,
@@ -61,6 +61,7 @@ from .models import (
 )
 from .monitoring import event, set_kill, setup_logging
 from .pipeline import bootstrap, delete_draft, draft, generate, rewrite_caption
+from .post_views import list_location, next_review, published_location, source_query, workspace_navigation
 from .provenance import real_drive_media_error, requires_ai_review
 from .provider_errors import ProviderError
 from .providers import Providers
@@ -130,6 +131,7 @@ def create_app(settings=None):
     )
     from .video_repair import REPAIR_LABELS
     templates.env.globals["repair_labels"] = REPAIR_LABELS
+    templates.env.globals["source_query"] = source_query
     templates.env.filters["money"] = money
     templates.env.filters["compact"] = compact
     templates.env.filters["percent"] = percent
@@ -320,6 +322,7 @@ def create_app(settings=None):
             context.update(post_context(db, settings, post, editor=request.state.editor))
             context.update(post_values or {})  # What the admin typed, kept when the action failed.
             if not request.state.editor:
+                context.update(workspace_navigation(db, post, request.query_params))
                 context["post_busy"] = post_busy or post.status == "publishing" or post_processing(engine, post.id)
         context.update(
             csrf=request.session["csrf"],
@@ -350,6 +353,7 @@ def create_app(settings=None):
             "analytics",
             "create",
             "media-queue",
+            "published-posts",
             "media-studio",
             "automation",
             "usage",
@@ -490,27 +494,10 @@ def create_app(settings=None):
         return {"jobs": [{"id": j.id, "platform": j.platform, "state": j.state} for j in jobs]}
 
     @app.get("/api/media-jobs")
-    def list_media_jobs(db: DB, campaign_id: str = ""):
-        return [
-            {
-                "id": j.id,
-                "platform": j.platform,
-                "state": j.state,
-                "stage": j.stage,
-                "generation_phase": j.brief.get("active_generation", ""),
-                "shared_render_from": j.brief.get("shared_render_from", ""),
-                "task_id": j.task_id,
-                "retry_count": len(j.brief.get("failed_tasks", [])),
-                "saved_scenes": sum(h.get("stage") == "scene" for h in j.task_history),
-                "error": j.error,
-                "asset_id": j.output_asset_id,
-                "post_id": j.post_id,
-                "post_status": post_status,
-                "can_delete_draft": can_delete,
-                "completed_clips": sum(bool(s.get("output_asset_id")) for s in j.brief.get("video_segments", [])),
-            }
-            for j, post_status, can_delete in recent_media_jobs(db, campaign_id)
-        ]
+    def list_media_jobs(db: DB, campaign_id: str = "", queue_revision: bool = False):
+        if queue_revision:
+            return {"revision": queue_contents(db, campaign_id)["queue_revision"]}
+        return [job_progress(*row) for row in recent_media_jobs(db, campaign_id)]
 
     @app.get("/api/posts/{post_id}/activity")
     def post_activity(post_id: str, db: DB):
@@ -1058,8 +1045,7 @@ def create_app(settings=None):
         return RedirectResponse("/admin/media-studio", status_code=303)
 
     def queue_location(request):
-        campaign_id = request.query_params.get("campaign_id")
-        return "/admin/media-queue" + ("?" + urlencode({"campaign_id": campaign_id}) if campaign_id else "")
+        return list_location("media-queue", request.query_params.get("campaign_id"))
 
     @app.post("/forms/media-jobs/{job_id}/{action}", dependencies=mutation)
     async def media_job_action(job_id: str, action: str, request: Request, db: DB):
@@ -1294,11 +1280,12 @@ def create_app(settings=None):
             return page(request, db, "post", post, post_busy=True, status_code=202)
         except PostConflict:
             db.rollback()
-            return RedirectResponse(f"/posts/{post_id}", status_code=303)
+            query = source_query(request.query_params.get("source"), request.query_params.get("campaign_id"))
+            return RedirectResponse(f"/posts/{post_id}{query}", status_code=303)
         except ValueError as exc:
             db.rollback()
             return page(request, db, "post", post, error_message=str(exc), status_code=400)
-        return RedirectResponse("/admin/media-queue", status_code=303)
+        return RedirectResponse(queue_location(request), status_code=303)
 
     @app.post("/forms/posts/{post_id}/change-media", dependencies=mutation)
     async def change_media(post_id: str, request: Request, db: DB):
@@ -1317,22 +1304,28 @@ def create_app(settings=None):
             return page(request, db, "post", post, post_busy=True, status_code=202)
         except PostConflict:
             db.rollback()
-            return RedirectResponse(f"/posts/{post_id}", status_code=303)
+            query = source_query(request.query_params.get("source"), request.query_params.get("campaign_id"))
+            return RedirectResponse(f"/posts/{post_id}{query}", status_code=303)
         except ValueError as exc:
             db.rollback()
             return page(
                 request, db, "post", post, error_message=str(exc), status_code=400,
                 post_values={"change_request": text[:2000], "change_picks": picks},
             )
-        return RedirectResponse("/admin/media-queue", status_code=303)
+        return RedirectResponse(queue_location(request), status_code=303)
 
     @app.post("/forms/posts/{post_id}/{action}", dependencies=mutation)
     async def form_action(post_id: str, action: str, request: Request, db: DB):
         form = await request.form()
+        source = request.query_params.get("source")
+        campaign_id = request.query_params.get("campaign_id")
+        query = source_query(source, campaign_id)
         queue_delete = action == "delete" and form.get("return_to") == "/admin/media-queue"
-        after_delete = queue_location(request) if queue_delete else "/"
+        after_delete = list_location(source, campaign_id) if query else "/"
+        if queue_delete:
+            after_delete = queue_location(request)
         post = db.get(Post, post_id)
-        if post and post.status == "deleted" and queue_delete:
+        if post and post.status == "deleted" and action == "delete" and (queue_delete or query):
             return RedirectResponse(after_delete, status_code=303)
         if not post or post.status == "deleted":
             raise HTTPException(404)
@@ -1353,7 +1346,7 @@ def create_app(settings=None):
             if queue_delete:
                 return page(request, db, "media-queue", error_message=str(exc), status_code=409)
             # Another tab or the worker completed the action; display its saved result.
-            return RedirectResponse(f"/posts/{post_id}", status_code=303)
+            return RedirectResponse(f"/posts/{post_id}{query}", status_code=303)
         except ValueError as exc:
             db.rollback()
             if queue_delete:
@@ -1361,7 +1354,12 @@ def create_app(settings=None):
             return page(request, db, "post", post, error_message=str(exc), status_code=400)
         if action == "restart" and post.status == "deleted":
             return RedirectResponse(f"/admin/create?from_post={post.id}", status_code=303)
-        return RedirectResponse(after_delete if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)
+        if action == "approve" and source == "media-queue" and post.status in DELIVERY_STATES:
+            following = next_review(db, post, campaign_id)
+            request.session["notice"] = f"Approved {post.campaign} for {post.platform}. Track delivery in Published posts."
+            target = f"/posts/{following}{query}" if following else published_location(post, campaign_id)
+            return RedirectResponse(target, status_code=303)
+        return RedirectResponse(after_delete if post.status == "deleted" else f"/posts/{result['id']}{query}", status_code=303)
 
     def return_to(form, default):
         # Only fixed in-app pages; never an arbitrary redirect target.

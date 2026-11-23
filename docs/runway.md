@@ -171,7 +171,11 @@ The campaign continues to rotate creative directions and suggested use cases. A 
 
 Each campaign waits for its unfinished media jobs and posts, including scheduled posts awaiting delivery. **View unfinished campaign work** opens the items responsible for the wait. When a retry replaces a draft, the campaign follows the replacement through review and delivery. Cancelling a pending replacement brings the original held draft back into view.
 
-In **In progress**, choose **Delete draft** to remove an unpublished post and cancel its schedule. Its library media and audit history are retained. For a failed post, retry it or choose **Close failed attempt** to release its campaign. Once all outstanding work is resolved, the next batch can run on the next eligible worker tick. Migration `e3ab61c84570` records which completed jobs have been dismissed.
+**In progress** groups posts awaiting review, failed or held work, and generation jobs. Choose **Start review slideshow** to inspect the media and caption of each ready post. Use the arrow buttons or the left and right arrow keys to move between posts. Approving a post advances to the next one in the same list. The back arrow returns to the list you opened.
+
+Approved posts move to **Published posts**. Expand a platform under **Real posts** or **Simulated posts** to see its scheduled and delivered posts, newest first. Approvals waiting for a scheduling slot appear under **Approved · awaiting scheduling** until their delivery mode is set. Open a scheduled post to stop delivery and return it to review, or use **Delete draft** to cancel its schedule and remove it. Library media and audit history are retained.
+
+For a failed campaign post, retry it or choose **Close failed attempt** to release its campaign. Once all outstanding work is resolved, the next batch can run on the next eligible worker tick.
 
 Automatic variation improves diversity but does not guarantee visual novelty; the existing caption duplicate checks still run. There is no automatic recurring spending in fixture mode.
 

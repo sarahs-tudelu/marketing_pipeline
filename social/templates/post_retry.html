@@ -6,7 +6,7 @@
   {% else %}
     <p>Reuse this caption and media, run fresh checks, and review a new {{ 'simulated' if post.dry_run else 'live' }} attempt. The original error and history stay here.</p>
     {% if retry_block_reason %}<p class="error">{{ retry_block_reason }}</p>{% endif %}
-    <form method="post" action="/forms/posts/{{ post.id }}/retry">
+    <form method="post" action="/forms/posts/{{ post.id }}/retry{{ post_query }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="primary" {{ 'disabled' if retry_block_reason else '' }}>Retry post</button>
     </form>

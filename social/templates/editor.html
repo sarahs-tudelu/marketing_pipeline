@@ -4,7 +4,7 @@
 <script src="/static/studio.js?v={{ static_version }}" defer></script></head>
 <body><aside><a class="brand" href="/admin/create">Social Studio</a><nav aria-label="Main">
 <a href="/admin/create">New post from an idea</a><a href="/admin/create#my-posts">My posts</a></nav></aside>
-<main>{% if error_message %}<p role="alert">{{ error_message }}</p>{% endif %}
+<main>{% include "back_link.html" %}{% if error_message %}<p role="alert">{{ error_message }}</p>{% endif %}
 {% if view == "plan" %}<h1>Review your idea</h1>{% include "idea_plan.html" %}
 {% elif view == "post" %}<h1>{{ post.campaign }}</h1><p>Prompted by {{ post.prompted_by_label }}</p>
 <p>{{ post.platform|platform }} ? {{ post.status|replace('_', ' ') }}</p><p>{{ post.caption }}</p>

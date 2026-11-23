@@ -399,6 +399,17 @@ body.standalone h1{margin-bottom:12px}
 .library-check summary span{font-weight:600}
 .library-counts{margin-top:12px}
 .library-counts .num{text-align:right;font-variant-numeric:tabular-nums}
+.back-link{display:inline-flex;align-items:center;gap:8px;min-height:44px;margin-bottom:6px;font-weight:500}
+header .back-link{position:relative;display:flex;width:fit-content;min-height:0;margin:0;font-size:13.5px;line-height:1.4}
+header .back-link::before{content:"";position:absolute;inset:-5px -4px}
+.review-slides{display:flex;align-items:center;justify-content:center;gap:16px;margin:16px 0;font-variant-numeric:tabular-nums}
+.review-slides .button,.review-slides button{min-width:44px;min-height:44px;margin:0;font-size:18px}
+.queue-post-row,.platform-posts li{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:12px 0;border-top:1px solid var(--divider)}
+.queue-post-row>div:first-child,.platform-posts li>div{flex:1 1 230px;min-width:0;overflow-wrap:anywhere}
+.queue-post-row h3,.queue-post-row .actions,.queue-post-row form,.queue-post-row button{margin:0}
+.queue-post-row .actions{align-items:center}
+.platform-posts summary{padding:8px 0}
+.platform-posts ul{list-style:none;padding:0;margin:0}
 .library-counts td,.library-counts th[scope=row]{padding:10px 14px}
 .library-counts th[scope=row]{background:none;font-size:14px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink)}
 .bulk-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px;margin:12px 0}

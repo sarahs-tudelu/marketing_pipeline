@@ -9,17 +9,17 @@
     {% endfor %}</ul>
   {% elif held.reason %}<p>{{ held.reason }}</p>{% endif %}
   <div class="actions">
-    <form method="post" action="/forms/posts/{{ post.id }}/rewrite"{% if post.caption %} data-confirm="Replace the current caption with a newly written one and run the checks again?"{% endif %}>
+    <form method="post" action="/forms/posts/{{ post.id }}/rewrite{{ post_query }}"{% if post.caption %} data-confirm="Replace the current caption with a newly written one and run the checks again?"{% endif %}>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="{{ 'primary' if 'caption' in held.fixes else '' }}">{{ 'Write a new caption' if post.caption else 'Write the caption again' }}</button>
     </form>
     {% if 'finish' in held.fixes and post.caption and finish_runway %}
-    <form method="post" action="/forms/posts/{{ post.id }}/finish_video" data-confirm="Runway composes calm ambient music for this video ({{ 'a paid Runway task' if clip_fix and clip_fix.live else 'simulated' }}), and the app adds the logo ending. A new post replaces this one when it's ready and waits for your review.">
+    <form method="post" action="/forms/posts/{{ post.id }}/finish_video{{ post_query }}" data-confirm="Runway composes calm ambient music for this video ({{ 'a paid Runway task' if clip_fix and clip_fix.live else 'simulated' }}), and the app adds the logo ending. A new post replaces this one when it's ready and waits for your review.">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="primary">Add Runway ambient music and the logo ending</button>
     </form>
     {% elif 'finish' in held.fixes and post.caption %}
-    <form method="post" action="/forms/posts/{{ post.id }}/finish_video" data-confirm="Add the Tudelu logo ending, and an ambient track from the asset library if the video has no sound? Nothing is sent to Runway. The checks run again, and the post waits for your review.">
+    <form method="post" action="/forms/posts/{{ post.id }}/finish_video{{ post_query }}" data-confirm="Add the Tudelu logo ending, and an ambient track from the asset library if the video has no sound? Nothing is sent to Runway. The checks run again, and the post waits for your review.">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="primary">Add the logo ending and sound</button>
     </form>

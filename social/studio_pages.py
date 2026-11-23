@@ -26,7 +26,7 @@ from .idea_plan import (
 )
 from .library import KINDS, ORIGINS, SORTS, clock, is_copy, library_page, pickable, picker, products
 from .media_changes import options as change_options
-from .media_queue import campaign_wait_reason, recent_media_jobs, unfinished_job_count
+from .media_queue import campaign_wait_reason, in_progress_count, queue_contents
 from .models import (
     Account,
     Alert,
@@ -44,6 +44,7 @@ from .models import (
     RequestRecord,
     Transition,
 )
+from .post_views import published_groups
 from .recovery import held_reason, retry_option, task_failed
 from .retries import block_reason, original_post
 from .rights import RIGHTS, rights_label
@@ -274,7 +275,7 @@ def page_context(
     if not editor:
         control = db.get(Control, 1)
         context.update(control=control, automation_enabled=settings.automates_posts(control))
-        context["active_jobs"] = unfinished_job_count(db)
+        context["active_jobs"] = in_progress_count(db)
 
     allowed = (lambda a: crm_access.editor_asset(a, actor)) if editor else None
     if view == "assets":
@@ -319,13 +320,16 @@ def page_context(
                 .order_by(MediaJob.created_at.desc())
                 .limit(100)
             ).all()
-    elif view == "media-queue":
+    elif view in {"media-queue", "published-posts"}:
         campaign_id = request.query_params.get("campaign_id")
         if campaign_id:
             context["queue_campaign"] = db.get(MediaCampaign, campaign_id)
             if not context["queue_campaign"]:
                 raise HTTPException(404, "Campaign not found")
-        context.update(media_jobs=recent_media_jobs(db, campaign_id), retry_option=retry_option, task_failed=task_failed)
+        if view == "media-queue":
+            context.update(queue_contents(db, campaign_id), retry_option=retry_option, task_failed=task_failed)
+        else:
+            context["published_groups"] = published_groups(db, campaign_id)
     elif view == "compose":
         context["compose_picker"] = picker([a for a in context["assets"] if pickable(a)])
     elif view == "media-studio":

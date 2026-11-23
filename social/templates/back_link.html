@@ -1,0 +1,9 @@
+{% if view == 'post' and editor %}
+<a class="back-link" href="/admin/create#my-posts"><span aria-hidden="true">←</span> My posts</a>
+{% elif view == 'post' %}
+<a class="back-link" href="{{ back_url }}"{% if not post_query %} data-history-back{% endif %}><span aria-hidden="true">←</span> <span data-back-label>Back to {{ back_label }}</span></a>
+{% elif view not in ['dashboard', 'create'] or (view == 'create' and not editor) %}
+{% set parent = {'asset-edit': '/admin/assets', 'upload': '/admin/assets', 'plan': '/admin/create'}.get(view, '/') %}
+{% if queue_campaign %}{% set parent = '/admin/media-studio' if view == 'media-queue' else '/admin/media-queue?campaign_id=' ~ (queue_campaign.id|urlencode) %}{% endif %}
+<a class="back-link" data-history-back href="{{ parent }}"><span aria-hidden="true">←</span> Back<span class="visually-hidden"> to the previous page</span></a>
+{% endif %}
