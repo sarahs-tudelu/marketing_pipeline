@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from ..config import profiles
 from ..connections import account_connected
+from ..delivery_privacy import requires_simulation
 from ..gate import check_disclosure, media_errors, weighted_length
 from ..models import Account, Control, RequestRecord
 from ..security import Vault, redact, safe_url
@@ -155,6 +156,8 @@ class BaseAdapter:
 
     def guard(self):
         self.db.expire_all()
+        if not self.dry and self.post is not None and requires_simulation(self.db, self.post):
+            raise PublishError("paused", "Not public posts can only use simulated delivery")
         if self.db.get(Control, 1).killed or self.db.get(Account, self.platform).paused:
             raise PublishError("paused", "Publishing paused")
         if not self.dry and self.db.get(Account, self.platform).live_enabled is False:
@@ -179,6 +182,11 @@ class BaseAdapter:
         authorized=True,
     ):
         """Durable step checkpoints; never replay an uncertain publish mutation."""
+        if not self.dry:
+            from ..human_review import lock_delivery
+
+            # Serialize the live request's write-ahead marker with a change to Not public.
+            lock_delivery(self.db)
         self.guard()
         record = self.db.scalar(
             select(RequestRecord).where(RequestRecord.post_id == self.post.id, RequestRecord.step == step)

@@ -9,6 +9,7 @@
 {% endif %}
 {% include 'post_progress.html' %}
 {% include 'post_availability.html' %}
+{% if post.simulation_only and post.status not in ['published','awaiting_manual'] %}<p class="muted">Not public · Simulated delivery only</p>{% endif %}
 <div class="section-head"><div><h2>{{ post.campaign }}</h2><p>Prompted by {{ post.prompted_by_label or "Unrecorded" }}</p><p class="muted">{{ post.platform|title }} · {{ 'Human review required' if post.human_review_required else 'Automated campaign' }}{% if post.scheduled_at %} · Scheduled {{ post.scheduled_at }} UTC{% endif %}</p></div><span class="status {{ post.status }}">{{ post.status|replace('_',' ') }}</span></div>
 {% if post.status == 'awaiting_review' %}<div class="banner review-banner"><b>Ready for your review</b><span>This post will wait here until you approve its media and caption.</span></div>{% endif %}
 <div class="review-workspace">

@@ -52,6 +52,13 @@ def validate_campaign(db, settings, brief):
 
 def update_campaign(db, campaign, brief):
     """Update a locked campaign. Existing jobs own their snapshots of the previous brief."""
+    if brief.rights == "not_public" and campaign.brief.get("rights") != "not_public":
+        from .delivery_privacy import restrict_private_posts
+        from .human_review import lock_delivery
+
+        lock_delivery(db)
+        restrict_private_posts(db.connection(), campaign.id)
+        db.expire_all()
     if brief.interval_hours != campaign.brief.get("interval_hours", 24):
         last_batch = db.scalar(select(func.max(MediaJob.created_at)).where(MediaJob.campaign_id == campaign.id))
         if last_batch:

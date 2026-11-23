@@ -2,7 +2,7 @@
 <section>
   <h2>{{ 'Edit campaign' if editing_campaign else 'Advanced brief' }}</h2>
   {% if editing_campaign %}<p>{{ editing_campaign.name }} · {{ 'Enabled' if editing_campaign.enabled else 'Paused' }} · Next eligible {{ editing_campaign.next_run_at }} UTC</p>
-  <p>Changes apply to future batches. An interval change sets the next eligible run from the last batch.</p>{% endif %}
+  <p>Changes apply to future batches. Choosing Not public also switches outstanding reservations to simulated delivery. An interval change sets the next eligible run from the last batch.</p>{% endif %}
   <form method="post" data-creative-brief action="{{ '/forms/media-campaigns/' ~ editing_campaign.id ~ '/save' if editing_campaign else '/forms/media-studio' }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     {% if editing_campaign %}<input type="hidden" name="revision" value="{{ asset_form.revision }}">
@@ -64,7 +64,7 @@
 {% if not editing_campaign %}<section><h2>Recurring campaigns</h2>
   {% for c in media_campaigns %}<article class="card" id="campaign-{{ c.id }}"><h3>{{ c.name }}</h3>
     <p>{{ c.brief.prompt }}</p><p>{{ c.brief.platforms|join(', ') }} · {{ {'mixed': 'real projects and AI inspiration', 'real': 'real projects', 'image': 'AI images', 'video': 'AI videos', 'video_edit': 'AI re-renders'}.get(c.brief.operation, c.brief.operation) }} · {{ c.brief.kind|replace('_',' ') }} · every {{ '%g'|format(c.brief.interval_hours) }} hours</p>
-    <p>{{ 'Enabled' if c.enabled else 'Paused' }} · {{ c.sequence }} batches · next eligible {{ c.next_run_at }} UTC</p>
+    <p>{{ 'Enabled' if c.enabled else 'Paused' }}{% if c.brief.rights == 'not_public' %} · Not public · Simulated delivery{% endif %} · {{ c.sequence }} batches · next eligible {{ c.next_run_at }} UTC</p>
     {% if campaign_errors[c.id] %}<p class="error">{{ campaign_errors[c.id] }}</p>{% endif %}
     {% if "admin's requested post idea" in campaign_errors[c.id] %}<a href="/admin/media-queue">View requested work in In progress</a>
     {% elif c.sequence or 'previous batch' in campaign_errors[c.id] %}<a href="/admin/media-queue?campaign_id={{ c.id }}">View unfinished campaign work</a>{% endif %}

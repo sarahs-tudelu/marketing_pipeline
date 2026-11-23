@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 
 from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
 from .db import now, uid
+from .delivery_privacy import requires_simulation
 from .idea_plan import END_CARD_SECONDS, MAX_CLIPS, MIN_CLIP_SECONDS, Shot, campaign_video_signals
 from .lifecycle import transition
 from .media_search import campaign_references, campaign_scores, campaign_visuals, library_media
@@ -1166,6 +1167,13 @@ def _complete_job(db, job, result):
     brief = job.brief
     job.output_asset_id = result.id
     if brief["create_posts"] and not job.post_id:
+        from .human_review import lock_delivery
+
+        # Serialize binding the post and tightening an existing campaign's delivery permissions.
+        lock_delivery(db)
+        campaign = db.get(MediaCampaign, job.campaign_id, populate_existing=True) if job.campaign_id else None
+        replaced = brief.get("replaces")
+        held = db.get(Post, replaced["post_id"], populate_existing=True) if replaced else None
         post = draft(
             db,
             job.platform,
@@ -1179,9 +1187,12 @@ def _complete_job(db, job, result):
         )
         post.prompted_by = brief.get("prompted_by")
         post.prompted_by_label = brief.get("prompted_by_label")
+        post.simulation_only = bool(
+            brief.get("rights") == "not_public"
+            or (campaign and campaign.brief.get("rights") == "not_public")
+            or (held and requires_simulation(db, held))
+        )
         job.post_id = post.id
-        replaced = brief.get("replaces")
-        held = db.get(Post, replaced["post_id"]) if replaced else None
         if held and held.status == "held":
             if replaced.get("request"):
                 reason = f"Replaced by post {post.id} with the media changes requested: {replaced['request'][:300]}"

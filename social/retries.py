@@ -4,6 +4,8 @@ from copy import deepcopy
 
 from sqlalchemy import select, update
 
+from .delivery_privacy import requires_simulation
+from .human_review import lock_delivery
 from .lifecycle import lock_post, transition
 from .models import Account, Control, MediaJob, Post, PostRetry, RequestRecord
 from .monitoring import event
@@ -33,7 +35,7 @@ def block_reason(db, settings, post):
         return "Resume the pipeline before retrying."
     if account.paused:
         return "Correct the platform connection or policy issue, then resume this platform in Overview before retrying."
-    if not post.dry_run:
+    if not post.dry_run and not requires_simulation(db, post):
         if post.account_id != account.external_id:
             return "The connected account changed. Reconnect the original account or create a new post for the new account."
         from .adapters import adapter
@@ -48,7 +50,10 @@ def block_reason(db, settings, post):
 
 
 def retry_post(db, settings, post, actor):
+    lock_delivery(db)
     lock_post(db, post)
+    db.refresh(post, ["simulation_only"])
+    post.simulation_only = requires_simulation(db, post)
     previous = db.get(PostRetry, post.id)
     if previous:
         return db.get(Post, previous.retry_post_id)
@@ -59,8 +64,9 @@ def retry_post(db, settings, post, actor):
 
     retry = draft(db, post.platform, post.campaign, deepcopy(post.asset_ids), post.facts_id,
                   post.product, post.kind, commit=False)
-    for field in ("prompted_by", "prompted_by_label", "caption", "parts", "fact_ids", "ai_disclosure", "dry_run", "account_id"):
+    for field in ("prompted_by", "prompted_by_label", "caption", "parts", "fact_ids", "ai_disclosure", "simulation_only", "account_id"):
         setattr(retry, field, deepcopy(getattr(post, field)))
+    retry.dry_run = post.dry_run or post.simulation_only
     db.add(PostRetry(original_post_id=post.id, retry_post_id=retry.id, actor=actor))
     transition(db, retry, "generated", f"Retry requested for failed post {post.id}; reused caption and media, fresh checks required", actor)
     # Campaigns and Media Studio follow the new attempt while the original keeps its audit.

@@ -2,6 +2,7 @@
 
 from sqlalchemy import select, update
 
+from .delivery_privacy import requires_simulation
 from .facts import content_digest
 from .lifecycle import lock_post, transition
 from .models import Account, Control, RequestRecord
@@ -53,6 +54,8 @@ def approve(db, settings, post, actor, reviewed_digest):
     from .gate import run_gate
 
     lock_post(db, post)
+    db.refresh(post, ["simulation_only"])
+    post.simulation_only = requires_simulation(db, post)
     if post.status != "awaiting_review":
         raise ValueError("Run the automated checks first, then review the completed media and caption.")
     require_unpublished(db, post)
@@ -61,7 +64,7 @@ def approve(db, settings, post, actor, reviewed_digest):
         raise ValueError("This post changed since you opened it. Refresh and review the current media and caption.")
     transition(db, post, "generated", "Human requested approval; rerunning checks", actor)
     return run_gate(db, settings, post, human_actor=actor,
-                    live=settings.wants_live(post.platform, db.get(Account, post.platform)))
+                    live=not post.simulation_only and settings.wants_live(post.platform, db.get(Account, post.platform)))
 
 
 def stop(db, post, actor):

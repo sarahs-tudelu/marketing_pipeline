@@ -5,6 +5,8 @@ from copy import deepcopy
 from sqlalchemy import select
 
 from .availability import check_post, observe
+from .delivery_privacy import requires_simulation
+from .human_review import lock_delivery
 from .lifecycle import lock_post, transition
 from .models import Post, PostRepost, PostRetry
 
@@ -42,7 +44,10 @@ def sources(db, post):
 
 
 def create(db, settings, original, actor, confirmed_removed=False, client=None):
+    lock_delivery(db)
     lock_post(db, original)
+    db.refresh(original, ["simulation_only"])
+    original.simulation_only = requires_simulation(db, original)
     if prior := existing(db, original):
         return prior
     if original.status != "published" or original.dry_run or not original.remote_id:
@@ -68,8 +73,9 @@ def create(db, settings, original, actor, confirmed_removed=False, client=None):
         commit=False,
         human_review_required=True,
     )
-    for name in ("prompted_by", "prompted_by_label", "caption", "parts", "fact_ids", "ai_disclosure", "account_id", "dry_run"):
+    for name in ("prompted_by", "prompted_by_label", "caption", "parts", "fact_ids", "ai_disclosure", "account_id", "simulation_only"):
         setattr(post, name, deepcopy(getattr(original, name)))
+    post.dry_run = original.dry_run or original.simulation_only
     db.add(PostRepost(original_post_id=original.id, repost_post_id=post.id, actor=actor))
     transition(
         db,

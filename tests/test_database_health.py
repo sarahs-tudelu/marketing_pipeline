@@ -30,7 +30,7 @@ def test_health_detects_unapplied_availability_migration_and_recovers(settings):
                     # b4e8d2f61a93 (deleted library files kept for posts).
                     "missing_columns": {"assets": ["removed_at", "removed_by"],
                                         "media_jobs": ["dismissed_at"],
-                                        "posts": ["prompted_by", "prompted_by_label"]},
+                                        "posts": ["prompted_by", "prompted_by_label", "simulation_only"]},
                 }
                 with engine.connect() as connection:
                     assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "c6f3a7b95247"

@@ -12,6 +12,7 @@ from .asset_edit import form_values as asset_edit_values
 from .availability import LABELS
 from .clip_replace import clip_options, needs_runway_music, source_job
 from .config import PLATFORMS, REAL_MEDIA_ONLY
+from .delivery_privacy import requires_simulation
 from .drive_import import panel as drive_panel
 from .facts import content_digest
 from .idea_plan import (
@@ -115,7 +116,7 @@ def post_context(db, settings, post, *, editor):
         return context
     if post.status == "awaiting_review":
         context["reviewed_digest"] = content_digest(post, assets) if None not in assets else ""
-        context["post_wants_live"] = settings.wants_live(post.platform, db.get(Account, post.platform))
+        context["post_wants_live"] = not requires_simulation(db, post) and settings.wants_live(post.platform, db.get(Account, post.platform))
     if post.status == "published":
         context["availability"] = db.get(PostAvailability, post.id)
         if not post.dry_run:

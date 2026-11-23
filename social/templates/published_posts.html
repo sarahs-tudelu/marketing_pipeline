@@ -13,7 +13,8 @@
     <li><div><a href="/posts/{{ p.id }}{{ source_query('published-posts', scope) }}">{{ p.campaign }}</a>
         {% if p.published_at %}<small>{{ 'Simulated' if p.dry_run else 'Published' }} {{ p.published_at }} UTC</small>
         {% elif p.scheduled_at %}<small>Scheduled {{ p.scheduled_at }} UTC</small>{% endif %}</div>
-      <span class="status {{ p.status }}">{{ {'published': 'Simulation complete' if p.dry_run else 'Published', 'awaiting_manual': 'Awaiting TikTok completion', 'publishing': 'Delivery in progress'}.get(p.status, p.status|capitalize) }}</span>
+      {% set labels = {'approved': 'Simulation approved', 'scheduled': 'Simulation scheduled', 'publishing': 'Simulation in progress', 'awaiting_manual': 'Simulated inbox', 'published': 'Simulation complete'} if mode == 'simulated' else {'awaiting_manual': 'Awaiting TikTok completion', 'publishing': 'Delivery in progress'} %}
+      <span class="status {{ p.status }}">{{ labels.get(p.status, p.status|capitalize) }}</span>
       {% if mode == 'real' and p.status == 'published' and p.live_url %}<a href="{{ p.live_url }}" target="_blank" rel="noopener noreferrer">View live post ↗</a>{% endif %}
     </li>{% endfor %}</ul>
   </details>

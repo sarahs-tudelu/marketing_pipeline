@@ -6,6 +6,7 @@ from sqlalchemy import select, update
 
 from .config import profiles
 from .db import now
+from .delivery_privacy import requires_simulation
 from .lifecycle import PostConflict, transition
 from .models import Account, Control, Post
 
@@ -80,17 +81,8 @@ def schedule(db, settings, post, earliest=None):
         post.human_approved_digest = ""
         db.commit()
         raise PostConflict("Review and approve this media and caption before scheduling.")
-    from .adapters import adapter
-
-    selected = adapter(settings, db, post)
-    from .reposts import sources
-    from .retries import original_post
-
-    original = original_post(db, post) or next(iter(sources(db, post)), None)
-    if original and not original.dry_run:
-        if original.account_id != account.external_id or selected.dry:
-            raise ValueError("Retry requires the original live account with live posting enabled")
-    post.dry_run = original.dry_run if original else selected.dry
+    post.simulation_only = requires_simulation(db, post)
+    post.dry_run = reservation_is_simulated(db, settings, post, account)
     post.account_id = account.external_id or "dry-" + post.platform
     profile = profiles(settings)[post.platform]
     candidate = max(earliest or now(), now()).replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -104,3 +96,17 @@ def schedule(db, settings, post, earliest=None):
         candidate += timedelta(minutes=1)
     db.rollback()
     raise ValueError("No slot available within 31 days: caps, spacing, pending TikTok inbox, or content mix")
+
+
+def reservation_is_simulated(db, settings, post, account):
+    if post.simulation_only:
+        return True
+    from .adapters import adapter
+    from .reposts import sources
+    from .retries import original_post
+
+    selected = adapter(settings, db, post)
+    original = original_post(db, post) or next(iter(sources(db, post)), None)
+    if original and not original.dry_run and (original.account_id != account.external_id or selected.dry):
+        raise ValueError("Retry requires the original live account with live posting enabled")
+    return original.dry_run if original else selected.dry

@@ -133,7 +133,7 @@ def test_review_slideshow_and_collapsible_delivery_history_in_browser(db, settin
             archive = page.locator("#simulated-linkedin")
             await playwright.expect(archive.get_by_role("link", name=post.campaign)).to_be_hidden()
             await archive.locator("summary").click()
-            await playwright.expect(archive.get_by_text("Scheduled", exact=True)).to_be_visible()
+            await playwright.expect(archive.get_by_text("Simulation scheduled", exact=True)).to_be_visible()
             await archive.get_by_role("link", name=post.campaign).click()
             await page.get_by_role("link", name="Back to Published posts").click()
             await playwright.expect(archive.get_by_role("link", name=post.campaign)).to_be_visible()

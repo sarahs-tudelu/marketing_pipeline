@@ -25,15 +25,16 @@ def source_query(source, campaign_id=None):
     return "?" + urlencode(params)
 
 
-def delivery_group(status, dry_run):
-    # The scheduler fixes the delivery mode when it reserves a slot.
-    return "unscheduled" if status == "approved" else "simulated" if dry_run else "real"
+def delivery_group(post):
+    if post.status == "approved":
+        return "simulated" if post.simulation_only else "unscheduled"
+    return "simulated" if post.dry_run else "real"
 
 
 def published_location(post, campaign_id):
     return (
         list_location("published-posts", campaign_id)
-        + f"#{delivery_group(post.status, post.dry_run)}-{post.platform}"
+        + f"#{delivery_group(post)}-{post.platform}"
     )
 
 
@@ -96,6 +97,7 @@ def published_groups(db, campaign_id=None):
         Post.platform,
         Post.status,
         Post.dry_run,
+        Post.simulation_only,
         Post.scheduled_at,
         Post.published_at,
         Post.live_url,
@@ -107,5 +109,5 @@ def published_groups(db, campaign_id=None):
     )
     groups = {"unscheduled": {}, "real": {}, "simulated": {}}
     for post in db.execute(query):
-        groups[delivery_group(post.status, post.dry_run)].setdefault(post.platform, []).append(post)
+        groups[delivery_group(post)].setdefault(post.platform, []).append(post)
     return groups

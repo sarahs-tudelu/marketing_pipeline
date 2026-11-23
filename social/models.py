@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -132,6 +133,7 @@ class Post(Base):
     remote_id: Mapped[str] = mapped_column(String(300), default="")
     live_url: Mapped[str] = mapped_column(Text, default="")
     dry_run: Mapped[bool] = mapped_column(Boolean, default=True)
+    simulation_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
@@ -276,7 +278,7 @@ class MediaJob(Base):
     task_history: Mapped[list] = mapped_column(JSON, default=list)
     source_asset_ids: Mapped[list] = mapped_column(JSON, default=list)
     output_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"))
-    post_id: Mapped[str | None] = mapped_column(ForeignKey("posts.id"))
+    post_id: Mapped[str | None] = mapped_column(ForeignKey("posts.id"), index=True)
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime)
     error: Mapped[str] = mapped_column(Text, default="")
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime)

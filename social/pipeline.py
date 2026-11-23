@@ -218,6 +218,7 @@ def publish_due(db, settings, at=None, client=None):
     from .adapters import adapter
     from .adapters.base import Deferred, PublishError
     from .connections import refresh_account
+    from .delivery_privacy import reconcile_reservations, requires_simulation
     from .scheduler import COUNTED, permitted
 
     at = at or now()
@@ -234,6 +235,13 @@ def publish_due(db, settings, at=None, client=None):
         post = candidate
         if post.status not in {"scheduled", "publishing"}:
             db.rollback()
+            continue
+        if not post.dry_run and requires_simulation(db, post):
+            post.simulation_only = True
+            db.flush()
+            reconcile_reservations(db.connection(), post.id)
+            db.commit()
+            db.refresh(post)
             continue
         account = db.get(Account, post.platform)
         if db.get(Control, 1).killed or account.paused or (
