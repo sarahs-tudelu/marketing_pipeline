@@ -498,6 +498,7 @@ def create_app(settings=None):
                 "state": j.state,
                 "stage": j.stage,
                 "generation_phase": j.brief.get("active_generation", ""),
+                "shared_render_from": j.brief.get("shared_render_from", ""),
                 "task_id": j.task_id,
                 "retry_count": len(j.brief.get("failed_tasks", [])),
                 "saved_scenes": sum(h.get("stage") == "scene" for h in j.task_history),

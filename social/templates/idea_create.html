@@ -15,14 +15,14 @@
         <label class="choice"><input type="radio" name="upload_use" value="real" {{ 'checked' if idea_form.get('upload_use') == 'real' else '' }}>Edit them into a real project post</label>
         <label class="choice"><input type="radio" name="upload_use" value="reference" {{ 'checked' if idea_form.get('upload_use') == 'reference' else '' }}>Use it as a starting point for new AI media</label>
       </fieldset>
-      <small class="muted">These apply to the files you add and the files you choose. <b>As it is:</b> one photo or video, plus an audio file for its sound if you like. It's resized for each platform and AI writes the caption; the Format choice doesn't apply. <b>Real project:</b> several photos and videos edited with standard tools only (crops, colour, a collage, or trimmed clips joined in order with your audio), with no AI label. <b>Starting point:</b> Runway makes new media from it: an image to start a video, a video to edit, or audio to rework.</small>
+      <small class="muted">These apply to the files you add and the files you choose. <b>As it is:</b> one photo or video, plus an audio file for its sound if you like. Compatible platforms share the resized file and AI writes each caption; the Format choice doesn't apply. <b>Real project:</b> several photos and videos edited with standard tools only (crops, colour, a collage, or trimmed clips joined in order with your audio), with no AI label. <b>Starting point:</b> Runway makes new media from it: an image to start a video, a video to edit, or audio to rework.</small>
     </fieldset>
     </div>
     <div class="idea-side">
     <fieldset class="choice-row"><legend>Format</legend>
       {% for value, label in formats.items() %}<label class="choice"><input type="radio" name="format" value="{{ value }}" {{ 'checked' if idea_form.get('format', 'auto') == value or (value == 'auto' and idea_form.get('format') not in formats) else '' }}>{{ label }}{{ ' (recommended)' if value == 'auto' else '' }}</label>{% endfor %}
     </fieldset>
-    <fieldset><legend>Platforms — each gets its own framing and caption</legend>
+    <fieldset><legend>Platforms</legend><small>Compatible platforms share one media file. Each gets its own caption.</small>
       {% for c in connections %}<label class="checkbox"><input type="checkbox" name="platforms" value="{{ c.account.platform }}" {{ 'checked' if c.account.platform in idea_form.get('platforms', ['instagram']) else '' }}>{{ c.account.platform|platform }}<span class="tag">{{ 'Simulated' if c.dry else 'Live' }}</span>{% if c.account.platform in real_media_only %}<span class="tag">Real project only</span>{% endif %}</label>{% endfor %}
     </fieldset>
     {% set needs_options = not idea_form.get('rights', 'public') %}

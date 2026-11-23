@@ -25,7 +25,7 @@
     </div>
     <h3>Your media</h3>
     <ul class="plan-notes">{% for a in idea_uploads %}<li>{{ a.original_name }} · {{ {'image': 'photo', 'video': 'video', 'audio': 'soundtrack'}[a.media.mime.split('/')[0]] }}{% if a.media.get('duration') %} · {{ a.media.duration|round|int }} s{% endif %}</li>{% endfor %}</ul>
-    <p class="muted">It's posted as it is. Each platform gets a copy sized for it, and the original stays unchanged in the asset library.</p>
+    <p class="muted">Compatible platforms use the same publishing copy of your upload.</p>
     {% if plan.operation == 'video' %}
       <label>Length (seconds)<input type="number" name="duration" min="5" max="90" value="{{ plan.duration }}"></label>
       {% for a in idea_uploads if a.media.mime.startswith('audio/') %}{% if loop.first %}<p>Sound: {{ a.original_name }} replaces the video's own sound.</p>{% endif %}

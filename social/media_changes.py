@@ -92,7 +92,7 @@ def options(db, post, *, allowed=None):
                 db,
                 product=brief.get("product") or "company",
                 public=brief.get("rights") != "not_public",
-                drive_only=job.platform in REAL_MEDIA_ONLY,
+                drive_only=post.platform in REAL_MEDIA_ONLY,
                 allowed=allowed,
             )
             if a.id not in used
@@ -142,7 +142,7 @@ def _revise_real(db, settings, post, job, text, actor, picks):
             or not real_asset(asset, public=public)
         ):
             raise ValueError("A file you ticked can't be used in this post. Refresh the page and choose again.")
-        if job.platform in REAL_MEDIA_ONLY and not (asset.tags or {}).get("google_drive_file_id"):
+        if post.platform in REAL_MEDIA_ONLY and not (asset.tags or {}).get("google_drive_file_id"):
             raise ValueError("Pinterest only posts media imported from Google Drive. Choose a Google Drive file.")
     media = list(dict.fromkeys(list(brief.get("reference_ids", [])) + picks))
     if len(media) > MAX_MEDIA:
@@ -150,11 +150,11 @@ def _revise_real(db, settings, post, job, text, actor, picks):
     duration = brief["duration"]
     asked = read_signals(text)["seconds"]
     if brief.get("real_format") == "video" and asked:
-        longest = profiles(settings)[job.platform].max_duration
+        longest = profiles(settings)[post.platform].max_duration
         duration = int(max(END_CARD_SECONDS + MIN_CLIP_SECONDS, min(asked, longest)))
     elif brief.get("real_format") == "video" and picks:
         # The length fitted the media already used; added files get room, up to the idea's length.
-        duration = room_for(settings, brief["prompt"], [job.platform], duration)
+        duration = room_for(settings, brief["prompt"], [post.platform], duration)
     previous = brief.get("real_edit") or {}
     revised = {
         k: v
@@ -162,6 +162,7 @@ def _revise_real(db, settings, post, job, text, actor, picks):
         if k not in {"real_edit", "failed_tasks", "active_generation", "runway_retry_at"}
     } | {
         "workflow": "immediate",
+        "platforms": [post.platform],
         "create_posts": True,
         "reference_ids": media,
         "duration": duration,
@@ -182,8 +183,8 @@ def _revise_real(db, settings, post, job, text, actor, picks):
         },
     }
     created = MediaJob(
-        batch_key=f"revise:{uid()}:{job.platform}",
-        platform=job.platform,
+        batch_key=f"revise:{uid()}:{post.platform}",
+        platform=post.platform,
         brief=revised,
         state="queued",
         stage="visual",

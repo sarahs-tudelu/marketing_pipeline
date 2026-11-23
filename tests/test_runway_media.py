@@ -188,8 +188,11 @@ def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets,
             }),
         }]}],
     })
-    job = queue_jobs(db, settings, brief_for(db, settings, reference_ids=[assets[0].id]))[0]
-    job.brief = job.brief | {"execution_mode": "live"}
+    job, sibling = queue_jobs(db, settings, brief_for(
+        db, settings, reference_ids=[assets[0].id], platforms=["instagram", "facebook"]
+    ))
+    for recipient in (job, sibling):
+        recipient.brief = recipient.brief | {"execution_mode": "live"}
     db.commit()
     settings.ai_mode, settings.runway_api_key = "live", SecretStr("mock")
     original = storage(settings).read(assets[0].storage_key)
@@ -227,12 +230,15 @@ def test_live_task_recovery_download_retry_never_resubmits(db, settings, assets,
     assert job.state == "running" and job.task_id == "task-123"
     process_jobs(db, settings, provider)
     assert job.state == "failed" and job.task_id == "task-123"
+    process_jobs(db, settings, provider)
+    assert sibling.state == "queued" and not sibling.task_history
     resume_job(job)
     db.commit()
     process_jobs(db, settings, provider)
     process_jobs(db, settings, provider)
     process_jobs(db, settings, provider)
     assert job.state == "complete", job.error
+    assert sibling.state == "complete" and sibling.output_asset_id == job.output_asset_id
     assert provider.submissions == 1
     assert "secret-url" not in json.dumps(job.brief) + json.dumps(job.task_history)
 

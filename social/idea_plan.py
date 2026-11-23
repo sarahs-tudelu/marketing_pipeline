@@ -722,13 +722,14 @@ def work_summary(plan, platforms, video_model="veo3.1"):
             else ""
         )
         return (
-            "Nothing is sent to Runway. Each platform gets a copy of your media sized for it, and the original "
-            f"stays unchanged in the asset library.{ending} AI writes the caption, and the usual checks run."
+            f"Nothing is sent to Runway. Compatible platforms share a publishing copy of your media.{ending} "
+            "AI writes each platform's caption, and the usual checks run."
         )
     count = max(1, len(platforms))
-    each = "per platform" if count > 1 else "in total"
+    each = "per shared render" if count > 1 else "in total"
+    sharing = " Compatible platforms use the same media and get separate captions." if count > 1 else ""
     if plan.operation == "image":
-        return f"1 Runway image {each}."
+        return f"1 Runway image {each}.{sharing}"
     if plan.operation == "video_edit":
         work = "Runway edits your uploaded video in segments of up to 30 seconds"
     else:
@@ -744,8 +745,7 @@ def work_summary(plan, platforms, video_model="veo3.1"):
         generated = sum(next(d for d in (4, 6, 8) if d >= seconds) for seconds in clips)
         if generated > footage:
             summary += f" Veo generates {generated} seconds {each}; extra footage is trimmed to your chosen length."
-    if count > 1:
-        summary += f" {count} platforms are selected, and each gets its own generation."
+    summary += sharing
     if plan.end_card:
         summary += " The logo end card is made from your uploaded logo, with no Runway cost."
     return summary

@@ -143,6 +143,7 @@ def test_video_with_own_soundtrack_and_logo(db, settings, facts, logo, offline):
     finish(db, settings)
     jobs = db.scalars(select(MediaJob)).all()
     assert [j.state for j in jobs] == ["complete", "complete"], [j.error for j in jobs]
+    assert jobs[0].output_asset_id == jobs[1].output_asset_id
     for job in jobs:
         copy = db.get(Asset, db.get(Post, job.post_id).asset_ids[0])
         assert copy.tags["soundtrack_asset_id"] == sound.id and copy.tags["end_card"]["asset_id"] == logo.id
@@ -150,9 +151,8 @@ def test_video_with_own_soundtrack_and_logo(db, settings, facts, logo, offline):
         assert abs(copy.media["duration"] - 9) < 0.2
         with av.open(io.BytesIO(storage(settings).read(copy.storage_key))) as container:
             assert container.streams.audio
-        # The square video is too small for Facebook Reels, so it's padded to 9:16 there.
-        expected = (720, 1280) if job.platform == "facebook" else (720, 720)
-        assert (copy.media["width"], copy.media["height"]) == expected
+        # Both destinations accept the same copy padded for Facebook Reels.
+        assert (copy.media["width"], copy.media["height"]) == (720, 1280)
 
 
 def test_reference_use_starts_new_ai_media_from_the_upload(db, settings, facts, house_logo, offline):  # noqa: F811

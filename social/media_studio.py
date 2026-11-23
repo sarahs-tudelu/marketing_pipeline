@@ -10,7 +10,7 @@ from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError, ValidationInfo, field_validator, model_validator
-from sqlalchemy import case, or_, select, update
+from sqlalchemy import select, update
 
 from .config import PLATFORMS, REAL_MEDIA_ONLY, profiles
 from .db import now, uid
@@ -28,6 +28,7 @@ from .recovery import runway_failure
 from .renditions import fitted_size, image_rendition, logo_card, video_rendition, video_sequence
 from .rights import combined_rights, owner_value, usage_rights
 from .runway import Runway, job_settings, payload_for, video_clip_limit
+from .shared_media import compatible_render, group_renders, runnable_jobs
 from .storage import ingest, source_files, storage
 from .video_rules import (
     AMBIENT_STYLES,
@@ -442,8 +443,9 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
     signals = campaign_video_signals(brief.prompt) if brief.operation == "mixed" else {}
     video_requested = signals.get("video")
     result = []
+    platform_profiles = profiles(settings)
     for platform in brief.platforms:
-        profile = profiles(settings)[platform]
+        profile = platform_profiles[platform]
         recent = db.scalars(
             select(MediaJob)
             .where(MediaJob.platform == platform)
@@ -595,8 +597,7 @@ def queue_jobs(db, settings, brief, *, campaign=None, sequence=0, snapshot=None)
         if operation == "image":
             values.update(audio_prompt="", audio_reference_ids=[], end_card_asset_id="")
         result.append(_add_job(db, brief, campaign, batch, platform, values))
-    db.flush()
-    return result
+    return group_renders(db, settings, result, platform_profiles)
 
 
 def no_real_media(platform):
@@ -704,13 +705,15 @@ def _queue_uploaded(db, settings, brief, snapshot, *, live=False):
     style = next_ambient_style(db) if brief.operation == "video" else ""
     tracks = music_tracks(db, live=live, public=brief.rights != "not_public") if brief.operation == "video" else []
     result = []
+    platform_profiles = profiles(settings)
     for platform in brief.platforms:
-        profile = profiles(settings)[platform]
+        profile = platform_profiles[platform]
         if brief.operation == "video" and brief.duration > profile.max_duration:
             raise ValueError(f"{platform}: choose a duration of at most {profile.max_duration:g} seconds")
         if brief.operation == "image" and platform == "tiktok":
             raise ValueError("TikTok requires video; untick TikTok to post a photo")
         values = brief.model_dump() | {
+            "platforms": [platform],
             "generation_prompt": "",
             "concept": "",
             "direction": "",
@@ -732,8 +735,7 @@ def _queue_uploaded(db, settings, brief, snapshot, *, live=False):
         )
         db.add(job)
         result.append(job)
-    db.flush()
-    return result
+    return group_renders(db, settings, result, platform_profiles)
 
 
 def activate_planned_jobs(db, settings):
@@ -1169,6 +1171,12 @@ def _finish(db, settings, job):
     db.commit()
     ensure_visual_summary(db, summary_settings, result)
     db.commit()
+    _complete_job(db, job, result)
+
+
+def _complete_job(db, job, result):
+    brief = job.brief
+    job.output_asset_id = result.id
     if brief["create_posts"] and not job.post_id:
         post = draft(
             db,
@@ -1200,6 +1208,27 @@ def _finish(db, settings, job):
             transition(db, held, "failed", reason, replaced.get("requested_by") or "admin")
     job.state, job.error = "complete", ""
     db.commit()
+
+
+def _reuse_render(db, settings, job, source):
+    claimed = db.execute(update(MediaJob).where(MediaJob.id == job.id, MediaJob.state == "queued")
+                         .values(state="rendering"))
+    if not claimed.rowcount:
+        db.rollback()
+        return
+    if match := compatible_render(db, job, source, profiles(settings)[job.platform]):
+        renderer, asset = match
+        job.brief = job.brief | {"shared_render_from": renderer.id, "shared_render_platform": renderer.platform}
+        _complete_job(db, job, asset)
+        return
+    # The completed file doesn't fit this destination. Assemble its local rendition from the
+    # same original clips, edit decisions and music without sending another provider request.
+    job.brief = {k: v for k, v in source.brief.items()
+                 if k not in {"usage_checked", "failed_tasks", "active_generation", "active_model",
+                              "active_estimate", "runway_retry_at"}} | {"platforms": [job.platform]}
+    job.source_asset_ids = list(source.source_asset_ids)
+    db.commit()
+    _finish(db, settings, job)
 
 
 def fitted_copy(
@@ -1419,23 +1448,12 @@ def process_jobs(db, settings, provider=None):
     db.refresh(control)
     if control.killed:
         return
-    jobs = db.scalars(
-        select(MediaJob)
-        .where(MediaJob.state.in_(["queued", "submitting", "running", "rendering"]))
-        .where(or_(
-            MediaJob.state != "queued",
-            MediaJob.brief["runway_retry_at"].as_string().is_(None),
-            MediaJob.brief["runway_retry_at"].as_string() <= now().isoformat(),
-        ))
-        .order_by(case((MediaJob.brief["workflow"].as_string() == "immediate", 0), else_=1), MediaJob.created_at)
-        .limit(settings.media_jobs_per_tick)
-    ).all()
     runway = provider or Runway(settings)
     configured = settings
     from . import usage
 
     try:
-        for job in jobs:
+        for job in runnable_jobs(db, settings.media_jobs_per_tick, now()):
             # The previous job has committed; save its recorded requests before starting this one.
             usage.flush(db)
             usage.attribute(media_job_id=job.id, platform=job.platform, post_id=job.post_id)
@@ -1490,6 +1508,9 @@ def process_jobs(db, settings, provider=None):
                     context={"stored": True},
                 )
                 validate_sources(db, brief, live=settings.wants_live(job.platform, db.get(Account, job.platform)))
+                if source_id := job.brief.get("shared_render_from"):
+                    _reuse_render(db, settings, job, db.get(MediaJob, source_id))
+                    continue
                 if brief.as_uploaded or brief.operation == "real":
                     if brief.operation == "real" and "real_edit" not in job.brief:
                         from .real_edit import plan_edit
@@ -1627,6 +1648,9 @@ def process_jobs(db, settings, provider=None):
 def resume_job(job):
     if job.state not in {"failed", "uncertain"}:
         raise ValueError("Only failed or uncertain jobs can be resumed")
+    if job.brief.get("render_peers"):
+        job.state, job.error = "queued", ""
+        return
     from .reference_grounding import current_plan
 
     plan = current_plan(job) or {}

@@ -36,7 +36,8 @@ def source_job(db, post):
         return None
     return db.scalar(
         select(MediaJob)
-        .where(MediaJob.output_asset_id.in_(post.asset_ids))
+        .where(MediaJob.output_asset_id.in_(post.asset_ids),
+               MediaJob.brief["shared_render_from"].as_string().is_(None))
         .order_by(MediaJob.created_at.desc())
     )
 
@@ -375,6 +376,7 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, re
         if k not in {"failed_tasks", "active_generation", "runway_retry_at", "repair_hold", "repair_routes", "repair_verdict"}
     } | {
         "workflow": "immediate",
+        "platforms": [post.platform],
         "create_posts": True,
         "replaces": {
             "post_id": post.id,
@@ -446,8 +448,8 @@ def replace_parts(db, post, requests, actor, *, auto_attempt=0, auto_limit=0, re
         if stage == "render":
             stage, state = "visual", "rendering"
     created = MediaJob(
-        batch_key=f"replace-{first['kind']}:{uid()}:{job.platform}",
-        platform=job.platform,
+        batch_key=f"replace-{first['kind']}:{uid()}:{post.platform}",
+        platform=post.platform,
         brief=brief,
         state=state,
         stage=stage,
