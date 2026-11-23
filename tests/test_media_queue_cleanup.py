@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import timedelta
 from html import unescape
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ from social.app import create_app
 from social.db import now, uid
 from social.media_queue import batch_wait_reason
 from social.media_studio import replenish_campaigns
-from social.models import Asset, MediaJob, Post, RequestRecord, Transition
+from social.models import Asset, MediaCampaign, MediaJob, Post, RequestRecord, Transition
 from social.pipeline import draft
 
 
@@ -33,6 +34,61 @@ def job(db, campaign, *, post=None, state="complete", replaces=None):
     db.add(row)
     db.commit()
     return row
+
+
+def test_two_private_campaigns_queue_at_their_interval_while_posts_wait(
+    db, settings, campaign, assets, house_logo, monkeypatch
+):
+    start = now()
+    due = start + timedelta(minutes=30)
+    campaign.brief = campaign.brief | {"interval_hours": 0.5}
+    campaign.enabled, campaign.sequence, campaign.next_run_at = True, 1, due
+    video = campaign.brief | {"campaign": "Photo to video", "operation": "video", "duration": 8,
+                              "reference_ids": [assets[0].id]}
+    other = MediaCampaign(name=video["campaign"], brief=video, enabled=True, sequence=1, next_run_at=due)
+    db.add(other)
+    db.commit()
+    queued_posts = []
+    for owner, status in [(campaign, "scheduled"), (campaign, "awaiting_review"), (other, "scheduled")]:
+        previous = draft(db, "instagram", owner.name, [assets[0].id], owner.brief["facts_id"])
+        previous.simulation_only, previous.status = True, status
+        if status == "scheduled":
+            previous.scheduled_at = start + timedelta(days=1)
+        job(db, owner, post=previous)
+        queued_posts.append((previous, status, previous.scheduled_at))
+
+    monkeypatch.setitem(ADAPTERS, "instagram", lambda *args: SimpleNamespace(dry=False))
+    settings.ai_mode, settings.live_platforms, settings.runway_api_key = "live", "instagram", SecretStr("test")
+    tick = due - timedelta(seconds=1)
+    monkeypatch.setattr("social.media_studio.now", lambda: tick)
+    replenish_campaigns(db, settings)
+    assert campaign.sequence == other.sequence == 1
+    tick = due
+    replenish_campaigns(db, settings)
+    replenish_campaigns(db, settings)
+    assert campaign.sequence == other.sequence == 2
+    assert campaign.next_run_at == other.next_run_at == due + timedelta(minutes=30)
+    for owner in [campaign, other]:
+        new = db.scalar(select(MediaJob).where(MediaJob.batch_key == f"{owner.id}:1:instagram"))
+        assert new.state == "queued" and new.brief["operation"] == owner.brief["operation"]
+    for previous, status, delivery_time in queued_posts:
+        db.refresh(previous)
+        assert previous.simulation_only and previous.status == status and previous.scheduled_at == delivery_time
+
+
+def test_simulated_post_only_releases_private_campaign_after_media_completes(db, campaign, post):
+    post.simulation_only, post.status = True, "held"
+    original = job(db, campaign, post=post)
+    assert not batch_wait_reason(db, campaign.id)
+    repair = job(db, campaign, state="running", replaces=original)
+    assert "media job in the previous batch is running" in batch_wait_reason(db, campaign.id)
+    repair.state = "failed"
+    db.commit()
+    assert "media job in the previous batch is failed" in batch_wait_reason(db, campaign.id)
+    repair.state = "cancelled"
+    campaign.brief = campaign.brief | {"rights": "public"}
+    db.commit()
+    assert "post in the previous batch is held" in batch_wait_reason(db, campaign.id)
 
 
 def ids(client, campaign_id=""):

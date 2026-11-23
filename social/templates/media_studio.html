@@ -50,7 +50,7 @@
       <label>Finished video duration (seconds)<input type="number" name="duration" min="{{ 3 if editing_campaign and editing_campaign.brief.get('duration', 5)|int < 5 else 5 }}" max="90" value="{{ asset_form.get('duration', '10') }}"></label>
       <label>Recurring interval (hours)<input type="number" name="interval_hours" min="0" step="any" required aria-describedby="campaign-interval-help" value="{{ asset_form.get('interval_hours', '24') }}"></label>
     </div>
-    <p id="campaign-interval-help" class="muted">Not public: any positive number of hours, including decimals (0.25 = 15 minutes). Public: 24 to 720 whole hours. The next batch waits for the previous batch to finish.</p>
+    <p id="campaign-interval-help" class="muted">Not public campaigns accept any positive interval (0.5 hours = 30 minutes). Once the previous media jobs finish, another batch can start at the next eligible time, even while simulated posts await review or delivery. Public campaigns use 24 to 720 whole hours and wait for the previous posts to finish.</p>
     <p class="muted">Videos run 5 to 90 seconds including the 3-second logo ending. Each generated clip runs up to {{ 8 if settings.runway_video_model == 'veo3.1' else 10 }} seconds and incurs Runway generation costs. Re-rendered segments run up to 30 seconds. The app inserts original shots locally.</p>
     {% with values=asset_form, owner_hint='Who owns the references and output' %}{% include "rights_fields.html" %}{% endwith %}
     {% if editing_campaign %}

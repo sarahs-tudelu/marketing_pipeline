@@ -10,7 +10,7 @@ from .db import now
 from .human_review import UNPUBLISHED_STATES, delivery_reported, possible_delivery_requests
 from .idea_plan import _platform_names
 from .lifecycle import PostConflict
-from .models import MediaJob, Post, PostRetry
+from .models import MediaCampaign, MediaJob, Post, PostRetry
 
 DELIVERY_STATES = {"approved", "scheduled", "publishing", "awaiting_manual", "published"}
 ATTENTION_STATES = {"held", "failed", "uncertain"}
@@ -92,12 +92,14 @@ def campaign_attempts(campaign_id):
 
 
 def batch_wait_reason(db, campaign_id):
-    blocker = db.execute(
-        current_attempts(MediaJob.platform, MediaJob.state, Post.status)
-        .where(campaign_attempts(campaign_id), unfinished())
-        .order_by(MediaJob.created_at, MediaJob.id)
-        .limit(1)
-    ).first()
+    query = current_attempts(MediaJob.platform, MediaJob.state, Post.status).where(
+        campaign_attempts(campaign_id), unfinished()
+    )
+    campaign = db.get(MediaCampaign, campaign_id)
+    if campaign and campaign.brief.get("rights") == "not_public":
+        # Review and delivery of a simulation can continue independently of the next media batch.
+        query = query.where((MediaJob.state != "complete") | Post.simulation_only.is_(False))
+    blocker = db.execute(query.order_by(MediaJob.created_at, MediaJob.id).limit(1)).first()
     if not blocker:
         return ""
     platform, state, post_status = blocker

@@ -23,9 +23,9 @@ New jobs use Nano Banana 2.1 for images and scene stills, and standard Veo 3.1 f
 Recurring campaigns marked **Not public** accept any positive, finite interval in hours that fits the
 supported date range, including decimals: `0.25` is 15 minutes and `0.5` is 30 minutes. They do not have
 the 24–720-hour restriction. **Public** campaigns retain whole-hour intervals from 24 to 720. The form,
-API and campaign-file import use the same validation. The interval sets the next batch's eligibility;
-worker timing, automation/live-account requirements and waiting for the previous batch still apply.
-Not public is a usage-rights restriction, not a switch that changes a connected platform to dry-run mode.
+API and campaign-file import use the same validation. The interval starts when the worker queues a batch.
+Once the previous media jobs finish, the worker can queue the next eligible private batch while the earlier posts
+await review or simulated delivery. Worker timing and automation/live-account requirements still apply.
 
 Website inspiration reads fresh text from the fixed `https://tudelu.com/` origin. Temporary connection,
 timeout and server failures receive at most one immediate retry; a rate limit or `Retry-After` response
@@ -169,7 +169,7 @@ AI posts rotate between images, new videos and re-renders when suitable footage 
 
 The campaign continues to rotate creative directions and suggested use cases. A setting named in the prompt takes precedence. TikTok gets video, and Pinterest gets real Google Drive media in every batch. The scheduler enforces the platform's promotional mix, spacing and capacity limits.
 
-Each campaign waits for its unfinished media jobs and posts, including scheduled posts awaiting delivery. **View unfinished campaign work** opens the items responsible for the wait. When a retry replaces a draft, the campaign follows the replacement through review and delivery. Cancelling a pending replacement brings the original held draft back into view.
+Each campaign waits for unfinished media generation and repairs. Public campaigns also wait for outstanding posts, including scheduled deliveries. **View unfinished campaign work** opens the current jobs and posts. When a retry replaces a draft, this view follows the replacement. Cancelling a pending replacement brings the original held draft back into view.
 
 A **Not public** brief always delivers as a simulation, including on accounts with live posting enabled. In **Published posts → Simulated posts**, **Simulation scheduled** shows that the worker has reserved a time to run the simulation. Changing an existing campaign to **Not public** also restricts its outstanding deliveries. Migration `6ac4f7128e30` corrects existing private reservations. Attempts already in live delivery or with a live request on record are held for reconciliation. Historical deliveries keep their recorded mode.
 
@@ -177,7 +177,7 @@ A **Not public** brief always delivers as a simulation, including on accounts wi
 
 Approved posts move to **Published posts**. Expand a platform under **Real posts** or **Simulated posts** to see its scheduled and delivered posts, newest first. Approvals waiting for a scheduling slot appear under **Approved · awaiting scheduling** until their delivery mode is set. Open a scheduled post to stop delivery and return it to review, or use **Delete draft** to cancel its schedule and remove it. Library media and audit history are retained.
 
-For a failed campaign post, retry it or choose **Close failed attempt** to release its campaign. Once all outstanding work is resolved, the next batch can run on the next eligible worker tick.
+If a failed post is holding a public campaign, retry it or choose **Close failed attempt**. Once all blocking work is resolved, the next batch can run on the next eligible worker tick.
 
 Automatic variation improves diversity but does not guarantee visual novelty; the existing caption duplicate checks still run. There is no automatic recurring spending in fixture mode.
 
