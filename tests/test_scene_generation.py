@@ -4,7 +4,7 @@ import json
 import pytest
 from PIL import Image
 from pydantic import SecretStr
-from test_reference_grounding import DESIGN_PERMISSION, canopy_design, choice
+from test_reference_grounding import canopy_design, choice
 from test_reference_grounding import photo as photo
 from test_reference_grounding import reference_job as reference_job
 from test_reference_grounding import sheet as sheet
@@ -76,7 +76,7 @@ class Provider:
 @pytest.mark.parametrize("passed", [True, False])
 def test_retry_canopy_from_design_omits_wrong_shortlist_and_checks_scene(db, settings, video_job, photo, monkeypatch, passed):
     video_job.brief = video_job.brief | {
-        "prompt": f"Hotel canopy at dusk ({DESIGN_PERMISSION})", "depicted_system": "Canopies",
+        "prompt": "Hotel canopy at dusk", "depicted_system": "Canopies",
         "campaign_reference_ids": [photo.id], "reference_ids": [photo.id],
         "video_segments": [{"index": 0, "start": 0, "duration": 6, "seed": 123,
                             "system": "Canopies", "prompt": "A slim canopy outside a hotel."}],
@@ -86,7 +86,7 @@ def test_retry_canopy_from_design_omits_wrong_shortlist_and_checks_scene(db, set
     retry_step(db, video_job, retry_option(video_job)["prompt"])
     def select_design(settings, records, context):
         assert [r["asset_id"] for r in records] == [photo.id]
-        assert context["system"] == "canopies" and DESIGN_PERMISSION in context["admin_idea"]
+        assert context["system"] == "canopies"
         return canopy_design()
     def inspect(settings, plan, guidance, scene):
         assert plan["references"] == [] and "canopy.supports" in plan["design_rules"]

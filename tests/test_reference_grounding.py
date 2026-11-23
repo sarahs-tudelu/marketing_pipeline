@@ -72,12 +72,11 @@ def choice(record, prompt="The existing fixed pergola remains stationary; a slow
     )
 
 
-DESIGN_PERMISSION = "if real reference not available, generate based off designs"
+IDEA = "An architectural canopy at a hotel entrance"
 
 
 def canopy_design():
-    return refs.Selection(reference_id="", design_permission=DESIGN_PERMISSION,
-                          design_rule_ids=["canopy.frame", "canopy.roof", "canopy.supports"],
+    return refs.Selection(reference_id="", design_rule_ids=["canopy.frame", "canopy.roof", "canopy.supports"],
                           physical_description="Straight aluminum fascia and solid panel roof with connected posts.",
                           scene_requirements=["One solid roof on seated aluminum posts"],
                           prompt="A visitor walks under the canopy as the camera advances.",
@@ -85,9 +84,9 @@ def canopy_design():
                           reason="Builder canopy with a supported roof and post arrangement.", problem="")
 
 
-def test_image_can_use_documented_design_with_an_empty_library(db, settings, reference_job, photo, monkeypatch):
-    reference_job.brief = reference_job.brief | {"prompt": f"An architectural canopy ({DESIGN_PERMISSION})",
-                                                "depicted_system": "Canopies"}
+def test_image_uses_the_builder_design_when_no_image_shows_the_product(db, settings, reference_job, photo, monkeypatch):
+    # No permission is needed: a missing image never stops AI media.
+    reference_job.brief = reference_job.brief | {"prompt": IDEA, "depicted_system": "Canopies"}
     db.commit()
     def design(settings, records, context):
         assert not records and context["system"] == "canopies"
@@ -108,75 +107,90 @@ def test_image_can_use_documented_design_with_an_empty_library(db, settings, ref
     output = db.get(Asset, reference_job.source_asset_ids[-1])
     assert output.source == "ai_generated" and output.tags["source_asset_ids"] == []
     plan = output.tags["reference_plan"]
-    assert plan["references"] == [] and plan["design_permission"] == DESIGN_PERMISSION
+    assert plan["references"] == [] and "design_permission" not in plan
     assert plan["design_rules"]["canopy.frame"].startswith("Use modular prefinished aluminum")
 
 
-@pytest.mark.parametrize("idea,update,error", [
-    ("Use actual photos only", {}, "permission to use the designs isn't in the post's idea"),
-    (DESIGN_PERMISSION, {"design_rule_ids": ["pergola.fixed_louvers", "canopy.frame"]},
-     r"rules that don't apply to it \(pergola.fixed_louvers\)"),
-    (DESIGN_PERMISSION, {"design_rule_ids": ["canopy.frame", "invented.rule"]}, r"don't apply to it \(invented.rule\)"),
-    (DESIGN_PERMISSION, {"design_rule_ids": ["builder.geometry", "canopy.hanger_rods_above"]},
+@pytest.mark.parametrize("update,error", [
+    ({"design_rule_ids": ["pergola.fixed_louvers", "canopy.frame"]}, r"rules that don't apply to it \(pergola.fixed_louvers\)"),
+    ({"design_rule_ids": ["canopy.frame", "invented.rule"]}, r"don't apply to it \(invented.rule\)"),
+    ({"design_rule_ids": ["builder.geometry", "canopy.hanger_rods_above"]},
      r"cited none of its Builder rules \(canopy.frame, canopy.roof, canopy.supports\)"),
-    (DESIGN_PERMISSION, {"scene_requirements": []}, "listed no construction requirements"),
+    ({"scene_requirements": []}, "listed no construction requirements"),
+    ({"prompt": ""}, "came back without a prompt or product description"),
+    # The planner stops only when the idea specifically asks for real work that no candidate shows.
+    ({"problem": "The idea asks for our completed hotel project, and no candidate shows it."},
+     "Planning stopped for Architectural Canopies: The idea asks for our completed hotel project"),
 ])
-def test_design_requires_authored_permission_and_matching_rules(
-    db, settings, reference_job, photo, monkeypatch, idea, update, error
-):
-    reference_job.brief = reference_job.brief | {"prompt": idea, "depicted_system": "Canopies"}
+def test_design_plan_needs_the_products_rules(db, settings, reference_job, photo, monkeypatch, update, error):
+    reference_job.brief = reference_job.brief | {"prompt": IDEA, "depicted_system": "Canopies"}
     monkeypatch.setattr(refs, "select_reference", lambda *args: canopy_design().model_copy(update=update))
     with pytest.raises(ValueError, match=error):
         refs.prepare(db, settings, reference_job)
 
 
-def test_design_permission_matches_the_words_not_the_punctuation():
-    idea = "Tudelü canopies at hotel entrances; if real references are unavailable, generate based on the designs"
-    for quote in ["If real references are unavailable, generate based on the designs.",
-                  "“if real references are unavailable,  generate based on the designs”"]:
-        assert refs.quoted_in(quote, idea)
-    assert refs.quoted_in("Tudelü canopies", idea)
-    assert not refs.quoted_in("generate based on designs", idea)
-    assert not refs.quoted_in("generate based on the designs", "regenerate based on the designs")
-    assert not refs.quoted_in(" . ", idea)
-
-
-DESIGNS = "If real references are unavailable, generate based on the designs"
-
-
-def test_permission_added_under_generate_again_allows_a_design(db, settings, reference_job, photo, monkeypatch):
+def test_generate_again_edit_reaches_the_planner_as_the_admins_instruction(db, settings, reference_job, photo, monkeypatch):
     from social.recovery import retry_step
 
     generated = "A slim aluminum canopy over a hotel entrance at dusk."
-    reference_job.brief = reference_job.brief | {"prompt": "Canopies at hotel entrances", "depicted_system": "Canopies",
-                                                "generation_prompt": f"{generated} {DESIGNS}."}
+    reference_job.brief = reference_job.brief | {"prompt": IDEA, "depicted_system": "Canopies", "generation_prompt": generated}
     reference_job.state = "failed"
     db.commit()
-    monkeypatch.setattr(refs, "select_reference", lambda *args: canopy_design().model_copy(
-        update={"design_permission": f"“{DESIGNS}.”"}))
-    # Words the prompt writer produced aren't the admin's permission.
-    with pytest.raises(ValueError, match="isn't in the post's idea or an edited prompt"):
-        refs.prepare(db, settings, reference_job)
-
-    reference_job.brief = reference_job.brief | {"generation_prompt": generated}
-    db.commit()
+    seen = []
+    monkeypatch.setattr(refs, "select_reference", lambda s, r, context: seen.append(context) or canopy_design())
     retry_step(db, reference_job, generated)  # Unchanged: nothing new was authored.
     assert "operator_edits" not in reference_job.brief
     reference_job.state = "failed"
-    edited = f"{generated} {DESIGNS}."
+    edited = f"{generated} Use a white finish."
     retry_step(db, reference_job, edited)
     assert reference_job.brief["operator_edits"] == [{"before": generated, "after": edited}]
 
     assert refs.prepare(db, settings, reference_job) == []
-    plan = reference_job.brief["reference_plan"]
-    assert plan["design_permission"] == f"“{DESIGNS}.”"
-    assert plan["request_intent"]["operator_edits"] == [{"before": generated, "after": edited}]
+    assert seen[0]["request_intent"]["operator_edits"] == [{"before": generated, "after": edited}]
+    assert reference_job.brief["reference_plan"]["request_intent"]["operator_edits"] == seen[0]["request_intent"]["operator_edits"]
+
+
+def test_any_library_image_of_the_product_follows_a_campaign_shortlist(db, settings, reference_job, photo, monkeypatch):
+    # The shortlist matched the campaign prompt's words but shows a pergola; the library's canopy photo, in a
+    # different setting, still guides the canopy scene.
+    stream = io.BytesIO()
+    Image.new("RGB", (720, 960), "white").save(stream, format="PNG")
+    canopy = ingest(db, settings, stream.getvalue(), "warehouse-entrance.png", rights="public", tags={"product": "canopies"})
+    reference_job.brief = reference_job.brief | {"depicted_system": "Canopies", "campaign_reference_ids": [photo.id]}
+    db.commit()
+    lookups = []
+    monkeypatch.setattr(refs, "website_references", lambda *args: lookups.append(args[-1]) or [])
+    profile = refs.profile_for(refs.builder_guidance(db, reference_job), "Canopies")
+
+    assert [r["asset_id"] for r in refs.candidates(db, settings, reference_job, profile)] == [canopy.id, photo.id]
+    assert not lookups
+    # With no image of the product anywhere, the shortlist still comes first and the website's images are added.
+    canopy.tags = {"product": "carports"}
+    db.commit()
+    assert [r["asset_id"] for r in refs.candidates(db, settings, reference_job, profile)] == [photo.id, canopy.id]
+    assert lookups == ["canopies"]
+
+
+def test_scene_repair_without_a_company_photo_corrects_from_the_builder_rules(db, settings, reference_job, photo, monkeypatch):
+    from social import video_repair
+
+    website = {"id": "website:abc", "source": "website_image_creation_method_unverified"}
+    reference_job.brief = reference_job.brief | {"prompt": IDEA, "depicted_system": "Canopies", "repair": {"route": "scene"}}
+    db.commit()
+    seen = []
+    monkeypatch.setattr(refs, "candidates", lambda *args: [website])
+    monkeypatch.setattr(video_repair, "source_for_repair", lambda *args: photo)
+    monkeypatch.setattr(refs, "select_reference", lambda s, records, c: seen.append((records, c)) or canopy_design())
+    assert refs.prepare(db, settings, reference_job) == []
+    records, context = seen[0]
+    assert records == [] and context["failed_clip"]["asset_id"] == photo.id
+    assert "canopy.frame" in reference_job.brief["reference_plan"]["design_rules"]
 
 
 def test_canopy_design_can_cite_the_owner_corrections_it_was_given(db, settings, reference_job, photo, monkeypatch):
     # The planner receives the owner's corrections alongside the Builder rules, and the hanger-rod one
     # is the canopy's own; citing it used to fail every canopy design plan.
-    reference_job.brief = reference_job.brief | {"prompt": DESIGN_PERMISSION, "depicted_system": "Canopies"}
+    reference_job.brief = reference_job.brief | {"prompt": IDEA, "depicted_system": "Canopies"}
     db.commit()
     rules = ["canopy.frame", "canopy.supports", "canopy.hanger_rods_above", "scope.product_brief", "builder.geometry"]
     seen = []

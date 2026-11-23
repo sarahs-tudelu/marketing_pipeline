@@ -1,6 +1,6 @@
 """Owner-requested reference workflow; product dimensions still come from the Builder."""
 
-VERSION = "tudelu-reference-rendering-2026-11-20-v6"
+VERSION = "tudelu-reference-rendering-2026-11-23-v7"
 
 DEFAULT_VISUAL_DIRECTION = (
     "Photorealistic architectural film, natural soft light, balanced exposure, restrained contrast and "
@@ -42,8 +42,9 @@ DOORWAY_GUIDANCE = (
 
 
 RULES = [
-    "Use actual matching company photographs from the Public asset library, including Google Drive imports, "
-    "and the product images on tudelu.com. A description or a previous AI generation is not a visual reference.",
+    "Use actual company photographs of the product from the Public asset library, including Google Drive imports, "
+    "and the product images on tudelu.com, as inspiration for its construction; any setting will do. A "
+    "description or a previous AI generation is not a visual reference.",
     "Current owner corrections and the AI Builder drawing guide describe Tudelu's products and supported "
     "options; customize within them to fit the scene, as a product brief would. The approved plan controls "
     "the creative direction. References supply product identity, not a locked scene, "
@@ -83,7 +84,7 @@ RULES = [
     "For rod-hung canopies show the continuous rods above the roof, connecting the outer fascia to higher wall "
     "anchors. Choose framing that makes that connection visible. Do not crop the critical connection or orbit "
     "behind a structure whose unseen geometry would have to be invented.",
-    "For video, first generate a new scene image from the prompt and the selected product image or authorized Builder design, "
+    "For video, first generate a new scene image from the prompt and the selected product image or Builder design, "
     "then check it and animate it. Do not animate an unchanged library background when a new scene is requested. "
     "Fixed pergola and sunshade louvers remain "
     "stationary; MUTE walls retract vertically overhead without a floor track. Show product operation only when "
@@ -96,10 +97,10 @@ RULES = [
     "style only, never establish product facts or override the current shot's product and requested differences.",
     "Weather, seasons and people are part of the setting. Choose the supported roof a weather scene needs, "
     "such as a panel or glass pergola roof when people stay dry in rain.",
-    "Prefer a compatible product image. For an AI concept, if the admin explicitly allows using the designs when "
-    "no compatible reference is available, build the scene from the matching Builder product rules and owner "
-    "constraints. Otherwise identify the missing reference. Repairs requiring a construction photograph still "
-    "need that evidence. Existing usage permissions and independent publication review apply.",
+    "Prefer a product image. When none shows the product, build the AI scene from the matching Builder product "
+    "rules and owner constraints; a missing or unrelated image never stops AI media. Real media is required only "
+    "when the idea specifically asks to show Tudelu's real work or a particular photo or footage, or when the "
+    "post edits or posts real media. Existing usage permissions and independent publication review apply.",
 ]
 
 

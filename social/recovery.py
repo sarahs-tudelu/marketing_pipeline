@@ -400,8 +400,8 @@ def auto_retry(db, settings, job):
 
 
 def operator_edit(target, step, text):
-    """Record an admin's change to a prompt the planner reads. Only the admin's own words, such as permission
-    to generate from the designs, count as instructions; the generated text around them does not."""
+    """Record an admin's change to a prompt the planner reads. Only the admin's own words count as
+    instructions; the generated text around them does not."""
     if text == " ".join(step["prompt"].split()):
         return {}
     return {"operator_edits": [*target.get("operator_edits", []), {"before": step["prompt"], "after": text}]}

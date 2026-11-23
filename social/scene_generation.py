@@ -90,7 +90,7 @@ def review_scene(settings, plan, guidance, scene):
         {
             "type": "input_text",
             "text": (
-                "Review the NEW GENERATED SCENE before animation. A nonempty design_rules section identifies an authorized "
+                "Review the NEW GENERATED SCENE before animation. A nonempty design_rules section identifies a "
                 "Builder concept without a product photograph. Check its visible construction against those rules and "
                 "the current owner constraints. Product photos, when supplied, establish construction, not a locked "
                 "background, color or setting. Requested new architecture, Builder-supported configurations and finishes "
