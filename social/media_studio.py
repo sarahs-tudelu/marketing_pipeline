@@ -764,6 +764,7 @@ def activate_planned_jobs(db, settings):
 def replenish_campaigns(db, settings):
     from .automation import can_automate
     from .campaigns import lock_campaign
+    from .media_queue import campaign_wait_reason
 
     if not can_automate(db, settings) or settings.ai_mode != "live":
         return
@@ -778,13 +779,8 @@ def replenish_campaigns(db, settings):
             db.commit()
             continue
         brief = CreativeBrief.model_validate(campaign.brief, context={"stored": True})
-        pending_idea = db.scalar(select(MediaJob.id).where(
-            MediaJob.platform.in_(brief.platforms),
-            MediaJob.brief["workflow"].as_string().in_(["next", "immediate"]),
-            MediaJob.state.in_(["planned", "queued", "submitting", "running", "rendering", "failed", "uncertain"]),
-        ).limit(1))
-        if pending_idea:
-            campaign.error = "Waiting for the admin's requested post idea to finish."
+        if reason := campaign_wait_reason(db, campaign):
+            campaign.error = reason
             db.commit()
             continue
         # Active recurring campaigns only spend when every selected publishing account is live/ready.
@@ -795,14 +791,6 @@ def replenish_campaigns(db, settings):
             for p in brief.platforms
         ):
             campaign.error = "Waiting for selected platforms to be live, connected and unpaused."
-            db.commit()
-            continue
-        jobs = db.scalars(select(MediaJob).where(MediaJob.campaign_id == campaign.id)).all()
-        if any(j.state != "complete" and j.state != "cancelled" for j in jobs) or any(
-            j.post_id and db.get(Post, j.post_id).status not in {"published", "awaiting_manual", "deleted"}
-            for j in jobs
-        ):
-            campaign.error = "Waiting for the previous batch to finish or for held work to be corrected."
             db.commit()
             continue
         try:

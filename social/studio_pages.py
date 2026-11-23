@@ -26,6 +26,7 @@ from .idea_plan import (
 )
 from .library import KINDS, ORIGINS, SORTS, clock, is_copy, library_page, pickable, picker, products
 from .media_changes import options as change_options
+from .media_queue import campaign_wait_reason, recent_media_jobs, unfinished_job_count
 from .models import (
     Account,
     Alert,
@@ -77,16 +78,6 @@ def availability_by_post(db, posts):
         return {}
     query = select(PostAvailability).where(PostAvailability.post_id.in_([p.id for p in posts]))
     return {row.post_id: row for row in db.scalars(query)}
-
-
-def recent_media_jobs(db):
-    return db.execute(
-        select(MediaJob, Post.status)
-        .outerjoin(Post, Post.id == MediaJob.post_id)
-        .where(Post.status.is_(None) | (Post.status != "deleted"))
-        .order_by(MediaJob.created_at.desc())
-        .limit(100)
-    ).all()
 
 
 def post_revision(db, post_id):
@@ -283,11 +274,7 @@ def page_context(
     if not editor:
         control = db.get(Control, 1)
         context.update(control=control, automation_enabled=settings.automates_posts(control))
-        context["active_jobs"] = db.scalar(
-            select(func.count(MediaJob.id)).where(
-                MediaJob.state.in_(["planned", "queued", "submitting", "running", "rendering"])
-            )
-        )
+        context["active_jobs"] = unfinished_job_count(db)
 
     allowed = (lambda a: crm_access.editor_asset(a, actor)) if editor else None
     if view == "assets":
@@ -333,13 +320,25 @@ def page_context(
                 .limit(100)
             ).all()
     elif view == "media-queue":
-        context.update(media_jobs=recent_media_jobs(db), retry_option=retry_option, task_failed=task_failed)
+        campaign_id = request.query_params.get("campaign_id")
+        if campaign_id:
+            context["queue_campaign"] = db.get(MediaCampaign, campaign_id)
+            if not context["queue_campaign"]:
+                raise HTTPException(404, "Campaign not found")
+        context.update(media_jobs=recent_media_jobs(db, campaign_id), retry_option=retry_option, task_failed=task_failed)
     elif view == "compose":
         context["compose_picker"] = picker([a for a in context["assets"] if pickable(a)])
     elif view == "media-studio":
         context["editing_campaign"] = editing_campaign
         if not editing_campaign:
-            context["media_campaigns"] = db.scalars(select(MediaCampaign).order_by(MediaCampaign.created_at.desc())).all()
+            campaigns = db.scalars(select(MediaCampaign).order_by(MediaCampaign.created_at.desc())).all()
+            context["media_campaigns"] = campaigns
+            # A deletion, retry or cancellation can clear the worker's saved wait before its next tick.
+            context["campaign_errors"] = {
+                c.id: (campaign_wait_reason(db, c)
+                       if "previous batch" in c.error or "admin's requested post idea" in c.error else c.error)
+                for c in campaigns
+            }
         selected = (asset_form or {}).get("reference_ids", [])
         context["campaign_picker"] = picker([a for a in context["assets"] if pickable(a) or a.id in selected])
         if editing_campaign:

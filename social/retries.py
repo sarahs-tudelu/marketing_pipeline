@@ -64,7 +64,7 @@ def retry_post(db, settings, post, actor):
     db.add(PostRetry(original_post_id=post.id, retry_post_id=retry.id, actor=actor))
     transition(db, retry, "generated", f"Retry requested for failed post {post.id}; reused caption and media, fresh checks required", actor)
     # Campaigns and Media Studio follow the new attempt while the original keeps its audit.
-    db.execute(update(MediaJob).where(MediaJob.post_id == post.id).values(post_id=retry.id))
+    db.execute(update(MediaJob).where(MediaJob.post_id == post.id).values(post_id=retry.id, dismissed_at=None))
     db.commit()
     event("post_retry_queued", original_post_id=post.id, retry_post_id=retry.id, actor=actor)
     return retry

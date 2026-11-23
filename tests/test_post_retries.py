@@ -43,7 +43,7 @@ def test_retry_reuses_content_preserves_audit_and_completes_with_automation_off(
     record = failed(db, post)
     original_payload = (post.caption, post.parts, post.asset_ids, post.facts_id)
     job = MediaJob(platform=post.platform, batch_key="retry-test", brief={"workflow": "automatic"},
-                   state="complete", post_id=post.id)
+                   state="complete", post_id=post.id, dismissed_at=now())
     db.add(job)
     db.get(Control, 1).automation_enabled = False
     db.commit()
@@ -63,7 +63,7 @@ def test_retry_reuses_content_preserves_audit_and_completes_with_automation_off(
     assert (retry.caption, retry.parts, retry.asset_ids, retry.facts_id) == original_payload
     assert retry.idempotency_key != post.idempotency_key and not retry.approved_digest
     db.refresh(job)
-    assert job.post_id == retry.id
+    assert job.post_id == retry.id and job.dismissed_at is None
     advance_queue(db, settings)
     db.refresh(retry)
     approve_retry(db, settings, retry)

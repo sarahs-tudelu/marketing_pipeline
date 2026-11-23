@@ -17,8 +17,8 @@ from social.media_studio import CreativeBrief, replenish_campaigns
 from social.models import MediaCampaign, MediaJob
 
 
-@pytest.fixture
-def campaign(db):
+@pytest.fixture(name="campaign")
+def campaign_fixture(db):
     sheet = save_facts(db, {"version": "campaign-edit", "brand_voice": "Simple", "hashtags": {},
                             "facts": [{"id": "name", "product": "company", "text": "Test brand."}]})
     brief = CreativeBrief(campaign="Weekly projects", prompt="Show a pergola", rights="not_public",

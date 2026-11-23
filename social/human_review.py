@@ -7,6 +7,19 @@ from .lifecycle import lock_post, transition
 from .models import Account, Control, RequestRecord
 from .storage import load_assets
 
+UNPUBLISHED_STATES = frozenset({"draft", "generated", "held", "awaiting_review", "approved", "scheduled"})
+
+
+def delivery_reported(post):
+    return bool(post.remote_id or post.published_at or post.live_url or post.error.startswith("ambiguous:"))
+
+
+def possible_delivery_requests():
+    return select(RequestRecord.post_id).where(
+        RequestRecord.irreversible.is_(True) | RequestRecord.step.in_(["publish", "inbox-init"]),
+        RequestRecord.state.not_in(["rejected", "retryable"]),
+    )
+
 
 def human_approval_current(db, post):
     return not post.human_review_required or (
@@ -21,12 +34,11 @@ def lock_delivery(db):
 
 
 def require_unpublished(db, post):
-    if post.status not in {"draft", "generated", "held", "awaiting_review", "approved", "scheduled"}:
+    if post.status not in UNPUBLISHED_STATES:
         raise ValueError("This post has started delivery or is closed; it cannot be stopped or deleted here.")
-    if post.remote_id or post.published_at or post.live_url or post.error.startswith("ambiguous:"):
+    if delivery_reported(post):
         raise ValueError("Delivery may have started. Reconcile the platform result before changing this post.")
-    records = db.scalars(select(RequestRecord).where(RequestRecord.post_id == post.id)).all()
-    if any((r.irreversible or r.step in {"publish", "inbox-init"}) and r.state not in {"rejected", "retryable"} for r in records):
+    if db.scalar(possible_delivery_requests().where(RequestRecord.post_id == post.id).limit(1)):
         raise ValueError("Delivery may have started. Reconcile its request record before changing this post.")
 
 

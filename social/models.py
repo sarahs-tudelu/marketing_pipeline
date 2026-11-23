@@ -277,6 +277,7 @@ class MediaJob(Base):
     source_asset_ids: Mapped[list] = mapped_column(JSON, default=list)
     output_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"))
     post_id: Mapped[str | None] = mapped_column(ForeignKey("posts.id"))
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime)
     error: Mapped[str] = mapped_column(Text, default="")
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

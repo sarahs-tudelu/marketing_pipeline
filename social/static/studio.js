@@ -28,7 +28,7 @@
 
   function relatedForms(form) {
     const match = new URL(form.action).pathname.match(/^\/forms\/posts\/([^/]+)\//);
-    return match ? postForms.filter((other) => new URL(other.action).pathname.startsWith(`/forms/posts/${match[1]}/`)) : [form];
+    return match && postForms.includes(form) ? postForms.filter((other) => new URL(other.action).pathname.startsWith(`/forms/posts/${match[1]}/`)) : [form];
   }
 
   function showPostBusy(busy) {
@@ -276,15 +276,15 @@
       if (document.hidden || pending.size || polling || queue.contains(document.activeElement)) return;
       polling = true;
       try {
-        const response = await fetch("/api/media-jobs", {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
+        const response = await fetch("/api/media-jobs" + queue.dataset.scope, {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
         if (!response.ok) return;
         const jobs = await response.json();
         const current = [...queue.querySelectorAll("[data-job-id]")].map((card) => [
-          card.dataset.jobId, card.dataset.jobState, card.dataset.jobStage, card.dataset.jobError, card.dataset.jobOutput, card.dataset.jobPost, card.dataset.jobPostStatus, Number(card.querySelector("[data-completed-clips]")?.dataset.completedClips || 0), card.dataset.jobPhase || "", card.dataset.jobTask || "", Number(card.dataset.jobRetries || 0), Number(card.dataset.jobScenes || 0), card.dataset.jobSource || "",
+          card.dataset.jobId, card.dataset.jobState, card.dataset.jobStage, card.dataset.jobError, card.dataset.jobOutput, card.dataset.jobPost, card.dataset.jobPostStatus, Number(card.querySelector("[data-completed-clips]")?.dataset.completedClips || 0), card.dataset.jobPhase || "", card.dataset.jobTask || "", Number(card.dataset.jobRetries || 0), Number(card.dataset.jobScenes || 0), card.dataset.jobSource || "", card.dataset.jobDeletable === "1",
         ]);
-        const updated = jobs.map((job) => [job.id, job.state, job.stage, job.error, job.asset_id || "", job.post_id || "", job.post_status || "", job.completed_clips || 0, job.generation_phase || "", job.task_id || "", job.retry_count || 0, job.saved_scenes || 0, job.shared_render_from || ""]);
+        const updated = jobs.map((job) => [job.id, job.state, job.stage, job.error, job.asset_id || "", job.post_id || "", job.post_status || "", job.completed_clips || 0, job.generation_phase || "", job.task_id || "", job.retry_count || 0, job.saved_scenes || 0, job.shared_render_from || "", Boolean(job.can_delete_draft)]);
         if (JSON.stringify(current) === JSON.stringify(updated)) return;
-        const html = await fetch("/admin/media-queue", {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
+        const html = await fetch("/admin/media-queue" + queue.dataset.scope, {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000)});
         if (!html.ok) return;
         const replacement = new DOMParser().parseFromString(await html.text(), "text/html").getElementById("media-queue");
         if (replacement && !pending.size && !queue.contains(document.activeElement)) queue.replaceWith(replacement);

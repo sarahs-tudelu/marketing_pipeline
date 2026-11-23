@@ -6,7 +6,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 import yaml
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -24,7 +24,7 @@ from . import connections, crm_access
 from .campaigns import campaign_revision, lock_campaign, update_campaign, validate_campaign
 from .clip_replace import needs_runway_music, replace_part
 from .config import PLATFORMS, REAL_MEDIA_ONLY, get_settings, profiles
-from .db import make_engine, schema_gaps, sessions
+from .db import make_engine, now, schema_gaps, sessions
 from .facts import Facts, caption_fact_ids, load_facts, render, save_facts
 from .gate import run_gate
 from .idea_plan import (
@@ -41,6 +41,7 @@ from .idea_plan import (
 )
 from .lifecycle import PostBusy, PostConflict, lock_post, post_processing, transition
 from .media_changes import request_changes
+from .media_queue import dismiss_completed, recent_media_jobs
 from .media_studio import (
     CreativeBrief,
     finish_video,
@@ -76,7 +77,6 @@ from .studio_pages import (
     page_context,
     post_context,
     post_revision,
-    recent_media_jobs,
     recent_posts,
 )
 from .upload_errors import describe_upload_error, upload_error_details
@@ -490,7 +490,7 @@ def create_app(settings=None):
         return {"jobs": [{"id": j.id, "platform": j.platform, "state": j.state} for j in jobs]}
 
     @app.get("/api/media-jobs")
-    def list_media_jobs(db: DB):
+    def list_media_jobs(db: DB, campaign_id: str = ""):
         return [
             {
                 "id": j.id,
@@ -506,9 +506,10 @@ def create_app(settings=None):
                 "asset_id": j.output_asset_id,
                 "post_id": j.post_id,
                 "post_status": post_status,
+                "can_delete_draft": can_delete,
                 "completed_clips": sum(bool(s.get("output_asset_id")) for s in j.brief.get("video_segments", [])),
             }
-            for j, post_status in recent_media_jobs(db)
+            for j, post_status, can_delete in recent_media_jobs(db, campaign_id)
         ]
 
     @app.get("/api/posts/{post_id}/activity")
@@ -1056,6 +1057,10 @@ def create_app(settings=None):
         db.commit()
         return RedirectResponse("/admin/media-studio", status_code=303)
 
+    def queue_location(request):
+        campaign_id = request.query_params.get("campaign_id")
+        return "/admin/media-queue" + ("?" + urlencode({"campaign_id": campaign_id}) if campaign_id else "")
+
     @app.post("/forms/media-jobs/{job_id}/{action}", dependencies=mutation)
     async def media_job_action(job_id: str, action: str, request: Request, db: DB):
         job = db.scalar(select(MediaJob).where(MediaJob.id == job_id).with_for_update())
@@ -1072,8 +1077,6 @@ def create_app(settings=None):
             elif action == "reconcile" and job.state == "uncertain" and not job.task_id:
                 import re
 
-                from .db import now
-
                 task_id = str(form.get("task_id", ""))
                 if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
                     raise ValueError("Enter the task ID returned by the original Runway submission")
@@ -1087,13 +1090,15 @@ def create_app(settings=None):
                 )
                 if not changed.rowcount:
                     raise PostConflict("This media job has changed. Refresh before cancelling.")
+            elif action == "dismiss" and job.state == "complete":
+                dismiss_completed(db, job, form.get("post_id") or None)
             else:
                 raise ValueError("This job can't do that now. Refresh the page to see its current state.")
             db.commit()
         except (ValueError, PostConflict) as exc:
             db.rollback()
             return page(request, db, "media-queue", error_message=str(exc), status_code=400)
-        return RedirectResponse("/admin/media-queue", status_code=303)
+        return RedirectResponse(queue_location(request), status_code=303)
 
     @app.post("/api/posts", dependencies=mutation)
     def new_post(payload: DraftInput, db: DB):
@@ -1323,10 +1328,14 @@ def create_app(settings=None):
 
     @app.post("/forms/posts/{post_id}/{action}", dependencies=mutation)
     async def form_action(post_id: str, action: str, request: Request, db: DB):
+        form = await request.form()
+        queue_delete = action == "delete" and form.get("return_to") == "/admin/media-queue"
+        after_delete = queue_location(request) if queue_delete else "/"
         post = db.get(Post, post_id)
+        if post and post.status == "deleted" and queue_delete:
+            return RedirectResponse(after_delete, status_code=303)
         if not post or post.status == "deleted":
             raise HTTPException(404)
-        form = await request.form()
         parts = json.loads(form["parts"]) if "parts" in form else None
         try:
             if post_processing(engine, post_id):
@@ -1334,19 +1343,25 @@ def create_app(settings=None):
             result = await run_in_threadpool(action_impl, db, post, action, request.state.actor, parts, str(form.get("revision_request", "")), str(form.get("reviewed_digest", "")), form.get("confirmed_removed") == "on")
         except PostBusy:
             db.rollback()
+            if queue_delete:
+                return page(request, db, "media-queue", error_message="This post is being processed. Try again when it finishes.", status_code=409)
             return page(request, db, "post", post, post_busy=True, status_code=202)
-        except PostConflict:
+        except PostConflict as exc:
             db.rollback()
             if db.get(Post, post_id).status == "deleted":
-                return RedirectResponse("/", status_code=303)
+                return RedirectResponse(after_delete, status_code=303)
+            if queue_delete:
+                return page(request, db, "media-queue", error_message=str(exc), status_code=409)
             # Another tab or the worker completed the action; display its saved result.
             return RedirectResponse(f"/posts/{post_id}", status_code=303)
         except ValueError as exc:
             db.rollback()
+            if queue_delete:
+                return page(request, db, "media-queue", error_message=str(exc), status_code=400)
             return page(request, db, "post", post, error_message=str(exc), status_code=400)
         if action == "restart" and post.status == "deleted":
             return RedirectResponse(f"/admin/create?from_post={post.id}", status_code=303)
-        return RedirectResponse("/" if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)
+        return RedirectResponse(after_delete if post.status == "deleted" else f"/posts/{result['id']}", status_code=303)
 
     def return_to(form, default):
         # Only fixed in-app pages; never an arbitrary redirect target.

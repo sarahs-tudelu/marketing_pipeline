@@ -65,7 +65,9 @@
   {% for c in media_campaigns %}<article class="card" id="campaign-{{ c.id }}"><h3>{{ c.name }}</h3>
     <p>{{ c.brief.prompt }}</p><p>{{ c.brief.platforms|join(', ') }} · {{ {'mixed': 'real projects and AI inspiration', 'real': 'real projects', 'image': 'AI images', 'video': 'AI videos', 'video_edit': 'AI re-renders'}.get(c.brief.operation, c.brief.operation) }} · {{ c.brief.kind|replace('_',' ') }} · every {{ '%g'|format(c.brief.interval_hours) }} hours</p>
     <p>{{ 'Enabled' if c.enabled else 'Paused' }} · {{ c.sequence }} batches · next eligible {{ c.next_run_at }} UTC</p>
-    {% if c.error %}<p class="error">{{ c.error }}</p>{% endif %}
+    {% if campaign_errors[c.id] %}<p class="error">{{ campaign_errors[c.id] }}</p>{% endif %}
+    {% if "admin's requested post idea" in campaign_errors[c.id] %}<a href="/admin/media-queue">View requested work in In progress</a>
+    {% elif c.sequence or 'previous batch' in campaign_errors[c.id] %}<a href="/admin/media-queue?campaign_id={{ c.id }}">View unfinished campaign work</a>{% endif %}
     <div class="actions"><a class="button" href="/admin/media-campaigns/{{ c.id }}/edit">Edit campaign</a><form method="post" action="/forms/media-campaigns/{{ c.id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if c.enabled else 'true' }}"><button>{{ 'Pause campaign' if c.enabled else 'Enable campaign' }}</button></form></div>
   </article>{% else %}<p>No recurring campaigns yet.</p>{% endfor %}
 </section>{% endif %}

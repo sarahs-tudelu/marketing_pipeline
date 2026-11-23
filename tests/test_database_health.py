@@ -29,6 +29,7 @@ def test_health_detects_unapplied_availability_migration_and_recovers(settings):
                     # Added after the availability tables, by ace71117c001 (prompt account) and
                     # b4e8d2f61a93 (deleted library files kept for posts).
                     "missing_columns": {"assets": ["removed_at", "removed_by"],
+                                        "media_jobs": ["dismissed_at"],
                                         "posts": ["prompted_by", "prompted_by_label"]},
                 }
                 with engine.connect() as connection:
