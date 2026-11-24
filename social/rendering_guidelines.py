@@ -1,6 +1,8 @@
 """Owner-requested reference workflow for Tudelu product depictions."""
 
-VERSION = "tudelu-reference-rendering-2026-11-24-v8"
+from .product_rules import PANEL_SURFACE_GUIDANCE
+
+VERSION = "tudelu-reference-rendering-2026-11-24-v9"
 
 DEFAULT_VISUAL_DIRECTION = (
     "Photorealistic architectural film, natural soft light, balanced exposure, restrained contrast and "
@@ -10,7 +12,7 @@ DEFAULT_VISUAL_DIRECTION = (
 
 # Prompt guidance is separate from the persisted rendering-policy digest: changing the writer
 # must not invalidate a paid scene or an in-flight task that uses an older saved plan.
-SELECTION_VERSION = "custom-canopy-geometry-2026-11-24-v4"
+SELECTION_VERSION = "seamless-canopy-panels-2026-11-24-v5"
 STRUCTURE_SELECTION = (
     "Use the matching reference as the starting point for construction details the approved shot leaves "
     "open, and adapt it where the shot's configuration or the situation reasonably calls for a supported "
@@ -59,12 +61,13 @@ RULES = [
     "Keep each generated scene's selected structural arrangement, fascia profile, connected "
     "members, roof type, supports, attachment points and finish consistent within that scene. Preserve stainless rod fittings. "
     "Wood Look is a finish on aluminum, not timber. Add only selected, Builder-supported accessories.",
-    # Builder PRODUCT-RULES.md (no-overlap rule, seated posts, panel grid) at the snapshot commit.
+    # Builder connections with the current owner instructions for supports and finished panels.
     "Every product piece is solid: no member passes through, merges into, hides inside or overlaps another "
     "member, the fascia, a wall, the floor or an attachment, and connections touch flush or seat into each other. "
     "Posts follow the selected design from their bases to their frame connections. The roof follows its designed "
-    "outline and layers, with panel seams aligned to the frame. Louvers in one "
+    "outline and layers. Louvers in one "
     "run are parallel, evenly spaced and the same profile, and each end is seated in the frame.",
+    PANEL_SURFACE_GUIDANCE,
     "Within a clip the structure is rigid and unchanged: the same number of posts, louvers, roof layers, rods "
     "and joints in every frame. Members never appear, vanish, duplicate, bend, stretch, slide or change thickness "
     "as the camera moves.",

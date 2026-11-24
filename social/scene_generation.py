@@ -8,7 +8,14 @@ from pydantic import BaseModel, StrictBool
 
 from .db import now
 from .models import Asset
-from .product_rules import FRAMING_GUIDANCE, SCOPE_REASONING, WEATHER_GUIDANCE, current_constraints
+from .product_rules import (
+    FRAMING_GUIDANCE,
+    SCOPE_REASONING,
+    WEATHER_GUIDANCE,
+    context_for,
+    current_constraints,
+    depiction_instruction,
+)
 from .reference_grounding import (
     asset_record,
     builder_guidance,
@@ -74,11 +81,11 @@ def review_scene(settings, plan, guidance, scene):
     from .providers import OpenAI, parse_json
 
     context = {
-        "design_rules": plan.get("design_rules", {}),
+        "design_rules": {rid: depiction_instruction(rid, text) for rid, text in plan.get("design_rules", {}).items()},
         "earlier_defects": earlier_defects(plan),
         "request_intent": plan.get("request_intent"),
         "reference_description": plan.get("physical_description", ""),
-        "builder": guidance.model_dump(),
+        "builder": context_for(guidance),
         "owner": current_constraints(),
         "policy": policy(),
         "requested_scene": plan["scene_prompt"],

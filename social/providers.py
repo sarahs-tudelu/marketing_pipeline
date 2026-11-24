@@ -17,7 +17,9 @@ from .product_rules import (
     PRODUCT_CONSTRAINTS_VERSION,
     SCOPE_REASONING,
     WEATHER_GUIDANCE,
+    context_for,
     current_constraints,
+    depiction_instruction,
 )
 from .provider_errors import ProviderError, request_json
 from .rendering_guidelines import policy as rendering_policy
@@ -129,7 +131,8 @@ def vision_context(context):
            if key in context},
         # Product names and availability only. Claim limits ("do not imply rainproof seating") are caption
         # rules that the caption review applies; read as picture rules they forbid ordinary scenes.
-        "facts": {key: facts[key] for key in ("version", "facts", "visual_guidance") if key in facts}
+        "facts": {key: facts[key] for key in ("version", "facts") if key in facts}
+        | ({"visual_guidance": context_for(facts["visual_guidance"])} if "visual_guidance" in facts else {})
         | ({"products": product_index(facts["products"])} if "products" in facts else {}),
         "assets": assets,
     }
@@ -472,7 +475,8 @@ class OpenAI:
                     continue
                 if plan.get("design_rules"):
                     design_plans.append({"output_asset_id": asset.id, "shot": interval, "system": plan["system"],
-                                         "builder_version": plan["builder_version"], "rules": plan["design_rules"],
+                                         "builder_version": plan["builder_version"],
+                                         "rules": {rid: depiction_instruction(rid, text) for rid, text in plan["design_rules"].items()},
                                          "requested_scene": plan["scene_prompt"]})
                 records = [("product_construction", r) for r in plan.get("references", [])]
                 if plan.get("scene_reference"):

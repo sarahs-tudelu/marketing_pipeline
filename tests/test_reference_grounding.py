@@ -14,7 +14,7 @@ from social import reference_grounding as refs
 from social.db import now
 from social.media_studio import _save_output, process_jobs
 from social.models import Asset
-from social.product_rules import HANGER_ROD_CUE, VisualGuidance, profile_for
+from social.product_rules import HANGER_ROD_CUE, PANEL_SURFACE_CUE, VisualGuidance, profile_for
 from social.providers import OpenAI
 from social.rendering_guidelines import DOORWAY_GUIDANCE, MOTION_GUIDANCE
 from social.runway import payload_for
@@ -226,6 +226,7 @@ def test_scene_keeps_exact_post_configuration_and_complete_setting():
     assert "@ref0" in prompt and "@ref1" not in prompt
     assert setting in prompt
     assert "rods" not in prompt and profile.prompt_cue not in prompt
+    assert PANEL_SURFACE_CUE in prompt
     assert len(prompt.encode("utf-16-le")) <= 2000
     # The style scene is sent untagged, so a planner's @ref1 never reaches Runway.
     styled = refs.compose_scene_prompt("A plaza at dusk. Match @ref1 lighting.", requirements, profile)
@@ -233,6 +234,7 @@ def test_scene_keeps_exact_post_configuration_and_complete_setting():
     motion = refs.compose_motion_prompt("The camera slowly pushes in.", requirements, profile)
     assert "rods" not in motion and "supports" in motion and "keep their shape and position" in motion
     assert motion.startswith("The camera slowly pushes in.")
+    assert PANEL_SURFACE_CUE in motion
     # Only the structure is held rigid: a whole scene told to stay "completely still" came back frozen.
     assert "completely still" not in motion and "the rest of the scene moves naturally" in motion
 

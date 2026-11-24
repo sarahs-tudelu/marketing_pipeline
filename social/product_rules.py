@@ -1,10 +1,11 @@
 """Versioned Builder product guidance shared by generation and visual review."""
 
 import re
+from copy import deepcopy
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-24-v3"
+PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-24-v4"
 HANGER_ROD_RULE = "canopy.hanger_rods_above"
 HANGER_ROD_CUE = (
     "Any hanger rods rise above the canopy roof from its outer fascia to higher wall anchors, "
@@ -14,6 +15,16 @@ SCOPE_RULE = "scope.product_brief"
 WEATHER_RULE = "scope.weather"
 FRAMING_RULE = "scope.people_and_framing"
 CANOPY_FORM_RULE = "canopy.design_geometry"
+PANEL_SURFACE_RULE = "canopy.seamless_panels"
+PANEL_SURFACE_CUE = "Roof panels meet flush in one smooth, seamless surface above and below."
+PANEL_SURFACE_GUIDANCE = (
+    "Wherever the selected design uses canopy panels, the finished top and underside each read as one "
+    "continuous surface. "
+    "Visible gaps, grooves, joint lines or a grid dividing adjacent panels are a product mismatch. "
+    "This applies to older drawings, references and saved prompts that show or request panel seams. "
+    "Preserve the roof perimeter, exposed supporting beams and intentional finishes. "
+    "Open pergola and sunshade louvers retain their individual blades and spaces."
+)
 CANOPY_FORM_GUIDANCE = (
     "For canopies and pergolas the design sets the footprint, size, post count, spacing and shape of the "
     "supports. Rectangular, hexagonal and other custom footprints are valid at project-specific scales. "
@@ -32,7 +43,8 @@ SCOPE_REASONING = (
     "size, height, post count and spacing, beams for longer spans, roof type (open fixed louvers, insulated "
     "solid panels or glass), building attachment, finishes, trim, lighting and accessories can all change "
     "to fit the scene, as can the setting, weather, season, time of day and people. For canopy and pergola "
-    f"geometry, apply the current owner rule {CANOPY_FORM_RULE} over older Builder guidance. Builder defaults, "
+    f"geometry and canopy panel surfaces, apply {CANOPY_FORM_RULE} and {PANEL_SURFACE_RULE} over older "
+    "Builder guidance. Builder defaults, "
     "typical values, dimensional examples and wording such as 'only when selected' describe a starting point: a "
     "supported option counts as selected once the approved plan, the prompt or the situation calls for it. "
     "Hard limits are only what Tudelu does not make: configurations the owner has ruled out (hanger rods "
@@ -89,11 +101,18 @@ def current_constraints():
                     "The design determines the number and shape of its posts."
                 ),
             },
+            {
+                "type": "owner_instruction",
+                "recorded_on": "2026-11-24",
+                "record": "docs/builder-visual-guidance.md#finished-canopy-panels",
+                "statement": "Adjacent canopy roof panels are fully connected with no visible seams.",
+            },
         ],
         "rules": [{"id": SCOPE_RULE, "instruction": SCOPE_REASONING},
                   {"id": WEATHER_RULE, "instruction": WEATHER_GUIDANCE},
                   {"id": FRAMING_RULE, "instruction": FRAMING_GUIDANCE},
-                  {"id": CANOPY_FORM_RULE, "instruction": CANOPY_FORM_GUIDANCE}, {
+                  {"id": CANOPY_FORM_RULE, "instruction": CANOPY_FORM_GUIDANCE},
+                  {"id": PANEL_SURFACE_RULE, "instruction": PANEL_SURFACE_GUIDANCE}, {
             "id": HANGER_ROD_RULE,
             "instruction": (
                 "For any rod-hung canopy, hanger/tie rods must run entirely ABOVE the canopy roof, from "
@@ -196,8 +215,33 @@ def profile_for(guidance, name):
     )
 
 
+def depiction_instruction(rule_id, instruction):
+    """Remove the superseded visual detail from the archived canopy roof instruction."""
+    if rule_id == "canopy.roof":
+        return instruction.replace("Use real panel seams and continuous supported runs", "Use continuous supported runs")
+    return instruction
+
+
 def context_for(guidance):
-    return guidance.model_dump(mode="json") if guidance else None
+    if not guidance:
+        return None
+    data = guidance.model_dump(mode="json") if isinstance(guidance, VisualGuidance) else deepcopy(guidance)
+    for product in data.get("products", []):
+        for rule in product.get("rules", []):
+            rule["instruction"] = depiction_instruction(rule["id"], rule["instruction"])
+    return data
+
+
+def uses_canopy_panels(system, description):
+    family = normalize(system)
+    if re.search(r"\b(canopy|canopies|walkways?|carports?|drive through)\b", family):
+        return True
+    if not re.search(r"\bpergolas?\b", family):
+        return False
+    # Louvers are the default for pergolas. Add the panel cue only when the prompt specifies a paneled roof.
+    roof = r"(?:roof panels?|(?:solid|insulated|paneled|panelled|panel) roof)"
+    selected = re.sub(rf"\b(?:no|without|omit) (?:any |a |the )?{roof}\b", "", normalize(description))
+    return bool(re.search(rf"\b{roof}\b", selected))
 
 
 def constrain_prompt(prompt, profile, system=""):
@@ -206,6 +250,8 @@ def constrain_prompt(prompt, profile, system=""):
 
     prompt = " ".join(prompt.split())
     cues = [profile.generation_cue] if profile else []
+    if uses_canopy_panels(profile.product_id if profile else system, prompt):
+        cues.append(PANEL_SURFACE_CUE)
     subject = normalize(f"{profile.product_id if profile else system} {prompt}")
     if re.search(r"\b(canopy|canopies|sunshades?|walkways?|carports?|drive through|hanger rods?|tie rods?)\b", subject):
         cues.append(HANGER_ROD_CUE)

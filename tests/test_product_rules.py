@@ -21,6 +21,8 @@ from social.product_rules import (
     FRAMING_RULE,
     HANGER_ROD_CUE,
     HANGER_ROD_RULE,
+    PANEL_SURFACE_CUE,
+    PANEL_SURFACE_RULE,
     PRODUCT_CONSTRAINTS_VERSION,
     SCOPE_REASONING,
     SCOPE_RULE,
@@ -28,6 +30,7 @@ from social.product_rules import (
     WEATHER_RULE,
     VisualGuidance,
     constrain_prompt,
+    context_for,
     current_constraints,
     enforce_job_prompt,
     profile_for,
@@ -167,7 +170,8 @@ def test_writer_receives_rules_and_persists_exact_source_provenance(db, settings
     # Video prompts say what happens in the clip and send people only through real openings.
     assert MOTION_GUIDANCE in instructions and DOORWAY_GUIDANCE in instructions
     assert "completely still" not in instructions and "locked-off" not in instructions
-    assert context["rules"]["visual_guidance"] == sheet.document["visual_guidance"]
+    assert context["rules"]["visual_guidance"] == context_for(sheet.document["visual_guidance"])
+    assert "Use real panel seams" not in json.dumps(context["rules"]["visual_guidance"])
     assert context["rules"]["product_constraints"] == current_constraints()
     assert result["generation_prompt"].endswith(
         profile_for(Facts.model_validate(sheet.document).visual_guidance, "Pergolas").generation_cue
@@ -260,7 +264,7 @@ def test_planner_uses_only_profiled_products_and_gets_full_rules(db, settings, s
         db, settings.model_copy(update={"ai_mode": "live"}), idea="A pergola image", facts_id=sheet.id
     )
     assert result.shots[0].system == "Pergolas"
-    assert seen[0]["catalog"]["visual_guidance"] == sheet.document["visual_guidance"]
+    assert seen[0]["catalog"]["visual_guidance"] == context_for(sheet.document["visual_guidance"])
 
 
 @pytest.mark.parametrize(
@@ -331,6 +335,7 @@ def test_openai_gets_rule_instructions_and_structured_mismatch_fields(settings, 
     assert "Rods or rod-like braces underneath" in instructions
     assert "posts stay plumb" not in instructions
     assert json.loads(supplied)["product_constraints"] == current_constraints()
+    assert "Use real panel seams" not in supplied
 
 
 @pytest.mark.parametrize("system", ["Canopy", "Sunshades", "Walkways", "Carports", "Drive-Through Systems"])
@@ -404,6 +409,7 @@ def test_owner_constraint_problem_stops_legacy_writer_even_with_a_named_system(d
 @pytest.mark.parametrize("version,mismatch,passes", [
     (PRODUCT_CONSTRAINTS_VERSION, "", True),
     (PRODUCT_CONSTRAINTS_VERSION, HANGER_ROD_RULE + ": diagonal rods below the roof at 2 seconds", False),
+    (PRODUCT_CONSTRAINTS_VERSION, PANEL_SURFACE_RULE + ": joint lines divide the finished canopy underside", False),
     ("", "", False),
     ("older-owner-correction", "", False),
 ])
@@ -440,13 +446,29 @@ def test_fact_editor_shows_new_version_as_default_and_preserves_guidance(setting
 
 def test_owner_scope_allows_customization_and_keeps_hard_limits():
     rules = {r["id"]: r["instruction"] for r in current_constraints()["rules"]}
-    assert list(rules) == [SCOPE_RULE, WEATHER_RULE, FRAMING_RULE, CANOPY_FORM_RULE, HANGER_ROD_RULE]
+    assert list(rules) == [SCOPE_RULE, WEATHER_RULE, FRAMING_RULE, CANOPY_FORM_RULE, PANEL_SURFACE_RULE, HANGER_ROD_RULE]
     assert "hanger rods below a canopy" in rules[SCOPE_RULE]
     assert "'only when selected' describe a starting point" in rules[SCOPE_RULE]
     assert "A pergola can take an insulated solid panel or glass roof" in rules[WEATHER_RULE]
     assert "Partial overlap is not a defect" in rules[FRAMING_RULE]
     assert rules[CANOPY_FORM_RULE] == CANOPY_FORM_GUIDANCE
-    assert [s["recorded_on"] for s in current_constraints()["sources"]] == ["2026-11-16", "2026-11-17", "2026-11-24"]
+    assert [s["recorded_on"] for s in current_constraints()["sources"]] == [
+        "2026-11-16", "2026-11-17", "2026-11-24", "2026-11-24"
+    ]
+
+
+@pytest.mark.parametrize(("system", "scene", "panels"), [
+    ("Canopies", "A hexagonal canopy with branching columns.", True),
+    ("Pergolas", "An insulated panel roof over the terrace.", True),
+    ("Pergolas", "An open roof of spaced fixed louvers.", False),
+    ("Pergolas", "Open fixed louvers without roof panels.", False),
+    ("Partition Walls", "A fabric partition in the meeting room.", False),
+])
+def test_panel_finish_reaches_generation_for_the_selected_roof(guide, system, scene, panels):
+    for profile in (profile_for(guide, system), None):
+        prompt = constrain_prompt(scene, profile, system)
+        assert (PANEL_SURFACE_CUE in prompt) is panels
+        assert constrain_prompt(prompt, profile, system) == prompt
 
 
 def test_image_side_models_get_product_names_not_caption_limits(db, settings, sheet):

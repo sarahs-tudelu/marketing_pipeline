@@ -345,7 +345,7 @@ def gather_sources(db, settings, job):
         context["original_candidates"] = [a for a in selected if a["asset_id"] in cut_ids]
     provenance = {
         "facts_version": facts.version,
-        "visual_guidance": context_for(facts.visual_guidance),
+        "visual_guidance": facts.visual_guidance.model_dump(mode="json") if facts.visual_guidance else None,
         "product_constraints": current_constraints(),
         "website": {k: website.get(k) for k in ("url", "sha256", "fetched_at", "demo_only") if k in website}
         or None,

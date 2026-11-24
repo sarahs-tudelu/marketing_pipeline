@@ -166,6 +166,16 @@ dimensions for fabrication still require assessment.
 The company provides drawings and design examples on its [drawing studio](https://tudelu.com/design),
 [canopy page](https://tudelu.com/canopies) and [pergola page](https://tudelu.com/pergolas).
 
+### Finished canopy panels
+
+On 2026-11-24 the owner clarified that adjacent canopy roof panels join flush. From
+above or below, the finished face appears continuous across the full panel run.
+Visible gaps, joint lines and grooves between panels fail visual review. This applies
+to solid canopy panels used in a pergola as well. An open-louver design keeps the
+specified spacing between its blades. The current rule `canopy.seamless_panels`
+supersedes the visible-seam instruction in the original Builder snapshot.
+[Tudelu canopy roof examples](https://tudelu.com/canopies)
+
 ### Updating the Builder snapshot
 
 Review changed Builder sources before changing the curated rules. Preserve the original

@@ -665,6 +665,8 @@ def test_scene_review_receives_authored_intent_and_keeps_real_defects(db, settin
     assert FRAMING_GUIDANCE in instructions and WEATHER_GUIDANCE in instructions
     assert "every post plumb" not in instructions and "Posts stand plumb" not in instructions
     assert "canopy.design_geometry" in {rule["id"] for rule in context["owner"]["rules"]}
+    assert "canopy.seamless_panels" in {rule["id"] for rule in context["owner"]["rules"]}
+    assert "Use real panel seams" not in instructions
     assert "partial overlap by people, furniture or plants is not a defect" in instructions
     assert seen[0]["text"]["format"]["schema"]["required"] == ["passed", "reasons", "request_conflict", "defect_components"]
     assert context["reference_description"] == plan["physical_description"]

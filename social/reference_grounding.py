@@ -23,13 +23,17 @@ from .models import Asset, FactSheet
 from .product_rules import (
     FRAMING_GUIDANCE,
     HANGER_ROD_CUE,
+    PANEL_SURFACE_CUE,
     SCOPE_REASONING,
     WEATHER_GUIDANCE,
     VisualGuidance,
     constrain_prompt,
+    context_for,
     current_constraints,
+    depiction_instruction,
     normalize,
     profile_for,
+    uses_canopy_panels,
 )
 from .prompting import PROMPT_LIMIT, utf16_trim
 from .provenance import requires_ai_review
@@ -84,6 +88,9 @@ def compose_scene_prompt(prompt, requirements, profile, *, from_design=False):
     details = " ".join(" ".join(item.split()).rstrip(". ") + "." for item in requirements if item.strip())
     parts = [f"A Tudelu {profile.name} design." if from_design else "A new design using @ref0 for product construction.",
              details, setting]
+    scene = details + " " + setting
+    if uses_canopy_panels(profile.product_id, scene) and PANEL_SURFACE_CUE not in scene:
+        parts.append(PANEL_SURFACE_CUE)
     # The complete Builder/owner rules remain in planning and independent review. Putting
     # an alternative support system in every canopy prompt was introducing unwanted rods.
     if re.search(r"\brods?\b", details + " " + prompt, re.I):
@@ -107,6 +114,8 @@ def compose_motion_prompt(prompt, requirements, profile):
         "Only the Tudelu structure stays rigid: its roof, supports and joints keep their shape and position "
         "throughout, while the rest of the scene moves naturally. One continuous shot."
     )
+    if uses_canopy_panels(profile.product_id, " ".join(requirements) + " " + prompt):
+        cue += " " + PANEL_SURFACE_CUE
     if re.search(r"\brods?\b", " ".join(requirements), re.I):
         cue += " " + HANGER_ROD_CUE
     return utf16_trim(prompt, PROMPT_LIMIT - len(cue) - 1) + " " + cue
@@ -623,7 +632,7 @@ def design_rules(profile, guidance):
     the owner's current corrections, which the planner also receives."""
     general = {r.id: r.instruction for r in guidance.global_rules}
     general |= {r["id"]: r["instruction"] for r in current_constraints()["rules"]}
-    return {r.id: r.instruction for r in profile.rules}, general
+    return {r.id: depiction_instruction(r.id, r.instruction) for r in profile.rules}, general
 
 
 def validate_design_choice(choice, profile, guidance):
@@ -667,7 +676,7 @@ def prepare(db, settings, job):
     source_prompt = saved.get("source_prompt") if prompt == saved.get("prompt") else prompt
     basis = {
         "policy": policy(),
-        "builder": guidance.model_dump(),
+        "builder": context_for(guidance),
         "owner": current_constraints(),
         "system": profile.product_id,
         "prompt": source_prompt,
