@@ -163,6 +163,15 @@ including jobs using older Builder snapshots. Review checks the connections and 
 the design stays consistent within a shot. Project-specific structural capacities and
 dimensions for fabrication still require assessment.
 
+A reference photo sets the outline the image model draws, and the prompt text can't reshape
+it. Asked for an L-shaped pergola from a photo of a rectangular one, the model kept the
+rectangle and framed over the open corner on repeated corrections. When the approved shot
+needs a footprint that no candidate photo shows, the planner plans the scene from the
+Builder design without a photo. If it still selects a photo and reports that the photo's
+footprint differs (`footprint_differs`), the app plans the scene again without candidates.
+The plan describes such a footprint the way it looks, for example two wings meeting at a
+right angle with open sky over the corner between them, rather than in plan-geometry terms.
+
 The company provides drawings and design examples on its [drawing studio](https://tudelu.com/design),
 [canopy page](https://tudelu.com/canopies) and [pergola page](https://tudelu.com/pergolas).
 

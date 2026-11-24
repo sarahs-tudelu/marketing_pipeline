@@ -76,6 +76,8 @@ class Selection(BaseModel):
     creative_changes: str = Field(default="", max_length=1600)
     scene_requirements: list[str] = Field(default_factory=list, max_length=12)
     design_rule_ids: list[str] = Field(default_factory=list, max_length=16)
+    # The planner's own report that a selected photo's footprint differs from the approved shot's.
+    footprint_differs: bool = False
 
 
 def compose_scene_prompt(prompt, requirements, profile, *, from_design=False):
@@ -365,8 +367,16 @@ def select_reference(settings, records, context):
                 "Builder drawing rules through the owner's current instructions: " + SCOPE_REASONING + " "
                 + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " Inspect the actual pixels of EVERY candidate. "
                 "A candidate is inspiration for product construction: any image showing the requested product family "
-                "can be used, whatever its setting, location, finish or configuration, because the approved shot "
+                "can be used, whatever its setting, location, finish or configuration (except a different "
+                "footprint, below), because the approved shot "
                 "controls the new scene. Select one whose visible construction can ground the requested design. "
+                "A selected photo sets the overall outline and post layout the image model draws, and text "
+                "can't reshape it: asked for an L from a rectangular photo, it keeps the rectangle and frames "
+                "over the open corner. Select a photo only when its footprint and roof outline match the approved "
+                "shot. When the shot needs a footprint or roof outline that no candidate shows, such as an L, U "
+                "or hexagon from rectangular photos, or an added wing, plan from the Builder design as described "
+                "below, also when an earlier attempt used a photo. footprint_differs reports whether the selected "
+                "photo's footprint or roof outline differs from the approved shot's; use false for a design plan. "
                 "Among compatible references, prefer the closest roof, supports, trim and lighting so fewer "
                 "structural changes are needed. Use only the selected support arrangement in the generation "
                 "prompts: a post-supported design must not receive generic hanger-rod instructions. The owner's "
@@ -429,6 +439,11 @@ def select_reference(settings, records, context):
                 "positive visible outcomes, at most 350 characters combined, for example 'Continuous roof perimeter', "
                 "'Warm Wood Look aluminum fascia and posts', 'Smooth panel underside lit only by the Crown "
                 "LED line', and 'Plain unmarked fascia and clear entrance glazing'. These are examples, not defaults. "
+                "Describe a footprint other than a rectangle as it looks in the picture, not in plan-geometry "
+                "terms: name the wings or bays and how they meet, and state any open area as open sky with "
+                "nothing overhead, for example 'Two louvered wings meeting at a right angle in an L' and 'The "
+                "corner between the wings is open sky with nothing overhead'. Avoid terms such as vertices, "
+                "coplanar, quadrant or inward return, which image models don't lay out. "
                 "Use the approved shot's configuration plus any supported options the scene reasonably needs, such "
                 "as a panel or glass roof for rain cover. The app preserves these requirements "
                 "in the prompt sent to Runway; never leave a requested omission or change only in creative_changes. "
@@ -740,6 +755,10 @@ def prepare(db, settings, job):
         ],
     }
     choice = select_reference(settings, records, context)
+    if choice.reference_id and choice.footprint_differs:
+        # The image model keeps a photo's outline whatever the text asks, so a reshaped footprint
+        # (an L from a rectangular photo) is planned from the Builder design without the photo.
+        choice = select_reference(settings, [], context)
     # Without a product image, the scene is an AI concept from the Builder design.
     from_design = not choice.reference_id
     if choice.problem.strip():

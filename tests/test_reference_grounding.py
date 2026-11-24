@@ -402,6 +402,33 @@ def test_unknown_selection_and_incomplete_review_stop_without_fallback(
         select_reference(settings, [refs.asset_record(photo)], {})
 
 
+def test_photo_with_a_different_footprint_is_replanned_from_the_design(db, settings, reference_job, photo, monkeypatch):
+    # A rectangular photo pulls the image model back to a rectangle, so an L is planned without it.
+    reference_job.brief = reference_job.brief | {"generation_prompt": "A white L-shaped pergola at a vineyard."}
+    db.commit()
+    calls = []
+
+    def select(settings, records, context):
+        calls.append(len(records))
+        if records:
+            return choice(records[0]).model_copy(update={"footprint_differs": True})
+        return refs.Selection(
+            reference_id="", design_rule_ids=["pergola.fixed_louvers", "pergola.supports"],
+            physical_description="White aluminum L-shaped pergola with fixed louvers on eight posts.",
+            scene_requirements=["Two louvered wings meeting at a right angle in an L",
+                                "The corner between the wings is open sky with nothing overhead"],
+            prompt="A white pergola on a vineyard patio at sunset.", reason="Builder pergola design.", problem="",
+        )
+
+    monkeypatch.setattr(refs, "select_reference", select)
+    assert refs.prepare(db, settings, reference_job) == []
+    assert calls == [1, 0]
+    plan = refs.current_plan(reference_job)
+    assert plan["references"] == [] and "pergola.supports" in plan["design_rules"]
+    assert plan["scene_prompt"].startswith("A Tudelu Pergolas design.") and "@ref" not in plan["scene_prompt"]
+    assert "open sky with nothing overhead" in plan["scene_prompt"]
+
+
 def test_selector_receives_pixels_and_builder_rules(db, settings, reference_job, photo, monkeypatch):
     seen = []
 
@@ -428,6 +455,11 @@ def test_selector_receives_pixels_and_builder_rules(db, settings, reference_job,
     # The animation prompt describes the action, with doors opened before anyone walks through them.
     assert MOTION_GUIDANCE in content[0]["text"] and DOORWAY_GUIDANCE in content[0]["text"]
     assert "describing only the subsequent camera motion" not in content[0]["text"]
+    # A footprint the photo doesn't show is planned from the design and described as it looks.
+    assert "Select a photo only when its footprint and roof outline match" in content[0]["text"]
+    assert "open sky with nothing overhead" in content[0]["text"]
+    assert "footprint_differs" in seen[0]["text"]["format"]["schema"]["required"]
+    assert len(seen) == 1
     # A design plan can cite only this product's rules and the general ones, not another family's.
     cited = seen[0]["text"]["format"]["schema"]["properties"]["design_rule_ids"]["items"]["enum"]
     assert {"pergola.fixed_louvers", "builder.geometry", "canopy.hanger_rods_above"} <= set(cited)
