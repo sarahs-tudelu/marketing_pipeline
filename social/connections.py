@@ -176,23 +176,34 @@ def store_tokens(db, settings, account, payload, refreshing=False):
     db.flush()
 
 
+class OAuthStateError(ValueError):
+    """The callback cannot exchange this authorization link for credentials."""
+
+
+USED_AUTHORIZATION_LINK = (
+    "Studio already used this authorization link. If the account shows Connected, you're done. "
+    "If it shows Not connected, select Connect to start again."
+)
+
+
 def callback(db, settings, platform, state, code, browser_nonce, client=None):
     record = db.get(OAuthState, digest(state))
-    if (
-        not record
-        or record.platform != platform
-        or record.consumed
-        or record.expires_at < now()
-        or record.browser_hash != digest(browser_nonce)
-    ):
-        raise ValueError("Invalid, expired, replayed or unbound OAuth state")
+    if not record or record.platform != platform or record.browser_hash != digest(browser_nonce):
+        raise OAuthStateError(
+            "Studio couldn't match this authorization link to this browser session. "
+            "Select Connect and finish authorization in the same browser."
+        )
+    if record.consumed:
+        raise OAuthStateError(USED_AUTHORIZATION_LINK)
+    if record.expires_at < now():
+        raise OAuthStateError("This authorization link expired. Select Connect to get a fresh link.")
     changed = db.execute(
         update(OAuthState)
         .where(OAuthState.state_hash == record.state_hash, OAuthState.consumed.is_(False))
         .values(consumed=True)
     )
     if changed.rowcount != 1:
-        raise ValueError("OAuth state already consumed")
+        raise OAuthStateError(USED_AUTHORIZATION_LINK)
     verifier = Vault(settings).decrypt(record.verifier)
     db.commit()
     data = {

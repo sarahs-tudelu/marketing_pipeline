@@ -1696,8 +1696,16 @@ def create_app(settings=None):
     ):
         if error or not code:
             raise HTTPException(400, "Authorization was declined or incomplete")
-        connections.callback(db, settings, platform, state, code, request.session.get("browser_nonce", ""))
-        return RedirectResponse("/admin/connections", status_code=303)
+        try:
+            connections.callback(db, settings, platform, state, code, request.session.get("browser_nonce", ""))
+        except connections.OAuthStateError as exc:
+            if "text/html" not in request.headers.get("accept", ""):
+                raise
+            request.session["notice"] = str(exc)
+        return RedirectResponse(
+            "/admin/connections", status_code=303,
+            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        )
 
     @app.post("/forms/meta", dependencies=mutation)
     async def meta(request: Request, db: DB):

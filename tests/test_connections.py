@@ -3,12 +3,14 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from social.app import create_app
 from social.connections import begin, callback, refresh_account, save_meta, store_tokens
 from social.db import now
-from social.models import Account, Alert
-from social.security import Vault
+from social.models import Account, Alert, OAuthState
+from social.security import Vault, digest
 
 
 def configured(settings):
@@ -28,7 +30,7 @@ def test_oauth_pkce_state_is_bound_expiring_and_one_use(db, settings):
     assert params["code_challenge_method"] == ["S256"]
     assert "code_verifier" not in params
     state = params["state"][0]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="browser session"):
         callback(db, settings, "x", state, "code", "browser-b")
     seen = []
 
@@ -48,8 +50,34 @@ def test_oauth_pkce_state_is_bound_expiring_and_one_use(db, settings):
     assert account.external_id == "company-x"
     assert "new-access" not in account.credentials
     assert Vault(settings).decrypt(account.credentials)["refresh_token"] == "new-refresh"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="already used"):
         callback(db, settings, "x", state, "code", "browser-a")
+
+
+@pytest.mark.parametrize(("consumed", "message"), [(True, "already used"), (False, "link expired")])
+def test_stale_oauth_callback_returns_browser_to_connections(db, settings, consumed, message):
+    settings = configured(settings)
+    with TestClient(create_app(settings), base_url=settings.app_base_url) as browser:
+        csrf = browser.get("/api/session").json()["csrf"]
+        handoff = browser.post("/oauth/x/connect", data={"csrf": csrf})
+        state = parse_qs(urlparse(handoff.context["authorize_url"]).query)["state"][0]
+        record = db.get(OAuthState, digest(state))
+        record.consumed = consumed
+        record.expires_at = now() - timedelta(seconds=1)
+        db.commit()
+
+        params = {"code": "private-fixture-code", "state": state}
+        response = browser.get("/oauth/x/callback", params=params, headers={"Accept": "text/html"})
+        assert response.history[0].status_code == 303
+        assert response.history[0].headers["referrer-policy"] == "no-referrer"
+        assert response.url == settings.app_base_url + "/admin/connections"
+        assert response.status_code == 200 and message in response.text
+        assert state not in response.text and params["code"] not in response.text
+        assert db.get(Account, "x").validated_at is None
+
+        browser.cookies.clear()
+        unmatched = browser.get("/oauth/x/callback", params=params, headers={"Accept": "application/json"})
+        assert unmatched.status_code == 400 and "browser session" in unmatched.json()["detail"]
 
 
 def test_x_rotating_refresh_token_persisted_encrypted(db, settings):
