@@ -62,8 +62,7 @@ For DigitalOcean, the ignored `.env` is generated from `deploy/droplet.env.examp
 | `TIKTOK_MANUAL_ASSIGNEE` | `"Tudelu social owner"` | Named internal owner mentioned in the completion alert. |
 | `PINTEREST_CLIENT_ID` | `(unset)` | Pinterest app ID for OAuth. Pinterest posts only real photos and videos imported from Google Drive. Accepts a literal value or a gsm:// reference with SECRET_BACKEND=google. |
 | `PINTEREST_CLIENT_SECRET` | `(unset secret)` | Related configuration in the group above. |
-| `PINTEREST_BOARD_ID` | `(unset)` | Numeric ID of the default board: Pins whose product isn't clear, or has no product board, are saved here. Connecting checks that the connected account owns it. |
-| `PINTEREST_PRODUCT_BOARDS` | `(unset)` | Optional product boards as comma-separated `product=board ID` pairs, such as `canopies=1234,carports=5678,drive_through=5678`. Products are `canopies`, `walkways`, `pergolas`, `sunshades`, `carports`, `drive_through` and `partition_walls`, or any of their Builder names; several may share a board. A Pin goes to the board for the one product it shows (see the README's Pinterest section). Startup refuses an unknown product or a non-numeric ID, and connecting checks that the account owns every board. |
+| `PINTEREST_BOARD_ID` | `(unset)` | Numeric ID of the board Pins are saved to. Connecting checks that the connected account owns it. |
 | `AI_MODE` | `"fixture"` | fixture = offline deterministic demo; live = actual AI calls with configured keys. |
 | `CAPTION_PROVIDER` | `"anthropic"` | Provider choices requested by Tudelu. These interfaces can be replaced independently. |
 | `REVIEW_PROVIDER` | `"anthropic"` | Related configuration in the group above. |

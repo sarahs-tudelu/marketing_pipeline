@@ -8,7 +8,7 @@ The Asset library can watch one Google Drive folder, optionally including its su
 2. Configure a service account credential on the server. Either reuse `GOOGLE_APPLICATION_CREDENTIALS` if that account is appropriate, set `GOOGLE_DRIVE_CREDENTIALS_FILE` to a mounted credentials file, or set `GOOGLE_DRIVE_CREDENTIALS_JSON` to a Google Secret Manager reference containing the dedicated service account JSON. Keep private keys out of the repository and browser forms. For the Droplet, the JSON secret option uses the existing Secret Manager bootstrap and needs no additional volume mount.
 3. Share the desired Drive folder with that service account's email as **Viewer**, with downloading permitted. Organization sharing policies must allow this. Domain-wide delegation is not required for a folder shared directly with the account. Shared drives are supported when the account can access the selected folder.
 4. Deploy the code, run `alembic upgrade head`, and restart both web and worker. This migration adds `drive_sources` and `drive_imports`; it does not rewrite existing assets.
-5. Open **Asset library → Automatic Google Drive imports**. The service account email appears there when its credentials are configured. Paste the folder link, choose the media source, usage rights, owner and optional tags, then select **Save and start importing**. For a folder of one product, tag it, such as `{"product_family": "pergolas"}`, using a product ID (`canopies`, `walkways`, `pergolas`, `sunshades`, `carports`, `drive_through`, `partition_walls`) or another of its Builder names. Campaigns choose media by this tag, and Pinterest sorts Pins into product boards by it.
+5. Open **Asset library → Automatic Google Drive imports**. The service account email appears there when its credentials are configured. Paste the folder link, choose the media source, usage rights, owner and optional tags, then select **Save and start importing**.
 
 Example secret reference, with `SECRET_BACKEND=google`:
 
@@ -35,7 +35,7 @@ For a folder containing mixed company/AI media, choose **Mixed sources (per-file
   "source": "company",
   "rights": "not_public",
   "owner": "Tudelu",
-  "tags": {"product_family": "partition_walls", "campaign": "showroom"}
+  "tags": {"product_family": "partitions", "campaign": "showroom"}
 }
 ```
 

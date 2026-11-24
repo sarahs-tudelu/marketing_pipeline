@@ -273,81 +273,8 @@ def test_live_pinterest_publish(db, settings, house_logo, monkeypatch, kind):
         assert "pina-SECRET" not in str(record.request) and "SIGNED-POLICY" not in str(record.request)
 
 
-def test_pins_go_to_the_board_for_the_product_they_show(db, settings):
-    from social.pinterest_boards import board_for
-
-    settings = configured(settings).model_copy(
-        update={"pinterest_product_boards": "pergola=111, canopies=222,walkways=333,carports=444,drive_through=444"}
-    )
-    default = settings.pinterest_board_id
-    facts = load_facts(db, settings.facts_path)
-
-    def photo(name, folder="Projects", **tags):
-        drive = {"google_drive_file_id": f"drive-{name}", "google_drive_folder_id": "folder"}
-        asset = ingest(db, settings, jpeg(800, 1200), name, rights="public", tags=drive | tags)
-        asset.media = asset.media | {"drive_search": {"folder_path": folder, "name": name, "description": ""}}
-        db.commit()
-        return asset
-
-    def edit(name, shown, sound=()):
-        """A real project edit: tagged company-wide, made from Drive originals, as real_edit saves one."""
-        tags = {
-            "product": "company",
-            "rendition": {"platform": "pinterest", "original_asset_id": shown[0].id},
-            "source_asset_ids": [a.id for a in [*shown, *sound]],
-            "standard_edit": {"items": [{"asset_id": a.id} for a in shown],
-                              "audio": [{"asset_id": a.id} for a in sound]},
-        }
-        asset = ingest(db, settings, jpeg(800, 1200), name, rights="public", tags=tags)
-        db.commit()
-        return asset
-
-    def pinned(asset, product="company"):
-        return board_for(db, settings, draft(db, "pinterest", "Boards", [asset.id], facts.id, product=product))
-
-    # The media's product tag, in any of the product's names.
-    assert pinned(photo("a.jpg", product_family="Pergolas")) == "111"
-    # The post's own product comes first.
-    assert pinned(photo("b.jpg", product="Pergola"), product="Architectural Canopies") == "222"
-    # Untagged Drive media is sorted by its folder and file name; the longer product name wins.
-    assert pinned(photo("c.jpg", folder="Projects/Covered Walkways")) == "333"
-    assert pinned(photo("Drive-Through Canopy 2.jpg")) == "444"
-    # An edit follows the photos it shows, not one only used for sound.
-    pergola, canopy = photo("d.jpg", product_family="Pergolas"), photo("e.jpg", product="Canopy")
-    assert pinned(edit("f.jpg", [pergola], sound=[canopy])) == "111"
-    # Mixed, unknown, unboarded or unnamed products go to the default board.
-    assert pinned(edit("g.jpg", [pergola, canopy])) == default
-    assert pinned(photo("h.jpg", folder="Projects/Canopy and pergola")) == default
-    assert pinned(photo("i.jpg", product_family="partitions")) == default
-    assert pinned(photo("j.jpg", product_family="Sunshades")) == default
-    assert pinned(photo("k.jpg")) == default
-
-    # A dry run publishes to the board, and without product boards everything goes to the default board.
-    post = claimed(db, settings, photo("l.jpg", product_family="Walkway"))
-    ADAPTERS["pinterest"](settings, db, post).publish(post, post.idempotency_key)
-    record = db.scalar(select(RequestRecord).where(RequestRecord.post_id == post.id, RequestRecord.step == "publish"))
-    assert record.request["json"]["board_id"] == "333"
-    assert board_for(db, settings.model_copy(update={"pinterest_product_boards": ""}), post) == default
-
-
-@pytest.mark.parametrize(
-    ("boards", "error"),
-    [
-        ("awnings=12", "'awnings' isn't a product"),
-        ("pergolas=board", "the board for pergolas must be its numeric ID"),
-        ("pergola=12,Pergolas=34", "gives pergolas two boards"),
-    ],
-)
-def test_product_boards_must_name_products_and_board_ids(tmp_path, boards, error):
-    from social.config import Settings
-
-    with pytest.raises(ValueError, match=error):
-        Settings(_env_file=None, database_url=f"sqlite:///{tmp_path / 'x.db'}", pinterest_product_boards=boards)
-    assert Settings(_env_file=None, pinterest_product_boards="carports=12,drive_through=12, MUTE=34")
-
-
 def test_pinterest_oauth_checks_the_board(db, settings):
-    settings = configured(settings).model_copy(update={"pinterest_product_boards": "pergolas=549755885176"})
+    settings = configured(settings)
     url = begin(db, settings, "pinterest", "browser")
     assert url.startswith("https://www.pinterest.com/oauth/?")
     params = parse_qs(urlparse(url).query)
@@ -371,9 +298,10 @@ def test_pinterest_oauth_checks_the_board(db, settings):
             )
         if request.url.path == "/v5/user_account":
             return httpx.Response(200, json={"id": "1234", "username": "tudelu", "account_type": "BUSINESS"})
-        if request.url.path in {"/v5/boards/549755885175", "/v5/boards/549755885176"}:
-            board = request.url.path.rsplit("/", 1)[1]
-            return httpx.Response(200, json={"id": board, "name": "Shade ideas", "owner": {"username": "tudelu"}})
+        if request.url.path == "/v5/boards/549755885175":
+            return httpx.Response(
+                200, json={"id": "549755885175", "name": "Shade ideas", "owner": {"username": "tudelu"}}
+            )
         pytest.fail(f"Unexpected request {request.url}")
 
     callback(
@@ -392,12 +320,11 @@ def test_pinterest_oauth_checks_the_board(db, settings):
     other = begin(db, settings, "pinterest", "browser")
 
     def someone_elses_board(request):
-        # Every product board is checked as well as the default board.
-        if request.url.path == "/v5/boards/549755885176":
-            return httpx.Response(200, json={"id": "549755885176", "owner": {"username": "someone"}})
+        if request.url.path == "/v5/boards/549755885175":
+            return httpx.Response(200, json={"id": "549755885175", "owner": {"username": "someone"}})
         return handler(request)
 
-    with pytest.raises(ValueError, match="board 549755885176 doesn't belong to the connected account"):
+    with pytest.raises(ValueError, match="doesn't belong to the connected account"):
         callback(
             db,
             settings,
