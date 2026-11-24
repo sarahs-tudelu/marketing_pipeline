@@ -97,7 +97,7 @@ WRITER_INSTRUCTIONS = (
     "the structure or reveal parts the opening frame doesn't show. "
     "For generated video, describe the complete requested scene, appearance and motion. The app will first "
     "create a new scene image using the supplied photos as product references, then animate that new image. "
-    "For video_edit, describe the change to apply to the supplied video while preserving the system's geometry. "
+    "For video_edit, describe the requested change to the supplied video and preserve the geometry outside that edit. "
     "Keep prompt under 900 characters. sources_used lists which sources informed it, such as "
     "'website', 'rules', 'uploaded:<asset_id>', 'reference:<asset_id>', 'previous:<asset_id>'. "
     "When requested_shot is present, depict that setting and, if named, that system and configuration. The "

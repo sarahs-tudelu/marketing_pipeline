@@ -16,6 +16,8 @@ from social.idea_plan import catalog_for, plan_idea
 from social.media_studio import CreativeBrief, process_jobs, queue_jobs
 from social.models import FactSheet
 from social.product_rules import (
+    CANOPY_FORM_GUIDANCE,
+    CANOPY_FORM_RULE,
     FRAMING_RULE,
     HANGER_ROD_CUE,
     HANGER_ROD_RULE,
@@ -126,8 +128,25 @@ def test_cues_survive_utf16_limit_and_retries_without_duplication(guide):
     profile = profile_for(guide, "pergolas")
     prompt = constrain_prompt("A terrace. " * 160 + "🌅" * 30, profile)
     assert len(prompt.encode("utf-16-le")) <= PROMPT_LIMIT * 2
-    assert prompt.endswith(profile.prompt_cue)
+    assert prompt.endswith(profile.generation_cue)
     assert constrain_prompt(prompt, profile) == prompt
+
+
+@pytest.mark.parametrize(("family", "design"), [
+    ("pergolas", "A hexagonal pergola with three branching aluminum posts."),
+    ("canopies", "A long curved canopy with angled supports along the walkway."),
+    ("pergolas", "A rectangular pergola with four straight posts."),
+])
+def test_saved_builder_cue_preserves_the_requested_design_on_retry(guide, family, design):
+    profile = profile_for(guide, family)
+    saved = f"{design} {profile.prompt_cue}"
+    if family == "canopies":
+        saved += " " + HANGER_ROD_CUE
+    submitted = constrain_prompt(saved, profile)
+    assert submitted.startswith(design)
+    assert profile.prompt_cue not in submitted
+    assert submitted.count(profile.generation_cue) == 1
+    assert constrain_prompt(submitted, profile) == submitted
 
 
 def test_writer_receives_rules_and_persists_exact_source_provenance(db, settings, sheet, monkeypatch):
@@ -151,7 +170,7 @@ def test_writer_receives_rules_and_persists_exact_source_provenance(db, settings
     assert context["rules"]["visual_guidance"] == sheet.document["visual_guidance"]
     assert context["rules"]["product_constraints"] == current_constraints()
     assert result["generation_prompt"].endswith(
-        profile_for(Facts.model_validate(sheet.document).visual_guidance, "Pergolas").prompt_cue
+        profile_for(Facts.model_validate(sheet.document).visual_guidance, "Pergolas").generation_cue
     )
     assert result["prompt_writer"]["sources"]["visual_guidance"] == sheet.document["visual_guidance"]
     assert result["prompt_writer"]["sources"]["product_constraints"] == current_constraints()
@@ -232,6 +251,7 @@ def test_planner_uses_only_profiled_products_and_gets_full_rules(db, settings, s
     seen = []
 
     def respond(self, instructions, context):
+        assert "four posts" not in instructions.casefold()
         seen.append(context)
         return {"title": "Terrace", "shots": [{"system": "Pergolas", "setting": "terrace"}]}
 
@@ -309,6 +329,7 @@ def test_openai_gets_rule_instructions_and_structured_mismatch_fields(settings, 
     assert "product_constraints_version" in payload["text"]["format"]["schema"]["required"]
     instructions, supplied = payload["input"][0]["content"][0]["text"].split("Context: ", 1)
     assert "Rods or rod-like braces underneath" in instructions
+    assert "posts stay plumb" not in instructions
     assert json.loads(supplied)["product_constraints"] == current_constraints()
 
 
@@ -322,7 +343,7 @@ def test_hanger_rod_orientation_survives_prompt_limits_and_retries(guide, system
     assert prompt.count(HANGER_ROD_CUE) == 1
     assert constrain_prompt(prompt, profile, system) == prompt
     if profile:
-        assert profile.prompt_cue in prompt
+        assert profile.generation_cue in prompt
 
 
 @pytest.mark.parametrize("operation", ["image", "video", "video_edit"])
@@ -419,12 +440,13 @@ def test_fact_editor_shows_new_version_as_default_and_preserves_guidance(setting
 
 def test_owner_scope_allows_customization_and_keeps_hard_limits():
     rules = {r["id"]: r["instruction"] for r in current_constraints()["rules"]}
-    assert list(rules) == [SCOPE_RULE, WEATHER_RULE, FRAMING_RULE, HANGER_ROD_RULE]
+    assert list(rules) == [SCOPE_RULE, WEATHER_RULE, FRAMING_RULE, CANOPY_FORM_RULE, HANGER_ROD_RULE]
     assert "hanger rods below a canopy" in rules[SCOPE_RULE]
     assert "'only when selected' describe a starting point" in rules[SCOPE_RULE]
     assert "A pergola can take an insulated solid panel or glass roof" in rules[WEATHER_RULE]
     assert "Partial overlap is not a defect" in rules[FRAMING_RULE]
-    assert [s["recorded_on"] for s in current_constraints()["sources"]] == ["2026-11-16", "2026-11-17"]
+    assert rules[CANOPY_FORM_RULE] == CANOPY_FORM_GUIDANCE
+    assert [s["recorded_on"] for s in current_constraints()["sources"]] == ["2026-11-16", "2026-11-17", "2026-11-24"]
 
 
 def test_image_side_models_get_product_names_not_caption_limits(db, settings, sheet):

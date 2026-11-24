@@ -192,7 +192,8 @@ def test_canopy_design_can_cite_the_owner_corrections_it_was_given(db, settings,
     # is the canopy's own; citing it used to fail every canopy design plan.
     reference_job.brief = reference_job.brief | {"prompt": IDEA, "depicted_system": "Canopies"}
     db.commit()
-    rules = ["canopy.frame", "canopy.supports", "canopy.hanger_rods_above", "scope.product_brief", "builder.geometry"]
+    rules = ["canopy.frame", "canopy.supports", "canopy.hanger_rods_above", "canopy.design_geometry",
+             "scope.product_brief", "builder.geometry"]
     seen = []
 
     def design(settings, records, context):
@@ -206,6 +207,7 @@ def test_canopy_design_can_cite_the_owner_corrections_it_was_given(db, settings,
     plan = reference_job.brief["reference_plan"]
     assert list(plan["design_rules"]) == rules
     assert "entirely ABOVE the canopy roof" in plan["design_rules"]["canopy.hanger_rods_above"]
+    assert "hexagonal" in plan["design_rules"]["canopy.design_geometry"]
 
 
 def test_scene_keeps_exact_post_configuration_and_complete_setting():
@@ -568,11 +570,14 @@ def test_website_bytes_are_bounded_cached_and_not_claimed_to_be_real(db, setting
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         records = refs.website_references(db, settings, job, "pergolas", client)
         assert refs.website_references(db, settings, job, "pergolas", client) == records
-    assert len(urls) == 1 and urls[0].startswith("https://tudelu.com/system4/")
-    assert records[0]["source"] == "website_image_creation_method_unverified"
-    assert records[0]["checksum"] == hashlib.sha256(data).hexdigest()
-    assert refs.read_reference(settings, records[0]) == data
-    assert not records[0].get("asset_id")
+    expected_urls = refs.reference_config("website-product-references.yaml")["pergolas"]["images"]
+    assert urls == expected_urls and len(set(urls)) == 2
+    assert [record["source_url"] for record in records] == urls
+    for record in records:
+        assert record["source"] == "website_image_creation_method_unverified"
+        assert record["checksum"] == hashlib.sha256(data).hexdigest()
+        assert refs.read_reference(settings, record) == data
+        assert not record.get("asset_id")
 
 
 @pytest.mark.parametrize(
@@ -590,7 +595,8 @@ def test_website_errors_do_not_follow_redirects_or_block_library_references(db, 
         transport=httpx.MockTransport(lambda request: calls.append(request) or response)
     ) as client:
         assert refs.website_references(db, settings, job, "pergolas", client) == []
-    assert len(calls) == 1
+    expected_urls = refs.reference_config("website-product-references.yaml")["pergolas"]["images"]
+    assert [str(request.url) for request in calls] == expected_urls
 
 
 def test_final_visual_review_gets_reference_images_separately(

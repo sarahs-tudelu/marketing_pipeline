@@ -9,6 +9,8 @@ pergolas:
   page: https://tudelu.com/pergolas
   images:
     - https://tudelu.com/system4/rooftop-pergola-wood-louvers-dark-v2.png
+    # Multi-sided pergola from the product gallery, checked 2026-11-24.
+    - https://tudelu.com/system4/pergola-difference-custom-louver-render-white-transparent-v3.png
 partition_walls:
   page: https://tudelu.com/partition-walls
   images:

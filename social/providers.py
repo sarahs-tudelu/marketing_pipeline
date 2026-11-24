@@ -558,7 +558,7 @@ class OpenAI:
                 "a post, louver, rod, roof layer or joint that appears, vanishes, duplicates, bends, stretches, "
                 "slides or changes count or thickness between frames is a product defect; report it with its "
                 "frame times in problem_seconds. Check that no member passes through or overlaps another member, "
-                "a wall or the floor, and that posts stay plumb and seated under the frame. "
+                "a wall or the floor, and that each support connects at the base and frame points of its design. "
                 "Follow people and objects between consecutive frames too. Someone on one side of a closed door, "
                 "glass wall, wall or railing in one frame and on the other side in a later frame, while it "
                 "stays shut, has passed through it; a person frozen mid-step or mid-gesture while the scene "

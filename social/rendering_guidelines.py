@@ -1,6 +1,6 @@
-"""Owner-requested reference workflow; product dimensions still come from the Builder."""
+"""Owner-requested reference workflow for Tudelu product depictions."""
 
-VERSION = "tudelu-reference-rendering-2026-11-23-v7"
+VERSION = "tudelu-reference-rendering-2026-11-24-v8"
 
 DEFAULT_VISUAL_DIRECTION = (
     "Photorealistic architectural film, natural soft light, balanced exposure, restrained contrast and "
@@ -10,7 +10,7 @@ DEFAULT_VISUAL_DIRECTION = (
 
 # Prompt guidance is separate from the persisted rendering-policy digest: changing the writer
 # must not invalidate a paid scene or an in-flight task that uses an older saved plan.
-SELECTION_VERSION = "action-and-doorways-2026-11-18-v3"
+SELECTION_VERSION = "custom-canopy-geometry-2026-11-24-v4"
 STRUCTURE_SELECTION = (
     "Use the matching reference as the starting point for construction details the approved shot leaves "
     "open, and adapt it where the shot's configuration or the situation reasonably calls for a supported "
@@ -51,20 +51,19 @@ RULES = [
     "background or color. Website illustrations are not verified installations or new caption facts.",
     "Choose references separately for every product scene, including later clips and regenerated clips. "
     "Match the product family and use its visible construction as evidence. Prefer real company photos when "
-    "equally suitable. Different locations, architecture, straight-sided footprints, Builder-supported structures, "
+    "equally suitable. Different locations, architecture, custom footprints, Builder-supported structures, "
     "finishes, colors and accessories may be generated to follow the prompt. A different background or finish "
     "is not a reference mismatch. Surrounding architecture may vary in brick, stone, glass, wood or other "
     "requested materials; the product itself keeps its Builder-supported materials. Do not combine "
     "incompatible structures or invent missing attachments.",
-    "Keep each generated scene's selected structural arrangement, straight fascia cross-sections, connected "
+    "Keep each generated scene's selected structural arrangement, fascia profile, connected "
     "members, roof type, supports, attachment points and finish consistent within that scene. Preserve stainless rod fittings. "
     "Wood Look is a finish on aluminum, not timber. Add only selected, Builder-supported accessories.",
     # Builder PRODUCT-RULES.md (no-overlap rule, seated posts, panel grid) at the snapshot commit.
     "Every product piece is solid: no member passes through, merges into, hides inside or overlaps another "
     "member, the fascia, a wall, the floor or an attachment, and connections touch flush or seat into each other. "
-    "Posts stand plumb and straight from the ground to the frame, seated fully under the fascia's bottom "
-    "perimeter unless the selected design places them outside. The roof is one flat plane resting on the frame "
-    "(two only for a selected double roof), with evenly spaced panel seams aligned to the frame. Louvers in one "
+    "Posts follow the selected design from their bases to their frame connections. The roof follows its designed "
+    "outline and layers, with panel seams aligned to the frame. Louvers in one "
     "run are parallel, evenly spaced and the same profile, and each end is seated in the frame.",
     "Within a clip the structure is rigid and unchanged: the same number of posts, louvers, roof layers, rods "
     "and joints in every frame. Members never appear, vanish, duplicate, bend, stretch, slide or change thickness "

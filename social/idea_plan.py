@@ -205,7 +205,7 @@ PLANNER_INSTRUCTIONS = (
     "the owner's current instructions, to read them: " + SCOPE_REASONING + " " + WEATHER_GUIDANCE + " "
     "configuration: for each shot with a system, the Tudelu configuration that fits its setting and the "
     "idea, in one short phrase of visible choices, for example 'black pergola with an insulated solid panel "
-    "roof for rain cover, four posts' or 'white canopy on above-roof hanger rods'. Choose supported options "
+    "roof for rain cover' or 'white canopy on above-roof hanger rods'. Choose supported options "
     "the situation needs instead of dropping part of the idea; leave details the idea doesn't need empty. "
     "Keep the configuration the same across shots of the same installation. "
     "conflicts: only parts of the idea past a hard limit (something Tudelu doesn't make, such as hanger "

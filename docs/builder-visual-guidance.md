@@ -152,6 +152,20 @@ past a hard limit (`request_conflict`), automatic retries stop and the job or po
 for a person to change the shot. A paid scene saved before a rule-wording release is kept
 and reviewed under the current rules; plans saved before this release are planned once more.
 
+### Canopy and pergola geometry
+
+On 2026-11-24 the owner clarified that Social Studio may depict canopies and pergolas of
+any footprint or size. Each design determines its post count, spacing and support shapes.
+Examples include rectangular and hexagonal layouts, angled or curved posts, and supports
+assembled from multiple connected members. A specified four-post design remains valid.
+The rule `canopy.design_geometry` applies to planning, generation and visual review,
+including jobs using older Builder snapshots. Review checks the connections and whether
+the design stays consistent within a shot. Project-specific structural capacities and
+dimensions for fabrication still require assessment.
+
+The company provides drawings and design examples on its [drawing studio](https://tudelu.com/design),
+[canopy page](https://tudelu.com/canopies) and [pergola page](https://tudelu.com/pergolas).
+
 ### Updating the Builder snapshot
 
 Review changed Builder sources before changing the curated rules. Preserve the original

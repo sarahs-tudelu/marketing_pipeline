@@ -4,7 +4,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-17-v2"
+PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-24-v3"
 HANGER_ROD_RULE = "canopy.hanger_rods_above"
 HANGER_ROD_CUE = (
     "Any hanger rods rise above the canopy roof from its outer fascia to higher wall anchors, "
@@ -13,6 +13,15 @@ HANGER_ROD_CUE = (
 SCOPE_RULE = "scope.product_brief"
 WEATHER_RULE = "scope.weather"
 FRAMING_RULE = "scope.people_and_framing"
+CANOPY_FORM_RULE = "canopy.design_geometry"
+CANOPY_FORM_GUIDANCE = (
+    "For canopies and pergolas the design sets the footprint, size, post count, spacing and shape of the "
+    "supports. Rectangular, hexagonal and other custom footprints are valid at project-specific scales. "
+    "Posts can be straight, angled, curved or built from connected members. Use the brief, Tudelu drawing "
+    "or website design as applicable. Four corner posts are one possible layout. Older Builder examples "
+    "of straight frames, post spacing and dimensions impose no shape, size or post-count limit on a depiction. "
+    "Check that the chosen members connect and keep their designed shape throughout the shot."
+)
 
 # How every planner, writer and reviewer reads the Builder guidance: as a description of what Tudelu
 # offers, customized to the situation the way a product brief is, with a short list of hard limits.
@@ -22,14 +31,15 @@ SCOPE_REASONING = (
     "configuration could reasonably be specified for that situation. Customization is expected: footprint, "
     "size, height, post count and spacing, beams for longer spans, roof type (open fixed louvers, insulated "
     "solid panels or glass), building attachment, finishes, trim, lighting and accessories can all change "
-    "to fit the scene, as can the setting, weather, season, time of day and people. Builder defaults, typical "
-    "values, dimensional examples and wording such as 'only when selected' describe a starting point: a "
+    "to fit the scene, as can the setting, weather, season, time of day and people. For canopy and pergola "
+    f"geometry, apply the current owner rule {CANOPY_FORM_RULE} over older Builder guidance. Builder defaults, "
+    "typical values, dimensional examples and wording such as 'only when selected' describe a starting point: a "
     "supported option counts as selected once the approved plan, the prompt or the situation calls for it. "
     "Hard limits are only what Tudelu does not make: configurations the owner has ruled out (hanger rods "
     "below a canopy), operable, rotating or motorized pergola louvers, a MUTE partition that slides or folds "
     "instead of retracting vertically, a different kind of product (timber framing, a fabric awning, a tent "
     "or a generic structure) and the coming-soon families. Physically broken rendering (floating, "
-    "disconnected, bent or interpenetrating members, or geometry that changes between frames) is a defect, "
+    "disconnected or interpenetrating members, or geometry that changes between frames) is a defect, "
     "not a scope question. Pass anything a reasonable Tudelu product brief could specify; when unsure whether "
     "an option is offered, use the nearest supported option rather than refusing."
 )
@@ -45,7 +55,7 @@ FRAMING_GUIDANCE = (
     "People, furniture, grills, plants and vehicles may stand in front of parts of a structure, as in any "
     "lifestyle photo. Keep enough of it visible that the construction reads clearly, such as the roof edge "
     "and most supports. Partial overlap is not a defect. A member that visibly stops at an object without "
-    "continuing, a post that doesn't reach the ground, or framing that leaves the structure unreadable is."
+    "continuing, a floating support base, or framing that leaves the structure unreadable is."
 )
 
 
@@ -70,10 +80,20 @@ def current_constraints():
                     "with its supports below the deck is not."
                 ),
             },
+            {
+                "type": "owner_instruction",
+                "recorded_on": "2026-11-24",
+                "record": "docs/builder-visual-guidance.md#canopy-and-pergola-geometry",
+                "statement": (
+                    "Canopies and pergolas have project-specific shapes, sizes and support layouts. "
+                    "The design determines the number and shape of its posts."
+                ),
+            },
         ],
         "rules": [{"id": SCOPE_RULE, "instruction": SCOPE_REASONING},
                   {"id": WEATHER_RULE, "instruction": WEATHER_GUIDANCE},
-                  {"id": FRAMING_RULE, "instruction": FRAMING_GUIDANCE}, {
+                  {"id": FRAMING_RULE, "instruction": FRAMING_GUIDANCE},
+                  {"id": CANOPY_FORM_RULE, "instruction": CANOPY_FORM_GUIDANCE}, {
             "id": HANGER_ROD_RULE,
             "instruction": (
                 "For any rod-hung canopy, hanger/tie rods must run entirely ABOVE the canopy roof, from "
@@ -81,7 +101,7 @@ def current_constraints():
                 "supported hanger-rod canopies: never show rods or rod-like diagonal braces beneath the "
                 "roof, running from a lower wall anchor up to the underside or outer edge. Keep this "
                 "orientation throughout every clip, including canopy components in sunshades, walkways, "
-                "drive-through systems and carports. This restriction does not prohibit vertical posts "
+                "drive-through systems and carports. This restriction does not prohibit ground-supported posts "
                 "or a separately approved cantilever configuration; follow their selected product rules. "
                 "Do not reinterpret a lower diagonal rod as an approved cantilever. These owner "
                 "corrections override conflicting creative requests, older support descriptions, website "
@@ -115,6 +135,17 @@ class ProductProfile(BaseModel):
     aliases: list[str] = []
     prompt_cue: str = Field(min_length=1, max_length=420)
     rules: list[ProductRule] = Field(min_length=1)
+
+    @property
+    def generation_cue(self):
+        # Retain the product-specific details of saved Builder cues while applying the owner's geometry update.
+        if self.product_id in {"pergolas", "canopies", "carports", "walkways", "drive_through"}:
+            return (
+                self.prompt_cue.replace("crisp straight mitered fascia", "the selected fascia profile")
+                .replace("a straight mitered fascia frame", "the selected perimeter frame")
+                .replace("straight mitered fascia", "the selected fascia profile")
+            )
+        return self.prompt_cue
 
 
 class VisualGuidance(BaseModel):
@@ -174,7 +205,7 @@ def constrain_prompt(prompt, profile, system=""):
     from .prompting import PROMPT_LIMIT, utf16_trim
 
     prompt = " ".join(prompt.split())
-    cues = [profile.prompt_cue] if profile else []
+    cues = [profile.generation_cue] if profile else []
     subject = normalize(f"{profile.product_id if profile else system} {prompt}")
     if re.search(r"\b(canopy|canopies|sunshades?|walkways?|carports?|drive through|hanger rods?|tie rods?)\b", subject):
         cues.append(HANGER_ROD_CUE)
@@ -183,6 +214,9 @@ def constrain_prompt(prompt, profile, system=""):
     for cue in reversed(cues):
         if prompt.endswith(cue):
             prompt = prompt[: -len(cue)].strip()
+    if profile:
+        # An edited or queued prompt can still end with the original snapshot's cue.
+        prompt = prompt.removesuffix(profile.prompt_cue).strip()
     cue = " ".join(cues)
     remaining = PROMPT_LIMIT - len(cue.encode("utf-16-le")) // 2 - 1
     return (utf16_trim(prompt, remaining) + " " + cue).strip()
