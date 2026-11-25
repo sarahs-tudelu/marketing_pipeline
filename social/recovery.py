@@ -364,11 +364,14 @@ def auto_retry(db, settings, job):
     if job.task_id:
         return False
     step = retry_option(job)
-    if not step or step["kind"] != "scene" or not step["scene_reasons"]:
+    if not step or step["kind"] != "scene":
         return False
     from .reference_grounding import current_plan
 
-    conflict = str(((current_plan(job) or {}).get("scene_check") or {}).get("request_conflict") or "").strip()
+    review = (current_plan(job) or {}).get("scene_check") or {}
+    if review.get("passed") is not False or not review.get("reasons"):
+        return False
+    conflict = str(review.get("request_conflict") or "").strip()
     if conflict:
         # Making the scene again can't fix a shot that asks for something Tudelu doesn't make.
         if "doesn't make" not in job.error:
@@ -379,14 +382,25 @@ def auto_retry(db, settings, job):
             db.commit()
         return False
     target = current_segment(job) or job.brief
-    review = (current_plan(job) or {}).get("scene_check") or {}
-    previous = (target.get("scene_retry") or {}).get("review") or {}
-    prior_components = set(previous.get("defect_components") or [])
+    # A held video's findings guide the new scene prompt. Only actual scene corrections
+    # for this shot establish that a still-image defect has already been addressed.
+    tried_components = []
+    repair = target.get("repair") or {}
+    if repair.get("route") == "scene":
+        tried_components.append(set(repair.get("components") or []))
+    for task in job.brief.get("failed_tasks", []):
+        if task.get("stage") == "scene" and task.get("segment_index") == step["index"]:
+            previous = (task.get("reference_plan") or {}).get("scene_check") or {}
+            if previous.get("passed") is False:
+                tried_components.append(set(previous.get("defect_components") or []))
     components = set(review.get("defect_components") or [])
-    if (target.get("repair") or {}).get("route") == "scene" or (
-        previous and (not components or not prior_components or components & prior_components)
-    ):
-        job.error += " Review the saved scene against the product reference before spending on another correction."
+    repeated = components & set().union(*tried_components)
+    if repeated or (tried_components and (not components or not all(tried_components))):
+        reason = (
+            f"The review flagged a component already targeted for correction ({', '.join(sorted(repeated))})."
+            if repeated else "The reviews do not identify which component would receive a new correction."
+        )
+        job.error += f" {reason} Review the saved scene against the product reference."
         db.commit()
         return False
     tries = automatic_scene_retries(job, step["index"])

@@ -291,6 +291,10 @@ def publish_due(db, settings, at=None, client=None):
                 if failed:
                     transition(db, post, "held", "Pre-publish checks: " + ", ".join(failed))
                     db.commit()
+                    if failed == ["vision_review"]:
+                        from .clip_replace import auto_regenerate
+
+                        auto_regenerate(db, settings, post)
                     continue
                 result = selected.publish(post, post.idempotency_key)
             post.remote_id, post.live_url = result.platform_post_id, result.url

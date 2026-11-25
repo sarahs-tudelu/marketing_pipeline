@@ -39,6 +39,10 @@ review/download failure still resumes the saved work without buying another scen
 Runway's terminal internal errors use **Generate the scene again** to submit a new
 task with a new seed, and other completed clips remain intact.
 
+A rejected starting image can be corrected automatically while the clip is still being prepared. The planner receives the review findings and submits a revised scene prompt. When a video repair produces a starting image with a new defect, that defect is eligible for its own correction. Another rejection of a component already targeted for that shot goes to human review.
+
+If visual review is the only failed check just before publication, the worker also queues eligible corrections for generated images and videos. To revisit an existing hold, open the post and select **Run automated checks**. A one-off draft that passes every check waits for approval of its final media and caption.
+
 **Automatic video repairs.** The final visual review compares each affected shot with its starting image and product reference. It records the first affected second, the component, the requested correction, and any clean interval or matching library source. The held post shows the surrounding frames alongside its reference images. Recheck an older hold to get this diagnosis.
 
 - A construction defect in the opening image goes to the scene planner with the failed footage samples and a cleared company reference. The corrected image must pass review before animation.

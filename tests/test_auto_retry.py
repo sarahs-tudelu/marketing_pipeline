@@ -1,18 +1,20 @@
 """Generated media that fails a quality review is made again automatically, up to MEDIA_AUTO_RETRIES."""
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import select
 from test_clip_replace import REASON, held_video, run
 from test_idea_plans import facts as facts  # noqa: F401
 from test_idea_plans import logo as logo  # noqa: F401
-from test_reference_grounding import choice
+from test_reference_grounding import canopy_design, choice
 from test_reference_grounding import photo as photo  # noqa: F401
 from test_reference_grounding import reference_job as reference_job  # noqa: F401
 from test_reference_grounding import sheet as sheet  # noqa: F401
 from test_scene_generation import Provider
 from test_scene_generation import video_job as video_job  # noqa: F401
 
-from social import gate
+from social import gate, pipeline
 from social import reference_grounding as refs
 from social import scene_generation as scenes
 from social.app import create_app
@@ -20,8 +22,9 @@ from social.clip_replace import auto_regenerate
 from social.db import uid
 from social.lifecycle import transition
 from social.media_studio import process_jobs
-from social.models import Asset, CheckResult, MediaJob, Post, Transition
+from social.models import Asset, CheckResult, MediaJob, Post, RequestRecord, Transition
 from social.recovery import retry_option
+from social.scheduler import schedule
 
 
 def scene_reviews(monkeypatch, verdicts, components=("roof", "support", "trim")):
@@ -65,6 +68,38 @@ def test_rejected_scene_is_corrected_automatically_until_it_passes(db, settings,
     assert seen == [[], ["Roof member floats (1)."], ["Roof member floats (2)."]]
 
 
+def test_video_feedback_allows_first_still_correction_and_then_stops_repeated_defect(
+    db, settings, video_job, monkeypatch,  # noqa: F811
+):
+    settings.media_auto_retries = 3
+    motion_issue = "The housing moves during retraction."
+    # Stored by correction() when a finished clip is replaced. These findings describe motion.
+    video_job.brief = video_job.brief | {"scene_retry": {
+        "source": "held_post", "review": {"passed": False, "reasons": [motion_issue]},
+        "video_check": {"reasons": [motion_issue]},
+    }}
+    db.commit()
+    width_issue = "The partition is too narrow to reach both guides."
+    seen = []
+
+    def inspect(settings, plan, guidance, scene):
+        seen.append(scenes.earlier_defects(plan))
+        return scenes.SceneCheck(passed=False, reasons=[width_issue], defect_components=["partition"])
+
+    monkeypatch.setattr(scenes, "review_scene", inspect)
+    monkeypatch.setattr(refs, "select_reference", lambda s, r, c: choice(r[0]).model_copy(
+        update={"scene_requirements": ["The partition meets both guides."]}
+    ))
+    provider = Provider(db, video_job, settings)
+    for _ in range(12):
+        process_jobs(db, settings, provider)
+        if video_job.state == "failed":
+            break
+    assert seen == [[motion_issue], [motion_issue, width_issue]]
+    assert [endpoint for endpoint, _ in provider.submitted] == ["text_to_image", "text_to_image"]
+    assert video_job.state == "failed" and "already targeted for correction (partition)" in video_job.error
+
+
 def test_automatic_scene_corrections_stop_at_the_limit(db, settings, video_job, monkeypatch):  # noqa: F811
     settings.media_auto_retries = 2
     scene_reviews(monkeypatch, [False])
@@ -95,6 +130,52 @@ def failing_check(details):
         return [check], [db.get(Asset, i) for i in post.asset_ids]
 
     return evaluate
+
+
+@pytest.mark.parametrize("pending_delivery", [False, True])
+def test_pre_publish_visual_hold_queues_image_correction_unless_delivery_is_uncertain(
+    db, settings, post, reference_job, monkeypatch, pending_delivery,  # noqa: F811
+):
+    reference_job.output_asset_id = post.asset_ids[0]
+    reference_job.post_id, reference_job.state = post.id, "complete"
+    reference_job.brief = reference_job.brief | {"depicted_system": "Canopies"}
+    db.commit()
+    gate.run_gate(db, settings, post)
+    at = schedule(db, settings, post)
+    if pending_delivery:
+        db.add(RequestRecord(
+            post_id=post.id, step="publish", state="pending", request={}, irreversible=True, dry_run=True,
+        ))
+        db.commit()
+    reason = "Remove the visible joint lines across the canopy underside."
+    monkeypatch.setattr(pipeline, "evaluate", failing_check({"reasons": [reason]}))
+    pipeline.publish_due(db, settings, at=at)
+    pipeline.publish_due(db, settings, at=at)
+    assert post.status == "held" and not post.remote_id
+    replacements = list(db.scalars(select(MediaJob).where(MediaJob.id != reference_job.id)))
+    if pending_delivery:
+        assert replacements == []
+        return
+    assert len(replacements) == 1
+    redo = replacements[0]
+    assert redo.state == "queued" and redo.brief["operation"] == "image"
+    assert redo.brief["replaces"]["auto_attempt"] == 1
+    corrected = "The entire canopy underside is a continuous seamless surface."
+
+    def replan(settings, records, context):
+        assert context["scene_retry"]["review"]["reasons"] == [reason]
+        return canopy_design().model_copy(update={"scene_requirements": [corrected]})
+
+    class ImageProvider:
+        def submit(self, endpoint, payload):
+            assert endpoint == "text_to_image" and corrected in payload["promptText"]
+            return "corrected-image-task"
+
+    settings.ai_mode, settings.runway_api_key = "live", SecretStr("test")
+    monkeypatch.setattr(refs, "candidates", lambda *args: [])
+    monkeypatch.setattr(refs, "select_reference", replan)
+    process_jobs(db, settings, ImageProvider())
+    assert redo.state == "running" and redo.task_id == "corrected-image-task", redo.error
 
 
 def test_held_post_regenerates_flagged_clip_automatically_up_to_the_limit(

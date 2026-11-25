@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from .db import uid
 from .lifecycle import lock_post, transition
-from .models import Asset, CheckResult, MediaJob
+from .models import Asset, CheckResult, MediaJob, RequestRecord
 from .prompting import PROMPT_LIMIT, utf16_trim
 from .recovery import MUSIC_PROMPT_LIMIT
 
@@ -474,6 +474,12 @@ def auto_regenerate(db, settings, post):
     """Queue one evidence-based repair for each affected generated shot."""
     limit = settings.media_auto_retries
     if post.status != "held" or not limit:
+        return None
+    from .human_review import delivery_reported, possible_delivery_requests
+
+    if delivery_reported(post) or db.scalar(
+        possible_delivery_requests().where(RequestRecord.post_id == post.id).limit(1)
+    ):
         return None
     vision = failed_vision(db, post)
     job = source_job(db, post)
