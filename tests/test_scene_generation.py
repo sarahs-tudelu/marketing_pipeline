@@ -279,6 +279,63 @@ def test_rejected_scene_requires_correction_and_carries_feedback_into_new_scene(
         assert "View saved scene 1" in page.text and "View saved scene 2" in page.text
 
 
+@pytest.mark.parametrize("segmented", [False, True])
+def test_admin_can_animate_a_rejected_scene_anyway(db, settings, video_job, monkeypatch, segmented):
+    from fastapi.testclient import TestClient
+
+    from social.app import create_app
+
+    if segmented:
+        video_job.brief = video_job.brief | {"video_segments": [{
+            "index": 0, "start": 0, "duration": 6, "seed": 123,
+            "system": "Pergolas", "prompt": "A white pergola in a courtyard.",
+        }]}
+        db.commit()
+    reason = "The right-hand beam closes the open corner of the L."
+    monkeypatch.setattr(scenes, "review_scene", lambda *args: scenes.SceneCheck(
+        passed=False, reasons=[reason], defect_components=["roof"]))
+    provider = Provider(db, video_job, settings)
+    for _ in range(3):
+        process_jobs(db, settings, provider)
+    assert video_job.state == "failed" and len(provider.submitted) == 1
+    assert retry_option(video_job)["approvable"]
+    scene_id = refs.current_plan(video_job)["scene_reference"]["asset_id"]
+    with TestClient(create_app(settings)) as client:
+        assert "Approve scene anyway" in client.get("/admin/media-queue").text
+        token = client.get("/api/session").json()["csrf"]
+        approved = client.post(f"/forms/media-jobs/{video_job.id}/approve_scene",
+                               data={"csrf": token, "note": "  Close enough   for this post. "})
+        assert approved.status_code == 200
+    db.refresh(video_job)
+    check = refs.current_plan(video_job)["scene_check"]
+    assert video_job.state == "queued" and not video_job.error
+    # The findings stay on record with who accepted them.
+    assert check["passed"] and check["reasons"] == [reason]
+    assert check["admin_approval"]["by"] == "local-developer"
+    assert check["admin_approval"]["note"] == "Close enough for this post."
+    # The saved scene is animated as it is, without another scene or review.
+    process_jobs(db, settings, provider)
+    assert video_job.state == "running", video_job.error
+    assert len(provider.submitted) == 2 and provider.submitted[1][0] == "image_to_video"
+    assert provider.submitted[1][1]["promptImage"] == [{"uri": "runway://" + scene_id, "position": "first"}]
+    with TestClient(create_app(settings)) as client:
+        assert "Approved for animation by local-developer despite the scene review" in client.get(
+            "/admin/media-queue").text
+        token = client.get("/api/session").json()["csrf"]
+        again = client.post(f"/forms/media-jobs/{video_job.id}/approve_scene", data={"csrf": token})
+        assert again.status_code == 400 and "be approved now" in again.text
+
+
+def test_scene_approval_needs_a_rejected_saved_scene(db, settings, video_job):
+    provider = Provider(db, video_job, settings)
+    process_jobs(db, settings, provider)
+    with pytest.raises(ValueError, match="be approved now"):
+        scenes.approve_scene(video_job, "admin")  # The scene is still being generated.
+    video_job.state = "failed"
+    with pytest.raises(ValueError, match="be approved now"):
+        scenes.approve_scene(video_job, "admin")  # A task is in flight.
+
+
 def test_correction_planner_sees_rejected_pixels_but_runway_only_gets_product_reference(
     db, settings, video_job, photo, monkeypatch
 ):

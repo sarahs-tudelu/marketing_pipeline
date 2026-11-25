@@ -51,6 +51,12 @@
       {% if step.get('alternate_audio_model') %}<p>Or try Seed Audio through Runway with this music direction. It reuses the saved clips and fits the new soundtrack to the finished video.</p>{% endif %}
       <div class="actions"><button class="primary">{{ 'Generate corrected scene' if step.get('scene_reasons') else 'Generate ' ~ step.label ~ ' again' }}</button>{% if step.get('alternate_audio_model') %}<button name="audio_model" value="seed_audio">Try Seed Audio through Runway</button>{% endif %}</div>
     </form>
+    {% if step.get('approvable') %}<form method="post" action="/forms/media-jobs/{{ j.id }}/approve_scene{{ scope }}" data-confirm="Animate the saved scene as it is? The review findings stay on record with your approval.{{ ' Runway animation is paid.' if j.brief.execution_mode == 'live' else '' }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <p>Or, if the findings are acceptable for this post, approve the saved scene as it is. It goes straight to animation, and the finished video's check won't fail it again for the same findings.</p>
+      <label>Why it's acceptable (optional)<input name="note" maxlength="500"></label>
+      <div class="actions"><button>Approve scene anyway</button></div>
+    </form>{% endif %}
     {% elif j.state in ['failed','uncertain'] and not task_failed(j) %}<form method="post" action="/forms/media-jobs/{{ j.id }}/resume{{ scope }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Resume saved task / output</button></form>{% endif %}
     {% if j.state in ['planned','queued','failed','uncertain'] %}<form method="post" action="/forms/media-jobs/{{ j.id }}/cancel{{ scope }}"{% if j.state == 'uncertain' %} data-confirm="Have you reconciled this submission in Runway? Removing it locally does not cancel a remote task. The campaign can create another batch."{% endif %}><input type="hidden" name="csrf" value="{{ csrf }}"><button>Remove from queue</button></form>{% endif %}
     {% if j.brief.get('prompt_writer') %}{% set sources = j.brief.prompt_writer.sources %}

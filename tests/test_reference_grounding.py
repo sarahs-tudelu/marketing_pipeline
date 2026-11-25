@@ -653,6 +653,9 @@ def test_final_visual_review_gets_reference_images_separately(
             {"reference_plan": reference_job.brief["reference_plan"] | {"creative_changes": "Wood Look at a cafe"}},
             {"index": 2, "reference_plan": reference_job.brief["reference_plan"] | {
                 "references": [], "design_rules": {"pergola.fixed_louvers": "Fixed louvers stay stationary."}}},
+            {"index": 3, "reference_plan": reference_job.brief["reference_plan"] | {"scene_check": {
+                "passed": True, "reasons": ["A beam closes the open corner of the L."],
+                "admin_approval": {"by": "admin", "at": "2026-11-25T10:00:00+00:00", "note": "Fine for this post."}}}},
         ]},
     )
     seen = []
@@ -695,3 +698,8 @@ def test_final_visual_review_gets_reference_images_separately(
     assert context["design_plans"][0]["shot"] == {"index": 2}
     assert context["reference_inputs"][0]["request_intent"]["admin_idea"] == reference_job.brief["prompt"]
     assert len([p for p in content if p["type"] == "input_image"]) == 2
+    # A scene an admin approved despite its review isn't failed again for the same findings.
+    assert context["accepted_scene_findings"] == [{"output_asset_id": output.id, "shot": {"index": 3},
+                                                   "findings": ["A beam closes the open corner of the L."],
+                                                   "note": "Fine for this post."}]
+    assert "Do not fail that shot for the same accepted characteristics" in content[0]["text"]

@@ -465,7 +465,7 @@ class OpenAI:
             )
         # These are comparison inputs, not frames of the output under review. Keep their
         # numbering separate so an original logo/person is never attributed to a generated clip.
-        reference_inputs, reference_seen, design_plans = [], {}, []
+        reference_inputs, reference_seen, design_plans, accepted = [], {}, [], []
         for asset in assets:
             plans = [(asset.tags.get("reference_plan"), {})]
             plans.extend((s.get("reference_plan"), {k: s[k] for k in ("index", "start", "duration") if k in s})
@@ -473,6 +473,10 @@ class OpenAI:
             for plan, interval in plans:
                 if not plan:
                     continue
+                if approval := (plan.get("scene_check") or {}).get("admin_approval"):
+                    # An admin animated this scene after reading these findings; another take isn't wanted.
+                    accepted.append({"output_asset_id": asset.id, "shot": interval,
+                                     "findings": plan["scene_check"].get("reasons", []), "note": approval.get("note", "")})
                 if plan.get("design_rules"):
                     design_plans.append({"output_asset_id": asset.id, "shot": interval, "system": plan["system"],
                                          "builder_version": plan["builder_version"],
@@ -549,6 +553,10 @@ class OpenAI:
                 "images show the intended starting scene, but remain AI output, not proof of product accuracy. "
                 "For design_plans, evaluate visible geometry against the cited Builder rules and owner constraints. "
                 "These are AI concepts generated without a product photograph. "
+                "accepted_scene_findings lists shots whose generated scene an admin approved for animation "
+                "after reading these scene-review findings and judging them acceptable for this post. Do not "
+                "fail that shot for the same accepted characteristics of its scene; still check everything "
+                "else in it, including new defects and geometry that changes between frames. "
                 "Honor requested_scene and creative_changes when Builder-supported: different backgrounds, "
                 "architecture, configurations, colors and finishes are allowed. Do not reject those differences "
                 "merely because they differ from the original photo. Where request_intent is supplied, its "
@@ -622,7 +630,8 @@ class OpenAI:
                 + media_guidance
                 + "Context: "
                 + json.dumps(vision_context(context) | {"media_inputs": media_inputs, "reference_inputs": reference_inputs,
-                                                        "design_plans": design_plans}, default=str),
+                                                        "design_plans": design_plans,
+                                                        "accepted_scene_findings": accepted}, default=str),
             }
         ]
         content.extend(

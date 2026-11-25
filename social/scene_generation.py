@@ -231,6 +231,25 @@ def generation_inputs(db, settings, job, product_references):
     return brief, [scene], "visual"
 
 
+def approvable(plan):
+    """A saved scene the review rejected, which an admin may accept as it is."""
+    return bool((plan or {}).get("scene_reference")) and ((plan or {}).get("scene_check") or {}).get("passed") is False
+
+
+def approve_scene(job, actor, note=""):
+    """An admin accepts a rejected scene for animation when its findings are acceptable for the post.
+    The findings stay on record with the approval, and the finished video's check is told about them."""
+    from .recovery import retry_option
+
+    plan = current_plan(job)
+    step = retry_option(job)
+    if job.task_id or not step or step["kind"] != "scene" or not approvable(plan):
+        raise ValueError("This scene can't be approved now. Refresh the page to see its current state.")
+    approval = {"by": actor, "at": now().isoformat(), "note": " ".join(str(note or "").split())[:500]}
+    save_plan(job, plan | {"scene_check": plan["scene_check"] | {"passed": True, "admin_approval": approval}})
+    job.state, job.error = "queued", ""
+
+
 def save_scene(db, settings, job, data):
     """Save a paid still once; it is not a completed video clip or publishable output."""
     plan = current_plan(job)

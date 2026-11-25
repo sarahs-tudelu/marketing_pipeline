@@ -1060,6 +1060,10 @@ def create_app(settings=None):
                 resume_job(job)
             elif action == "resubmit":
                 retry_step(db, job, form.get("prompt", ""), audio_model=form.get("audio_model", ""))
+            elif action == "approve_scene":
+                from .scene_generation import approve_scene
+
+                approve_scene(job, request.state.actor, form.get("note", ""))
             elif action == "reconcile" and job.state == "uncertain" and not job.task_id:
                 import re
 

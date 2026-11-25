@@ -212,6 +212,8 @@ def pending_step(job):
         }
     segment = current_segment(job)
     if brief.get("active_generation") == "scene":
+        from .scene_generation import approvable
+
         target = segment or brief
         plan = target.get("reference_plan", {})
         retry = target.get("scene_retry", {})
@@ -226,6 +228,7 @@ def pending_step(job):
             or brief.get("generation_prompt", ""),
             "limit": PROMPT_LIMIT,
             "scene_reasons": review.get("reasons", []) if review.get("passed") is False else [],
+            "approvable": approvable(plan),
         }
     if segment:
         label = f"clip {segment['index'] + 1}"

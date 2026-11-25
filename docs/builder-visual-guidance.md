@@ -152,6 +152,13 @@ past a hard limit (`request_conflict`), automatic retries stop and the job or po
 for a person to change the shot. A paid scene saved before a rule-wording release is kept
 and reviewed under the current rules; plans saved before this release are planned once more.
 
+An admin can instead approve a rejected scene as it is with **Approve scene anyway** on the
+In progress page, for example when a finding rests on a restriction the generated prompt
+added rather than on the request. The saved scene is animated without another scene review.
+Its findings, the approver, the time and an optional note stay in the clip's plan and its
+provenance. The finished video's check receives them as `accepted_scene_findings` and does
+not fail the clip again for the same characteristics, but still checks everything else.
+
 ### Canopy and pergola geometry
 
 On 2026-11-24 the owner clarified that Social Studio may depict canopies and pergolas of
