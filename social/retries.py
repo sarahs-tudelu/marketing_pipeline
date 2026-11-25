@@ -34,7 +34,7 @@ def block_reason(db, settings, post):
     if control.killed:
         return "Resume the pipeline before retrying."
     if account.paused:
-        return "Correct the platform connection or policy issue, then resume this platform in Overview before retrying."
+        return "Correct the platform connection or policy issue, then resume this platform in Automation before retrying."
     if not post.dry_run and not requires_simulation(db, post):
         if post.account_id != account.external_id:
             return "The connected account changed. Reconnect the original account or create a new post for the new account."

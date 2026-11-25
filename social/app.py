@@ -1383,6 +1383,8 @@ def create_app(settings=None):
                 raise HTTPException(400, "Configure authenticated access before enabling live posting")
             if not connections.account_connected(settings, account):
                 raise HTTPException(400, "Connect and validate this platform before enabling live posting")
+            if reason := connections.saved_pinterest_scope_error(settings, account):
+                raise HTTPException(400, reason)
         account.live_enabled = enabled
         db.commit()
         event("platform_live_changed", platform=platform, enabled=enabled, actor=request.state.actor)
@@ -1403,11 +1405,19 @@ def create_app(settings=None):
     @app.post("/forms/control", dependencies=mutation)
     async def control(request: Request, db: DB):
         form = await request.form()
+        if form.get("enabled") not in {"true", "false"}:
+            raise HTTPException(400, "Choose Pause or Resume.")
         if form.get("platform"):
             account = db.get(Account, form["platform"])
             if not account:
                 raise ValueError("Unknown platform")
-            account.paused = form["enabled"] == "true"
+            paused = form["enabled"] == "true"
+            if account.paused and not paused:
+                if settings.wants_live(account.platform, account):
+                    if reason := connections.saved_pinterest_scope_error(settings, account):
+                        raise HTTPException(400, reason)
+                account.failure_count = 0
+            account.paused = paused
             db.commit()
         else:
             set_kill(db, form["enabled"] == "true", request.state.actor)

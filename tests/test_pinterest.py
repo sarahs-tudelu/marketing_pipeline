@@ -2,6 +2,7 @@
 
 import io
 import re
+from datetime import timedelta
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -12,9 +13,9 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from social.adapters import ADAPTERS
-from social.adapters.base import Deferred
+from social.adapters.base import Deferred, PublishError, error_for
 from social.app import create_app
-from social.connections import begin, callback
+from social.connections import begin, callback, store_tokens
 from social.db import now
 from social.facts import content_digest, load_facts
 from social.gate import run_gate
@@ -22,13 +23,16 @@ from social.human_review import approve
 from social.lifecycle import transition
 from social.media_studio import CreativeBrief
 from social.models import Account, Asset, CheckResult, Post, RequestRecord
-from social.pipeline import draft, generate
+from social.pipeline import draft, generate, publish_due
 from social.recovery import held_reason
 from social.renditions import fitted_size
 from social.scheduler import schedule
 from social.security import Vault
 from social.seed import seed_media
 from social.storage import ingest
+
+PIN_SCOPES = "boards:read boards:write pins:read pins:write user_accounts:read"
+OLD_PIN_SCOPES = "boards:read pins:read pins:write user_accounts:read"
 
 
 def jpeg(width, height):
@@ -217,7 +221,7 @@ def test_live_pinterest_publish(db, settings, house_logo, monkeypatch, kind):
     post = claimed(db, settings, asset)
     account = db.get(Account, "pinterest")
     account.external_id, account.validated_at = "1234", now()
-    account.credentials = Vault(settings).encrypt({"access_token": "pina-SECRET"})
+    account.credentials = Vault(settings).encrypt({"access_token": "pina-SECRET", "scope": PIN_SCOPES})
     db.commit()
     seen, statuses = [], ["processing", "succeeded"]
 
@@ -273,12 +277,91 @@ def test_live_pinterest_publish(db, settings, house_logo, monkeypatch, kind):
         assert "pina-SECRET" not in str(record.request) and "SIGNED-POLICY" not in str(record.request)
 
 
+def test_old_permission_requires_reconnect_before_resuming_live_pinterest(db, settings):
+    settings = configured(settings)
+    account = db.get(Account, "pinterest")
+    account.external_id, account.validated_at = "1234", now()
+    account.paused, account.live_enabled, account.failure_count = True, True, 4
+    account.credentials = Vault(settings).encrypt({"access_token": "old", "scope": OLD_PIN_SCOPES})
+    db.commit()
+    with TestClient(create_app(settings), base_url=settings.app_base_url) as client:
+        form = {"csrf": client.get("/api/session").json()["csrf"], "platform": "pinterest", "enabled": "false"}
+        for url in ("/admin/connections", "/admin/automation"):
+            assert "Reconnect Pinterest in Connections to grant boards:write." in client.get(url).text
+        response = client.post("/forms/control", data=form)
+        assert response.status_code == 400 and "boards:write" in response.text
+        db.refresh(account)
+        assert account.paused and account.failure_count == 4
+
+        adapter = ADAPTERS["pinterest"](settings, db, None)
+        with pytest.raises(PublishError, match="boards:write") as err:
+            adapter._publish()
+        assert err.value.kind == "policy"
+        adapter.client.close()
+
+        token = {"access_token": "new", "expires_in": 86400}
+        for incomplete in ({}, {"scope": OLD_PIN_SCOPES}):
+            with pytest.raises(ValueError, match="boards:write"):
+                store_tokens(db, settings, account, token | incomplete)
+        store_tokens(db, settings, account, token | {"scope": PIN_SCOPES})
+        db.commit()
+        assert account.paused
+        assert client.post("/forms/control", data=form).status_code == 200
+        db.refresh(account)
+        assert not account.paused and account.failure_count == 0 and account.live_enabled
+
+
+def test_pinterest_scope_denial_is_distinct_from_an_expired_token():
+    response = httpx.Response(401)
+    denied = {"code": 3, "message": "Missing required scopes: ['boards:write']"}
+    failure = error_for(response, denied, irreversible=True, platform="pinterest")
+    assert failure.kind == "policy" and "Reconnect Pinterest" in str(failure)
+    assert error_for(response, {"code": 2}, platform="pinterest").kind == "auth"
+
+
+@pytest.mark.parametrize("finishes", [True, False], ids=["publishes", "times-out"])
+def test_backlogged_video_times_processing_from_first_poll(db, settings, house_logo, monkeypatch, finishes):
+    from social.adapters.platforms import Pinterest
+
+    asset = drive_asset(db, settings, seed_media(duration=6)[1], "late.mp4")
+    post = claimed(db, settings, asset)
+    post.scheduled_at = now() - timedelta(hours=4)
+    account = db.get(Account, "pinterest")
+    account.failure_count = settings.failure_pause_threshold - 1
+    db.commit()
+    # Exercise the real checkpoint and worker paths with a pending simulated upload.
+    monkeypatch.setattr("social.scheduler.permitted", lambda *args, **kwargs: True)
+    states = iter(["processing", "processing", "succeeded" if finishes else "processing"])
+    request = Pinterest.request
+
+    def processing(adapter, step, *args, **kwargs):
+        if step == "media-status":
+            kwargs["fake"] = {"status": next(states)}
+        return request(adapter, step, *args, **kwargs)
+
+    monkeypatch.setattr(Pinterest, "request", processing)
+    publish_due(db, settings)
+    poll = db.scalar(select(RequestRecord).where(
+        RequestRecord.post_id == post.id, RequestRecord.step == "media-status"
+    ))
+    assert post.status == "publishing" and post.next_attempt_at and not account.paused
+    publish_due(db, settings, at=poll.created_at + timedelta(minutes=29))
+    assert post.status == "publishing" and not account.paused
+    publish_due(db, settings, at=poll.created_at + timedelta(minutes=31))
+    assert post.next_attempt_at is None
+    if finishes:
+        assert post.status == "published" and post.remote_id and account.failure_count == 0
+    else:
+        assert post.status == "failed" and "30 minutes" in post.error and account.paused
+        assert not db.scalar(select(RequestRecord.id).where(RequestRecord.step == "publish"))
+
+
 def test_pinterest_oauth_checks_the_board(db, settings):
     settings = configured(settings)
     url = begin(db, settings, "pinterest", "browser")
     assert url.startswith("https://www.pinterest.com/oauth/?")
     params = parse_qs(urlparse(url).query)
-    assert params["scope"] == ["boards:read,pins:read,pins:write,user_accounts:read"]
+    assert params["scope"] == [PIN_SCOPES.replace(" ", ",")]
     assert params["client_id"] == ["pin-client"] and params["response_type"] == ["code"]
 
     def handler(request):
@@ -293,7 +376,7 @@ def test_pinterest_oauth_checks_the_board(db, settings):
                     "expires_in": 2592000,
                     "refresh_token_expires_in": 31536000,
                     "token_type": "bearer",
-                    "scope": "boards:read pins:read pins:write user_accounts:read",
+                    "scope": PIN_SCOPES,
                 },
             )
         if request.url.path == "/v5/user_account":

@@ -23,7 +23,7 @@
       <input type="hidden" name="platform" value="{{ c.account.platform }}">
       <input type="hidden" name="return_to" value="/admin/automation">
       <input type="hidden" name="enabled" value="{{ 'false' if c.account.paused else 'true' }}">
-      <button>{{ 'Resume' if c.account.paused else 'Pause' }}</button>
+      <button {{ 'disabled' if c.account.paused and c.live_enabled and c.permission_error else '' }}>{{ 'Resume' if c.account.paused else 'Pause' }}</button>
     </form>
   </article>{% endfor %}</div>
 </section>

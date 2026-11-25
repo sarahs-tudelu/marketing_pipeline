@@ -320,18 +320,27 @@ def publish_due(db, settings, at=None, client=None):
                 status=post.status,
             )
         except Deferred as exc:
-            post.next_attempt_at = at + timedelta(seconds=exc.retry_after)
-            if (at - post.scheduled_at).total_seconds() > 1800:
+            # A volatile poll updates the same record, preserving the first poll time across worker runs.
+            first_poll = db.execute(
+                select(RequestRecord.created_at).where(
+                    RequestRecord.post_id == post.id, RequestRecord.step == exc.step
+                )
+            ).scalar_one()
+            if at - first_poll > timedelta(minutes=30):
+                post.next_attempt_at = None
+                post.error = "Remote processing exceeded 30 minutes. Check the post on the platform."
                 account.failure_count += 1
                 if account.failure_count >= settings.failure_pause_threshold:
                     account.paused = True
-                transition(db, post, "failed", "Remote processing exceeded 30 minutes; inspect platform")
+                transition(db, post, "failed", post.error)
                 alert(
                     db,
                     "publish_failure",
                     f"{post.platform}: media processing timed out for {post.id}",
                     "processing:" + post.id,
                 )
+            else:
+                post.next_attempt_at = at + timedelta(seconds=exc.retry_after)
             db.commit()
         except PublishError as exc:
             post.attempts += 1

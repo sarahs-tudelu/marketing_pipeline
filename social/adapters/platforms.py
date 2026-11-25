@@ -1,6 +1,7 @@
 import re
 from urllib.parse import quote
 
+from ..connections import pinterest_scope_error
 from ..security import public_url
 from .base import BaseAdapter, Deferred, PublishError, PublishResult
 
@@ -85,7 +86,7 @@ class Instagram(BaseAdapter):
             if status["status_code"] in {"ERROR", "EXPIRED"}:
                 raise PublishError("validation", "Instagram media container failed or expired")
             if status["status_code"] != "FINISHED":
-                raise Deferred(60)
+                raise Deferred(f"container-status-{i}")
         container = containers[0]
         if len(containers) > 1:
             result, _ = self.request(
@@ -112,7 +113,7 @@ class Instagram(BaseAdapter):
             if status["status_code"] in {"ERROR", "EXPIRED"}:
                 raise PublishError("validation", "Instagram carousel failed")
             if status["status_code"] != "FINISHED":
-                raise Deferred(60)
+                raise Deferred("carousel-status")
         result, _ = self.request(
             "publish",
             "POST",
@@ -231,7 +232,7 @@ class Facebook(BaseAdapter):
                 "duration (3-90 seconds), frame rate (24-60 fps) and format.",
             )
         if phases[0] != "complete":
-            raise Deferred(60)
+            raise Deferred("reel-status")
         result, _ = self.request(
             "publish",
             "POST",
@@ -368,7 +369,7 @@ class LinkedIn(BaseAdapter):
             if status["status"] == "PROCESSING_FAILED":
                 raise PublishError("validation", "LinkedIn media processing failed")
             if status["status"] != "AVAILABLE":
-                raise Deferred(60)
+                raise Deferred(f"media-status-{i}")
             urns.append(urn)
         content = (
             {"media": {"id": urns[0]}}
@@ -471,7 +472,7 @@ class X(BaseAdapter):
                 if info["state"] == "failed":
                     raise PublishError("validation", "X media processing failed")
                 if info["state"] != "succeeded":
-                    raise Deferred(max(15, info.get("check_after_secs", 15)))
+                    raise Deferred(f"media-status-{i}", max(15, info.get("check_after_secs", 15)))
             ids.append(media_id)
         result, _ = self.request(
             "publish",
@@ -568,7 +569,7 @@ class TikTok(BaseAdapter):
         if status["data"]["status"] == "FAILED":
             raise PublishError("policy", "TikTok inbox delivery failed; inspect status in platform")
         if status["data"]["status"] not in {"SEND_TO_USER_INBOX", "PUBLISH_COMPLETE"}:
-            raise Deferred(30)
+            raise Deferred("inbox-status", 30)
         return PublishResult(info["publish_id"], "", "awaiting_manual")
 
 
@@ -605,6 +606,8 @@ class Pinterest(BaseAdapter):
     def _publish(self):
         from ..gate import URL_RE
 
+        if not self.dry and (reason := pinterest_scope_error(self.credentials.get("scope"))):
+            raise PublishError("policy", reason)
         asset = self.assets()[0]
         if asset.media["mime"].startswith("video/"):
             media_source = self._video_source(asset)
@@ -670,7 +673,7 @@ class Pinterest(BaseAdapter):
                 "Pinterest could not process the video. It needs to be an MP4, MOV or M4V of at least 4 seconds.",
             )
         if status.get("status") != "succeeded":
-            raise Deferred(30)
+            raise Deferred("media-status", 30)
         # Cover from the first second, so a fade-in doesn't leave the Pin with a black cover.
         return {
             "source_type": "video_id",

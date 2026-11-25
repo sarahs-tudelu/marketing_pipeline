@@ -100,6 +100,7 @@ def _connection_states(db, settings):
             {
                 "account": account,
                 "connected": connected,
+                "permission_error": connections.saved_pinterest_scope_error(settings, account),
                 "dry": not (connected and live_enabled),
                 "oauth_ready": connections.ready(settings, account.platform),
                 "live_enabled": live_enabled,

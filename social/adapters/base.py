@@ -24,8 +24,9 @@ class PublishError(Exception):
 
 
 class Deferred(PublishError):
-    def __init__(self, seconds=60):
+    def __init__(self, step, seconds=60):
         super().__init__("processing", "Remote media processing", seconds)
+        self.step = step
 
 
 @dataclass
@@ -41,7 +42,7 @@ class PublishingAdapter(Protocol):
     def validate_credentials(self) -> dict: ...
 
 
-def error_for(response, body, irreversible=False):
+def error_for(response, body, irreversible=False, *, platform=None):
     status = response.status_code
     error = body.get("error") if isinstance(body, dict) else None
     code = error.get("code") if isinstance(error, dict) else error
@@ -63,6 +64,16 @@ def error_for(response, body, irreversible=False):
         if reset and reset.isdigit():
             delay = max(delay, int(reset) - int(datetime.now(timezone.utc).timestamp()))
         return PublishError("transient", "Platform rate limit", delay)
+    if (
+        platform == "pinterest"
+        and status in {401, 403}
+        and isinstance(body, dict)
+        and str(body.get("code")) == "3"
+        and "scope" in str(body.get("message", "")).lower()
+    ):
+        return PublishError(
+            "policy", "Reconnect Pinterest in Connections and grant the requested publishing permissions."
+        )
     if status == 401 or code in {190, "access_token_invalid"}:
         return PublishError("auth", "Platform credentials expired or invalid")
     # Words are read only from error responses: Pinterest's upload form has a field named "policy".
@@ -282,7 +293,7 @@ class BaseAdapter:
                     "x-business-use-case-usage",
                 }
             }
-            failure = error_for(response, body, irreversible)
+            failure = error_for(response, body, irreversible, platform=self.platform)
             if failure:
                 record.state = (
                     "retryable"
@@ -346,7 +357,7 @@ class BaseAdapter:
         headers = self.headers() | kwargs.pop("headers", {})
         response = self.client.request(method, url, headers=headers, **kwargs)
         body = response.json()
-        failure = error_for(response, body)
+        failure = error_for(response, body, platform=self.platform)
         if failure:
             # Read-only availability checks need the codes, never raw error text or credentials.
             error = body.get("error", {}) if isinstance(body, dict) else {}

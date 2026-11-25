@@ -32,7 +32,7 @@ OAUTH = {
     "pinterest": {
         "authorize": "https://www.pinterest.com/oauth/",
         "token": "https://api.pinterest.com/v5/oauth/token",
-        "scope": "boards:read,pins:read,pins:write,user_accounts:read",
+        "scope": "boards:read,boards:write,pins:read,pins:write,user_accounts:read",
     },
 }
 
@@ -88,6 +88,20 @@ def requested_scopes(settings, platform):
     if platform == "tiktok" and (settings.analytics_enabled or settings.post_availability_enabled):
         scope += ",video.list"
     return scope
+
+
+def pinterest_scope_error(scope):
+    required = set(OAUTH["pinterest"]["scope"].split(","))
+    missing = required - set((scope or "").replace(",", " ").split())
+    if missing:
+        return "Reconnect Pinterest in Connections to grant " + ", ".join(sorted(missing)) + "."
+    return ""
+
+
+def saved_pinterest_scope_error(settings, account):
+    if account.platform == "pinterest" and account.credentials:
+        return pinterest_scope_error(Vault(settings).decrypt(account.credentials).get("scope"))
+    return ""
 
 
 def begin(db, settings, platform, browser_nonce):
@@ -153,7 +167,11 @@ def token_call(settings, platform, data, client=None):
 def store_tokens(db, settings, account, payload, refreshing=False):
     vault = Vault(settings)
     old = vault.decrypt(account.credentials) if account.credentials else {}
-    if payload.get("scope"):
+    if account.platform == "pinterest":
+        scope = payload.get("scope", old.get("scope") if refreshing else None)
+        if reason := pinterest_scope_error(scope):
+            raise ValueError(reason)
+    elif payload.get("scope"):
         actual = set(payload["scope"].replace(",", " ").split())
         required = set(requested_scopes(settings, account.platform).replace(",", " ").split())
         if not required <= actual:
