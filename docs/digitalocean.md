@@ -26,7 +26,7 @@ The configuration targets your existing **DigitalOcean Managed PostgreSQL** clus
 | `DATABASE_PASSWORD` | `gsm://projects/${GCP_PROJECT_ID}/secrets/tudelu-database-password/versions/1` | The existing managed database user's password, loaded by the app. |
 | `DATABASE_CA_HOST_DIR` | `/etc/tudelu/database-certs` | Host directory mounted read-only at `/run/database-certs` in web, worker and migration containers. |
 
-Caddy is the only service exposing host ports (TCP 80 and 443). The app origin requires both a permitted source network and application Basic authentication. OAuth callbacks use the same app origin and are reached by the authorizing user's browser. The media origin is public, read-only, and has no admin/API routes or directory listing. Caddy access logging and Uvicorn access logging are disabled so OAuth callback codes are not recorded in access logs. Application event logs remain JSON.
+Caddy is the only service exposing host ports (TCP 80 and 443). With CRM sign-in, Studio checks the signed-in user's CRM role from any network. Basic authentication also requires an approved office or VPN network. The health probe is restricted to those networks in either mode. OAuth callbacks use the app origin in the authorizing user's browser. The media origin serves public read-only assets. Caddy access logging and Uvicorn access logging are disabled so OAuth callback codes are not recorded in access logs. Application event logs remain JSON.
 
 The Droplet deployment runs no PostgreSQL container and creates no database volume. Web, worker and the migration job connect directly to the managed cluster. A migration job must succeed before web and worker start; an unreachable database or invalid TLS/authentication stops that startup sequence. The web and single worker share the runtime volume for local media, watched-folder ingestion and demo reports. With Spaces enabled, media is stored in the bucket. The local development `compose.yaml` still provides its separate local PostgreSQL service.
 
@@ -100,7 +100,7 @@ Set these in `.env`:
 - `GCP_PROJECT_ID`: the actual project ID. Keep this definition above all references so dotenv interpolation resolves it.
 - `APP_BASE_URL` / `MEDIA_BASE_URL`: distinct HTTPS origins with no path, port or trailing slash.
 - `TLS_EMAIL`: the certificate contact address.
-- `ADMIN_ALLOWED_CIDRS`: space-separated company VPN/office public egress CIDRs. The loopback defaults intentionally deny remote administration. Do not use `0.0.0.0/0` or `::/0`.
+- `ADMIN_ALLOWED_CIDRS` lists the office or VPN networks for Basic authentication and the Studio health probe. CRM deployments can use the loopback default. Keep the ranges specific to approved networks.
 - `GCP_ADC_HOST_PATH`: an absolute path outside the repository on the Droplet, default `/etc/tudelu/google-adc.json`.
 - `GOOGLE_APPLICATION_CREDENTIALS`: keep `/run/secrets/google_adc`, the read-only container mount.
 - `DATABASE_URL`: the managed database's connection parameters with verified TLS, no password, and a bounded connect timeout.

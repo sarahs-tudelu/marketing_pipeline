@@ -219,6 +219,10 @@ def test_deployment_template_fails_preflight_until_placeholders_are_replaced():
         k: v.replace("REPLACE_WITH_GCP_PROJECT_ID", "test-project") if v else v for k, v in values.items()
     }
     assert module.validate(values) == []
+    crm = values | {"AUTH_MODE": "crm", "CRM_ACCESS_URL": "https://crm.example.org/api/auth/social-studio/access"}
+    assert module.validate(crm | {"ADMIN_ALLOWED_CIDRS": ""}) == []
+    assert module.validate(crm | {"ADMIN_ALLOWED_CIDRS": "127.0.0.1/32 ::1/128"}) == []
+    assert any("ADMIN_ALLOWED_CIDRS" in error for error in module.validate(values | {"ADMIN_ALLOWED_CIDRS": ""}))
     values["X_CLIENT_ID"] = "literal-client-id"
     assert module.validate(values) == []
     values["X_CLIENT_ID"] = REF
@@ -251,6 +255,7 @@ def test_droplet_compose_only_exposes_https_proxy():
     config = yaml.safe_load(Path("compose.droplet.yaml").read_text())
     assert {name for name, service in config["services"].items() if service.get("ports")} == {"proxy"}
     assert config["services"]["proxy"]["ports"] == ["80:80", "443:443"]
+    assert config["services"]["proxy"]["environment"]["AUTH_MODE"] == config["services"]["web"]["environment"]["AUTH_MODE"]
     assert "db" not in config["services"] and "postgres" not in config["volumes"]
     assert "depends_on" not in config["services"]["migrate"]
     for name in ("web", "worker", "migrate"):

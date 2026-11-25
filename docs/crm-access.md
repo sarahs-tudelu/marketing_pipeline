@@ -12,7 +12,7 @@ The Studio records the authenticated CRM account ID and its display label at sub
 
 1. Release the matching CRM API and frontend changes. The CRM migration installs the Social Editor role bundle. Set `SOCIAL_STUDIO_URL` on the CRM frontend to the Studio's HTTPS origin. The link is available in **Switch workspace**.
 2. Use a Studio hostname within the CRM session cookie's existing domain. For staging, use a hostname inside the staging cookie domain and the staging cookie name. Keep production and staging cookies separate.
-3. Set `AUTH_MODE=crm`, `CRM_ACCESS_URL` to the full HTTPS CRM API URL ending in `/auth/social-studio/access`, and `CRM_SESSION_COOKIE` to the CRM's configured cookie name (production default `TUDELU_TOKEN`). Set `APP_BASE_URL` to the Studio origin. Keep the separate media delivery origin for publishing. The existing office/VPN network rule also applies.
+3. Set `AUTH_MODE=crm`, `CRM_ACCESS_URL` to the full HTTPS CRM API URL ending in `/auth/social-studio/access`, and `CRM_SESSION_COOKIE` to the CRM's configured cookie name (production default `TUDELU_TOKEN`). Set `APP_BASE_URL` to the Studio origin. With CRM sign-in, approved admins and assigned Social Editors can open Studio from any network. The CRM verifies membership and role on each protected request.
 4. Apply the Studio migration with the normal release procedure before starting the updated web and worker. It adds nullable attribution columns to existing posts. Studio sends only the named cookie to the configured endpoint and checks the CRM decision on each protected request. An unavailable CRM returns a temporary sign-in error.
 
 For the production Tudelu hostnames, set `SOCIAL_STUDIO_URL=https://social.tudelu.com` in the CRM frontend environment. In `/opt/tudelu/.env` on the Studio Droplet, set:
@@ -26,5 +26,7 @@ MEDIA_BASE_URL=https://media.tudelu.com
 ```
 
 The production CRM session cookie must cover `social.tudelu.com`. Follow the [Droplet release procedure](digitalocean.md#deploy-after-configuration) after editing the environment. To confirm the running web container picked up the change, run `docker compose -f compose.droplet.yaml exec -T web printenv AUTH_MODE CRM_ACCESS_URL CRM_SESSION_COOKIE` from `/opt/tudelu`.
+
+For an existing installation already using CRM sign-in, pull the routing update and recreate the proxy with `docker compose -f compose.droplet.yaml --env-file .env up -d --no-deps --force-recreate proxy`. Compose passes the same `AUTH_MODE` to the proxy and web. When changing login modes, recreate both services together.
 
 After deployment, verify one admin can open Connections, an editor can submit an idea and open its result, and another editor gets a missing-post response for the same post URL. Confirm that removing the editor role blocks a previously open tab on refresh.

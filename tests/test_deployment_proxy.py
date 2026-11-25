@@ -11,6 +11,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
+
+from social.app import create_app
 
 
 def available_port():
@@ -19,11 +22,27 @@ def available_port():
         return sock.getsockname()[1]
 
 
-@pytest.mark.parametrize("allow_admin", [False, True])
-def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
+@pytest.mark.parametrize(("auth_mode", "allow_network"), [
+    (None, False), ("basic", True), ("proxy", False), ("crm", False),
+])
+def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, db, settings, monkeypatch, auth_mode, allow_network):
     binary = os.environ.get("CADDY_BINARY")
     if not binary:
         pytest.skip("Set CADDY_BINARY to run the real reverse-proxy routing integration test")
+
+    if auth_mode == "crm":
+        settings.auth_mode = "crm"
+        settings.crm_access_url = "https://crm.example/api/auth/social-studio/access"
+        studio = create_app(settings)
+
+        async def authorize(_client, url, *, cookies):
+            assert url == settings.crm_access_url and set(cookies) == {"TUDELU_TOKEN"}
+            role = cookies["TUDELU_TOKEN"]
+            identity = {"id": 1, "label": "Test user", "role": role}
+            return httpx.Response(200 if role in {"admin", "editor"} else 403,
+                                  json=identity, request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", authorize)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -39,6 +58,12 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
                 self.end_headers()
                 if self.command != "HEAD":
                     self.wfile.write(payload)
+                return
+            if auth_mode == "crm":
+                with TestClient(studio) as app_client:
+                    result = app_client.get(self.path, headers=dict(self.headers), follow_redirects=False)
+                self.send_response(result.status_code)
+                self.end_headers()
                 return
             self.send_response(200)
             self.end_headers()
@@ -81,9 +106,13 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
     env = os.environ | {
         "APP_BASE_URL": f"http://127.0.0.1:{app_port}",
         "MEDIA_BASE_URL": f"http://127.0.0.1:{media_port}",
-        "ADMIN_ALLOWED_CIDRS": "127.0.0.1/32" if allow_admin else "203.0.113.1/32",
+        "ADMIN_ALLOWED_CIDRS": "127.0.0.1/32" if allow_network else "203.0.113.1/32",
         "TLS_EMAIL": "admin@example.invalid",
     }
+    if auth_mode is None:
+        env.pop("AUTH_MODE", None)
+    else:
+        env["AUTH_MODE"] = auth_mode
     process = subprocess.Popen(
         [binary, "run", "--config", str(path), "--adapter", "caddyfile"],
         env=env,
@@ -130,7 +159,20 @@ def test_proxy_keeps_media_public_and_admin_restricted(tmp_path, allow_admin):
                     "X-Tudelu-Proxy-Secret": "spoofed",
                 },
             )
-            assert response.status_code == (200 if allow_admin else 403)
+            if auth_mode == "crm":
+                assert response.status_code == 401
+                origin = env["APP_BASE_URL"]
+                for role, path, status in [
+                    ("admin", "/admin/connections", 200),
+                    ("editor", "/admin/create", 200),
+                    ("editor", "/admin/connections", 403),
+                    ("unassigned", "/admin/create", 403),
+                ]:
+                    client.cookies.set("TUDELU_TOKEN", role)
+                    assert client.get(origin + path).status_code == status
+                assert client.get(origin + "/health").status_code == 403
+            else:
+                assert response.status_code == (200 if allow_network else 403)
     finally:
         process.terminate()
         process.wait(timeout=10)

@@ -3,17 +3,28 @@
 	admin off
 }
 
+(studio_upstream) {
+	reverse_proxy web:8000 {
+		header_up -X-Authenticated-User
+		header_up -X-Tudelu-Proxy-Secret
+	}
+}
+
 {$APP_BASE_URL} {
-	# Direct connections from the company VPN/office egress. Do not trust client-supplied X-Forwarded-For.
 	@internal remote_ip {$ADMIN_ALLOWED_CIDRS}
 	handle @internal {
-		reverse_proxy web:8000 {
-			header_up -X-Authenticated-User
-			header_up -X-Tudelu-Proxy-Secret
-		}
+		import studio_upstream
+	}
+	# Studio checks the CRM session and role on each protected request. Health is an internal probe.
+	@crm {
+		expression `"{$AUTH_MODE:basic}" == "crm"`
+		not path /health /health/
+	}
+	handle @crm {
+		import studio_upstream
 	}
 	handle {
-		respond "Internal access only" 403
+		respond "Connect to the company VPN or office network to access this resource." 403
 	}
 	header Strict-Transport-Security "max-age=31536000"
 	# Access logging stays disabled to avoid recording OAuth callback query strings.

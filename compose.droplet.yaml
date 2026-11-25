@@ -11,7 +11,7 @@ x-app: &app
   environment:
     ENVIRONMENT: production
     SECRET_BACKEND: google
-    AUTH_MODE: ${AUTH_MODE:-basic}
+    AUTH_MODE: &auth_mode ${AUTH_MODE:-basic}
     GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google_adc
     SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
     TUDELU_ENV_FILE: /dev/null
@@ -66,6 +66,7 @@ services:
     mem_limit: 128m
     memswap_limit: 128m
     environment:
+      AUTH_MODE: *auth_mode
       APP_BASE_URL: ${APP_BASE_URL:?Set the HTTPS app origin}
       MEDIA_BASE_URL: ${MEDIA_BASE_URL:?Set the HTTPS media origin}
       ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:-127.0.0.1/32 ::1/128}

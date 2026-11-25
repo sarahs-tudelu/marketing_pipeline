@@ -82,8 +82,10 @@ def validate(values):
     if not values.get("TLS_EMAIL") or values["TLS_EMAIL"].endswith(".invalid"):
         errors.append("Replace TLS_EMAIL with the certificate contact address")
     try:
-        cidrs = [ipaddress.ip_network(part) for part in (values.get("ADMIN_ALLOWED_CIDRS") or "").split()]
-        if not cidrs or all(c.is_loopback for c in cidrs) or any(c.prefixlen == 0 for c in cidrs):
+        networks = values.get("ADMIN_ALLOWED_CIDRS") or "127.0.0.1/32 ::1/128"
+        cidrs = [ipaddress.ip_network(part) for part in networks.split()]
+        if (not cidrs or any(c.prefixlen == 0 for c in cidrs)
+                or (values.get("AUTH_MODE") != "crm" and all(c.is_loopback for c in cidrs))):
             raise ValueError
     except ValueError:
         errors.append(
