@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-24-v4"
+PRODUCT_CONSTRAINTS_VERSION = "tudelu-owner-visual-2026-11-25-v5"
 HANGER_ROD_RULE = "canopy.hanger_rods_above"
 HANGER_ROD_CUE = (
     "Any hanger rods rise above the canopy roof from its outer fascia to higher wall anchors, "
@@ -25,14 +25,30 @@ PANEL_SURFACE_GUIDANCE = (
     "Preserve the roof perimeter, exposed supporting beams and intentional finishes. "
     "Open pergola and sunshade louvers retain their individual blades and spaces."
 )
+SUPPORT_RULE = "structure.realistic_supports"
+SUPPORT_GUIDANCE = (
+    "Judge supports by whether the structure looks realistic and buildable as a Tudelu design, not by an "
+    "exact count. Posts stand at the corners or ends and along longer spans, so no beam or roof edge "
+    "spans an implausible distance unless a wall attachment or a selected cantilever carries it. Each "
+    "post reaches the ground and connects to the frame. Any realistic layout passes, even with more or "
+    "fewer posts, or posts in other places, than a prompt, plan, scene requirement, approved "
+    "configuration or earlier review states. The same applies to exact numbers of louvers, beams and "
+    "bays within the requested footprint. An exact count is binding only when the admin's own words, the "
+    "idea or an operator edit, ask for it. Never reject or regenerate a scene only because a count or "
+    "spacing differs. Reject what makes a structure unrealistic or outside Tudelu's designs: a floating "
+    "or ungrounded post, a span or corner left visibly unsupported, members that don't connect or that "
+    "pass through each other, supports Tudelu doesn't make, or a count that changes between frames of "
+    "one clip."
+)
 CANOPY_FORM_GUIDANCE = (
-    "For canopies and pergolas the design sets the footprint, size, post count, spacing and shape of the "
-    "supports. Rectangular, hexagonal and other custom footprints are valid at project-specific scales. "
+    "For canopies and pergolas the design sets the footprint, size and shape of the supports; the number "
+    "and spacing of posts follow a realistic layout for it ({rule}). Rectangular, hexagonal and other "
+    "custom footprints are valid at project-specific scales. "
     "Posts can be straight, angled, curved or built from connected members. Use the brief, Tudelu drawing "
     "or website design as applicable. Four corner posts are one possible layout. Older Builder examples "
     "of straight frames, post spacing and dimensions impose no shape, size or post-count limit on a depiction. "
     "Check that the chosen members connect and keep their designed shape throughout the shot."
-)
+).format(rule=SUPPORT_RULE)
 
 # How every planner, writer and reviewer reads the Builder guidance: as a description of what Tudelu
 # offers, customized to the situation the way a product brief is, with a short list of hard limits.
@@ -44,7 +60,8 @@ SCOPE_REASONING = (
     "solid panels or glass), building attachment, finishes, trim, lighting and accessories can all change "
     "to fit the scene, as can the setting, weather, season, time of day and people. For canopy and pergola "
     f"geometry and canopy panel surfaces, apply {CANOPY_FORM_RULE} and {PANEL_SURFACE_RULE} over older "
-    "Builder guidance. Builder defaults, "
+    f"Builder guidance. For supports, apply {SUPPORT_RULE}: judge whether the structure is realistic and "
+    "buildable for its design, not whether it has an exact number of posts. Builder defaults, "
     "typical values, dimensional examples and wording such as 'only when selected' describe a starting point: a "
     "supported option counts as selected once the approved plan, the prompt or the situation calls for it. "
     "Hard limits are only what Tudelu does not make: configurations the owner has ruled out (hanger rods "
@@ -107,11 +124,21 @@ def current_constraints():
                 "record": "docs/builder-visual-guidance.md#finished-canopy-panels",
                 "statement": "Adjacent canopy roof panels are fully connected with no visible seams.",
             },
+            {
+                "type": "owner_instruction",
+                "recorded_on": "2026-11-25",
+                "record": "docs/builder-visual-guidance.md#realistic-supports",
+                "statement": (
+                    "Review structures for realism within Tudelu's designs rather than an exact number of "
+                    "posts. A different post count is not a reason to reject a scene."
+                ),
+            },
         ],
         "rules": [{"id": SCOPE_RULE, "instruction": SCOPE_REASONING},
                   {"id": WEATHER_RULE, "instruction": WEATHER_GUIDANCE},
                   {"id": FRAMING_RULE, "instruction": FRAMING_GUIDANCE},
                   {"id": CANOPY_FORM_RULE, "instruction": CANOPY_FORM_GUIDANCE},
+                  {"id": SUPPORT_RULE, "instruction": SUPPORT_GUIDANCE},
                   {"id": PANEL_SURFACE_RULE, "instruction": PANEL_SURFACE_GUIDANCE}, {
             "id": HANGER_ROD_RULE,
             "instruction": (

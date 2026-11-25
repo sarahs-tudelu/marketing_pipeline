@@ -16,6 +16,7 @@ from .product_rules import (
     FRAMING_GUIDANCE,
     PRODUCT_CONSTRAINTS_VERSION,
     SCOPE_REASONING,
+    SUPPORT_GUIDANCE,
     WEATHER_GUIDANCE,
     context_for,
     current_constraints,
@@ -545,6 +546,7 @@ class OpenAI:
                 "When facts.visual_guidance is present, independently compare every depicted product with its "
                 "matching product profile and global_rules, read through product_constraints, the owner's current "
                 "instructions: " + SCOPE_REASONING + " " + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " "
+                + SUPPORT_GUIDANCE + " "
                 "Check materials, frame proportions, louver connections, supports, roof type and visible "
                 "operation. Reject products Tudelu doesn't offer and anything past a hard limit; a supported "
                 "customization of a Tudelu system passes even when the reference or prompt shows it differently. "

@@ -162,7 +162,8 @@ not fail the clip again for the same characteristics, but still checks everythin
 ### Canopy and pergola geometry
 
 On 2026-11-24 the owner clarified that Social Studio may depict canopies and pergolas of
-any footprint or size. Each design determines its post count, spacing and support shapes.
+any footprint or size. Each design determines its support shapes; post count and spacing
+follow a realistic layout for it (see [Realistic supports](#realistic-supports)).
 Examples include rectangular and hexagonal layouts, angled or curved posts, and supports
 assembled from multiple connected members. A specified four-post design remains valid.
 The rule `canopy.design_geometry` applies to planning, generation and visual review,
@@ -181,6 +182,21 @@ right angle with open sky over the corner between them, rather than in plan-geom
 
 The company provides drawings and design examples on its [drawing studio](https://tudelu.com/design),
 [canopy page](https://tudelu.com/canopies) and [pergola page](https://tudelu.com/pergolas).
+
+### Realistic supports
+
+On 2026-11-25 the owner asked that reviews focus on whether a structure is realistic and
+within Tudelu's designs rather than on an exact number of posts. The rule
+`structure.realistic_supports` applies to planning, scene review and the finished-video
+check. Posts stand at the corners or ends and along longer spans, reach the ground and
+connect to the frame. Any realistic layout passes, even when its post count or spacing
+differs from the prompt, the plan, the approved configuration or an earlier review. The
+same applies to exact numbers of louvers, beams and bays within the requested footprint.
+An exact count is binding only when the admin's own idea or an operator edit asks for it.
+Reviews still reject a floating or ungrounded post, a visibly unsupported span or corner,
+disconnected or interpenetrating members, supports Tudelu doesn't make, and a count that
+changes between frames of one clip. Planners describe supports by type and general
+placement instead of writing an exact post count into the scene requirements.
 
 ### Finished canopy panels
 

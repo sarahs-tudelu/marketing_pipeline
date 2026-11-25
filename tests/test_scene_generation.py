@@ -13,7 +13,7 @@ from social import reference_grounding as refs
 from social import scene_generation as scenes
 from social.media_studio import process_jobs, resume_job
 from social.models import Asset
-from social.product_rules import FRAMING_GUIDANCE, WEATHER_GUIDANCE
+from social.product_rules import FRAMING_GUIDANCE, SUPPORT_GUIDANCE, WEATHER_GUIDANCE
 from social.provider_errors import ProviderError
 from social.providers import OpenAI
 from social.recovery import retry_option, retry_step
@@ -720,6 +720,9 @@ def test_scene_review_receives_authored_intent_and_keeps_real_defects(db, settin
     assert "approved_shot" in context["request_intent"]
     instructions = seen[0]["input"][0]["content"][0]["text"]
     assert FRAMING_GUIDANCE in instructions and WEATHER_GUIDANCE in instructions
+    # The scene review judges realistic supports, not an exact post count.
+    assert SUPPORT_GUIDANCE in instructions and "not for an earlier post-count finding" in instructions
+    assert "structure.realistic_supports" in {rule["id"] for rule in context["owner"]["rules"]}
     assert "every post plumb" not in instructions and "Posts stand plumb" not in instructions
     assert "canopy.design_geometry" in {rule["id"] for rule in context["owner"]["rules"]}
     assert "canopy.seamless_panels" in {rule["id"] for rule in context["owner"]["rules"]}

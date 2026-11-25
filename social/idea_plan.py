@@ -207,6 +207,8 @@ PLANNER_INSTRUCTIONS = (
     "idea, in one short phrase of visible choices, for example 'black pergola with an insulated solid panel "
     "roof for rain cover' or 'white canopy on above-roof hanger rods'. Choose supported options "
     "the situation needs instead of dropping part of the idea; leave details the idea doesn't need empty. "
+    "Describe supports by type, such as 'on corner posts', not an exact post count, unless the idea asks "
+    "for a number. "
     "Keep the configuration the same across shots of the same installation. "
     "conflicts: only parts of the idea past a hard limit (something Tudelu doesn't make, such as hanger "
     "rods below a canopy or opening pergola louvers), each as one plain sentence naming the request and "

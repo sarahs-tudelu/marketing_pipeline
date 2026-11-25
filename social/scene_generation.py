@@ -11,6 +11,7 @@ from .models import Asset
 from .product_rules import (
     FRAMING_GUIDANCE,
     SCOPE_REASONING,
+    SUPPORT_GUIDANCE,
     WEATHER_GUIDANCE,
     context_for,
     current_constraints,
@@ -102,9 +103,10 @@ def review_scene(settings, plan, guidance, scene):
                 "the current owner constraints. Product photos, when supplied, establish construction, not a locked "
                 "background, color or setting. Requested new architecture, Builder-supported configurations and finishes "
                 "are allowed. Read the builder rules through the owner's current instructions: " + SCOPE_REASONING
-                + " " + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " Pass a supported customization even when it "
+                + " " + WEATHER_GUIDANCE + " " + FRAMING_GUIDANCE + " " + SUPPORT_GUIDANCE + " Focus on whether the "
+                "structure is realistic and within Tudelu's designs. Pass a supported customization even when it "
                 "differs from the reference or wasn't spelled out. Check the generated scene follows the requested scene and creative_changes while keeping "
-                "the selected materials, connected members, roof and support arrangement. Check above-roof rods and "
+                "the selected materials, connected members, roof and type of support. Check above-roof rods and "
                 "their higher wall anchors when present. Wood Look is aluminum. " + STRUCTURE_SELECTION + " "
                 "Where request_intent is present, its approved_shot is the setting, system and configuration the "
                 "admin approved; compare generated scene_requirements and creative_changes to that actual request "
@@ -126,7 +128,8 @@ def review_scene(settings, plan, guidance, scene):
                 "the earlier attempt this scene replaces; verify those findings against the actual request, "
                 "reference and product rules instead of assuming every prior diagnosis was correct. Fail for "
                 "a repeated genuine defect, not for preserving a legitimate reference-supported member that "
-                "only model-generated prose forbade. Explain the visible evidence for each rejection. Set "
+                "only model-generated prose forbade, and not for an earlier post-count finding when the "
+                "supports are realistic. Explain the visible evidence for each rejection. Set "
                 "request_conflict to one sentence only when the scene fails because the approved shot itself asks "
                 "for something past a hard limit, so generating again cannot fix it; otherwise leave it empty. "
                 "List each failed component in defect_components using the stable identifiers support, roof, "

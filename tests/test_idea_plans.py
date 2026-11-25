@@ -18,7 +18,7 @@ from social.facts import load_facts, save_facts
 from social.idea_plan import IdeaPlan, Shot, finalize, plan_idea, read_signals, shot_seconds
 from social.media_studio import process_jobs, queue_jobs
 from social.models import Asset, MediaJob
-from social.product_rules import SCOPE_REASONING, WEATHER_GUIDANCE
+from social.product_rules import SCOPE_REASONING, SUPPORT_RULE, WEATHER_GUIDANCE
 from social.provider_errors import ProviderError
 from social.renditions import logo_card
 from social.runway import payload_for
@@ -471,6 +471,7 @@ def test_planner_fits_the_idea_to_a_configuration_and_lists_only_real_conflicts(
     plan = plan_idea(db, settings, idea=RAIN_IDEA, facts_id=facts.id, has_logo=True)
     assert SCOPE_REASONING in seen["system"] and WEATHER_GUIDANCE in seen["system"]
     assert '"configuration"' in seen["system"] and '"conflicts"' in seen["system"]
+    assert SUPPORT_RULE in seen["system"] and "not an exact post count" in seen["system"]
     assert plan.shots[0] == Shot(setting="backyard dinner in steady rain", system="Pergolas", configuration=RAIN_ROOF)
     # A configuration for a system that isn't offered goes with it; the writer chooses afresh.
     assert plan.shots[1] == Shot(setting="garden")

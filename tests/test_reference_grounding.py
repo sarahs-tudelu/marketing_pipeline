@@ -14,7 +14,13 @@ from social import reference_grounding as refs
 from social.db import now
 from social.media_studio import _save_output, process_jobs
 from social.models import Asset
-from social.product_rules import HANGER_ROD_CUE, PANEL_SURFACE_CUE, VisualGuidance, profile_for
+from social.product_rules import (
+    HANGER_ROD_CUE,
+    PANEL_SURFACE_CUE,
+    SUPPORT_GUIDANCE,
+    VisualGuidance,
+    profile_for,
+)
 from social.providers import OpenAI
 from social.rendering_guidelines import DOORWAY_GUIDANCE, MOTION_GUIDANCE
 from social.runway import payload_for
@@ -458,6 +464,8 @@ def test_selector_receives_pixels_and_builder_rules(db, settings, reference_job,
     # A footprint the photo doesn't show is planned from the design and described as it looks.
     assert "Select a photo only when its footprint and roof outline match" in content[0]["text"]
     assert "open sky with nothing overhead" in content[0]["text"]
+    # Supports are planned as a realistic layout, not an exact post count.
+    assert SUPPORT_GUIDANCE in content[0]["text"] and "not an exact post count" in content[0]["text"]
     assert "footprint_differs" in seen[0]["text"]["format"]["schema"]["required"]
     assert len(seen) == 1
     # A design plan can cite only this product's rules and the general ones, not another family's.
@@ -703,3 +711,4 @@ def test_final_visual_review_gets_reference_images_separately(
                                                    "findings": ["A beam closes the open corner of the L."],
                                                    "note": "Fine for this post."}]
     assert "Do not fail that shot for the same accepted characteristics" in content[0]["text"]
+    assert SUPPORT_GUIDANCE in content[0]["text"]  # The finished-video check judges realistic supports too.

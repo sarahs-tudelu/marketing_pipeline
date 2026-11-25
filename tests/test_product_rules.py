@@ -26,6 +26,8 @@ from social.product_rules import (
     PRODUCT_CONSTRAINTS_VERSION,
     SCOPE_REASONING,
     SCOPE_RULE,
+    SUPPORT_GUIDANCE,
+    SUPPORT_RULE,
     WEATHER_GUIDANCE,
     WEATHER_RULE,
     VisualGuidance,
@@ -446,15 +448,29 @@ def test_fact_editor_shows_new_version_as_default_and_preserves_guidance(setting
 
 def test_owner_scope_allows_customization_and_keeps_hard_limits():
     rules = {r["id"]: r["instruction"] for r in current_constraints()["rules"]}
-    assert list(rules) == [SCOPE_RULE, WEATHER_RULE, FRAMING_RULE, CANOPY_FORM_RULE, PANEL_SURFACE_RULE, HANGER_ROD_RULE]
+    assert list(rules) == [SCOPE_RULE, WEATHER_RULE, FRAMING_RULE, CANOPY_FORM_RULE, SUPPORT_RULE,
+                           PANEL_SURFACE_RULE, HANGER_ROD_RULE]
     assert "hanger rods below a canopy" in rules[SCOPE_RULE]
     assert "'only when selected' describe a starting point" in rules[SCOPE_RULE]
     assert "A pergola can take an insulated solid panel or glass roof" in rules[WEATHER_RULE]
     assert "Partial overlap is not a defect" in rules[FRAMING_RULE]
     assert rules[CANOPY_FORM_RULE] == CANOPY_FORM_GUIDANCE
     assert [s["recorded_on"] for s in current_constraints()["sources"]] == [
-        "2026-11-16", "2026-11-17", "2026-11-24", "2026-11-24"
+        "2026-11-16", "2026-11-17", "2026-11-24", "2026-11-24", "2026-11-25"
     ]
+
+
+def test_supports_are_judged_by_realism_not_an_exact_post_count():
+    rules = {r["id"]: r["instruction"] for r in current_constraints()["rules"]}
+    assert rules[SUPPORT_RULE] == SUPPORT_GUIDANCE
+    assert "Never reject or regenerate a scene only because a count or spacing differs" in SUPPORT_GUIDANCE
+    # Realism and Tudelu's designs still decide; only an admin's own words make a count binding.
+    assert "a floating or ungrounded post" in SUPPORT_GUIDANCE and "supports Tudelu doesn't make" in SUPPORT_GUIDANCE
+    assert "a count that changes between frames of one clip" in SUPPORT_GUIDANCE
+    assert "the idea or an operator edit" in SUPPORT_GUIDANCE
+    # Every planner and reviewer reads the scope paragraph, which points to the rule.
+    assert SUPPORT_RULE in SCOPE_REASONING and SUPPORT_RULE in CANOPY_FORM_GUIDANCE
+    assert "post count, spacing and shape" not in CANOPY_FORM_GUIDANCE
 
 
 @pytest.mark.parametrize(("system", "scene", "panels"), [

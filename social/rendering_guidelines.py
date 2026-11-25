@@ -12,7 +12,7 @@ DEFAULT_VISUAL_DIRECTION = (
 
 # Prompt guidance is separate from the persisted rendering-policy digest: changing the writer
 # must not invalidate a paid scene or an in-flight task that uses an older saved plan.
-SELECTION_VERSION = "reshaped-footprints-from-design-2026-11-24-v6"
+SELECTION_VERSION = "realistic-supports-2026-11-25-v7"
 STRUCTURE_SELECTION = (
     "Use the matching reference as the starting point for construction details the approved shot leaves "
     "open, and adapt it where the shot's configuration or the situation reasonably calls for a supported "
